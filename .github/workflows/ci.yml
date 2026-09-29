@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+env:
+  FOUNDRY_PROFILE: ci
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: contracts
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+
+      - name: 1. forge fmt --check
+        run: forge fmt --check
+
+      - name: 2. forge build --sizes (fails over 24576 bytes)
+        run: forge build --sizes
+
+      - name: 3. forge test
+        run: forge test -vvv
+
+      - name: 4. invariant suite
+        run: forge test -vvv --match-path "test/invariant/*"
+
+      - name: 5. coverage, 100% lines and branches on src
+        env:
+          FOUNDRY_PROFILE: default
+        run: |
+          forge coverage --report lcov --no-match-coverage '(test|script)/'
+          awk -F: '
+            /^SF:/  { src = ($2 ~ /^src\//) }
+            src && /^LF:/  { lf += $2 }  src && /^LH:/  { lh += $2 }
+            src && /^BRF:/ { bf += $2 }  src && /^BRH:/ { bh += $2 }
+            END {
+              printf "src coverage: lines %d/%d, branches %d/%d\n", lh, lf, bh, bf
+              exit (lf == 0 || lh < lf || bh < bf)
+            }' lcov.info
+
+      - name: 6. gas snapshot, fails on a regression over 10%
+        env:
+          FOUNDRY_PROFILE: default
+        run: forge snapshot --check --tolerance 10 --no-match-test testFuzz
+
+      - name: 7. slither, fails on medium
+        run: |
+          pip install slither-analyzer
+          slither . --fail-medium
+
+      - name: 8. backend typecheck, lint, unit, integration, chain integration
+        if: false
+        run: echo "backend lands in phase 3"
+
+      - name: 9. reconciliation test
+        if: false
+        run: echo "reconciliation lands in phase 4"
