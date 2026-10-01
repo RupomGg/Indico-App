@@ -188,6 +188,24 @@ Open items: closed O-001, closed O-004 (`gh auth status`: signed in as RupomGg, 
 Raised O-012.
 Commit: ci: install slither via setup-python scoped to src, skip invariant step until it exists, pin forge 1.8.3 (P0.2)
 
+### C-008 · P0.2 · CI gate lines G10 and G11 · 2026-10-01
+Type: chore
+Files: none changed. Completes the two lines C-007 left pending.
+- G11 pass: throwaway branch `ci-red-check`. Run 36810436144 on `1d62169` red at step 3,
+  `[FAIL: deliberate failure, CI must go red] test_ciTurnsRed()`, the other 48 tests passing.
+  Run 36810574636 on `0687a8d` (the test removed) green: step 4 skipped with no
+  `test/invariant/`, Slither installed through `setup-python` as 0.11.6, step 7 green.
+  Branch deleted locally and on `origin`.
+- Process note: `1d62169` also carried the P0.2 `ci.yml` change, because it was staged before
+  the branch was cut. The red/green check therefore ran against the new workflow. The test file
+  was removed with a new commit instead of `git revert`, which would have undone `ci.yml` too.
+  Only `ci.yml` was taken from the branch onto `main`; `CiRedCheck.t.sol` has no history on
+  `main`.
+- G10 pass, `G10.log`: run 36810874922 on `59332a7` green; steps 1 to 3 and 5 to 7 pass,
+  step 4 skipped as designed.
+Open items: O-005 still open until a fresh terminal shows `forge Version: 1.8.3`.
+Commit: docs: record P0.2 CI gate results
+
 ---
 
 ## Open items
