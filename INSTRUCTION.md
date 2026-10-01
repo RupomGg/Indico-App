@@ -328,7 +328,9 @@ other analyser, every finding fixed or triaged in writing.
 **P3.1 Deploy script and Base Sepolia** · `script/Deploy.s.sol`; Circle's official Sepolia USDC
 address with its source shown; Safe addresses for admin and guardian; keystore account only, no
 private key in any file; source verified; `docs/deployments.md` written. **The owner runs the
-broadcast.**
+broadcast.** The Safe signers are told, in writing: moving the top admin role takes two steps
+and 3 days (D-19), and a `DefaultAdminTransferScheduled` event they did not start means act
+immediately.
 
 **P3.2 Liquidation keeper script** · `docs/ownership.md` §2. Finds overdue loans, calls
 `liquidate`; idempotent; safe to run twice at once; tested on Sepolia.

@@ -399,6 +399,89 @@ Files: none changed. Completes the lines C-013 left pending.
   `skipped`. It will stay skipped from now on; O-023 deletes it.
 Commit: docs: record P1.1 CI gate results
 
+### C-015 · P1.1 reopened · Top admin role behind AccessControlDefaultAdminRules · 2026-10-01
+Type: feature
+Decisions: D-19 (new, decided: switch, 3-day delay)
+Reopens P1.1 (INSTRUCTION 1.3): a change to a signed-off portion, so the full P1.1 gate ran again.
+Files:
+- Changed: `contracts/src/IndicoLedger.sol`: inherits `AccessControlDefaultAdminRules` instead
+  of `AccessControl`. `DEFAULT_ADMIN_ROLE` has one holder, moves only by
+  `beginDefaultAdminTransfer` then `acceptDefaultAdminTransfer` by the new address after 3 days,
+  and cannot be granted, revoked or renounced in one call. The constructor's checks moved into a
+  private `_checkedAdmin(usdc_, admin_, guardian_)` that returns `admin_` into the base
+  constructor's arguments, so they run before OpenZeppelin's own zero check: a zero argument
+  still reverts the ledger's `ZeroAddress`, never `AccessControlInvalidDefaultAdmin(0)`. The base
+  constructor now grants `DEFAULT_ADMIN_ROLE`; the body grants `ADMIN_ROLE` and `GUARDIAN_ROLE`.
+  Depends on it: every test; the event catalogue; the deployment runbook (P3.1).
+- Changed: `contracts/src/lib/Constants.sol`: `ADMIN_TRANSFER_DELAY = 3 days` (`uint48`).
+- New: `contracts/test/unit/DefaultAdmin.t.sol`: partition table, 16 tests, calling the new
+  functions through OpenZeppelin's `IAccessControlDefaultAdminRules`, `IAccessControl` and
+  `IERC5313` on `address(ledger)`, so the file compiled before the switch and each test failed on
+  its own at runtime (16 failed, 100 passed, confirmed before the code change). Covers: single
+  holder and 3-day delay after deploy; begin schedules exactly `now + 3 days` with the event;
+  accept at the schedule exactly reverts `AccessControlEnforcedDefaultAdminDelay(schedule)`, one
+  second later moves only the top role (`ADMIN_ROLE` stays with the old address); accept by eight
+  wrong addresses and with nothing pending reverts `AccessControlInvalidDefaultAdmin(caller)`;
+  cancel clears the pending transfer and accept then fails; begin by anyone else, including an
+  `ADMIN_ROLE` holder, reverts; one-call grant and revoke revert
+  `AccessControlEnforcedDefaultAdminRules`; renounce without a schedule reverts; renounce after a
+  scheduled transfer to zero is the only way to lose the role; delay change scheduled and rolled
+  back with exact events; delay change by a non-default-admin reverts; transfer works while
+  paused. Every revert asserts the state snapshot unchanged.
+- Changed: `contracts/test/unit/Constructor.t.sol`: the "no caller can move USDC" sweep gains the
+  five new state-changing functions (begin, cancel, accept, change delay, rollback); its own
+  comment says to extend it as functions are added. No assertion changed.
+- Unchanged, checked: `test_deploy_emitsExactlyThreeRoleGrants` still sees exactly three
+  `RoleGranted` events in the same order (`DEFAULT_ADMIN_ROLE` now from the base constructor,
+  then `ADMIN_ROLE`, `GUARDIAN_ROLE`), with no edit. The three zero-argument tests
+  (`test_usdcZero_reverts`, `test_adminZero_reverts`, `test_guardianZero_reverts`) and
+  `test_allZero_revertsZeroAddress` still get the ledger's `ZeroAddress` with no edit.
+- Changed: `contracts/.gas-snapshot`: 16 new `DefaultAdminTest` lines; 20 existing lines changed;
+  every `HelpersTest` and `MathTest` line unchanged. Over 10%: only
+  `test_noCallerCanMoveUsdc_throughAnyFunction` 51,924,547 to 91,394,843 (+76.0%), because the
+  sweep now makes 12 calls per caller instead of 7, each with a full state snapshot. The other
+  19 rose by 0.15% to 1.81%: the ledger has more functions, so dispatch and the per-test
+  deployment cost slightly more. Diff in `G8.log`.
+- Changed: `INSTRUCTION.md` P3.1: the Safe signers are told in writing that moving the top admin
+  role takes two steps and 3 days, and that a `DefaultAdminTransferScheduled` they did not start
+  means act immediately.
+- Changed (local, not pushed): `docs/decisions.md` D-19 marked decided; `docs/event-catalogue.md`
+  gains a "Top admin transfer" section with `DefaultAdminTransferScheduled`,
+  `DefaultAdminTransferCanceled`, `DefaultAdminDelayChangeScheduled`,
+  `DefaultAdminDelayChangeCanceled` and their full topic0 values, each confirmed by two
+  independent computations (`cast keccak` and Python keccak), and notes that an accepted transfer
+  shows as `RoleRevoked(0x00, old)` then `RoleGranted(0x00, new)`.
+Size: `IndicoLedger` runtime 2,415 B to 4,517 B (+2,102 B), margin 20,059 B.
+Slither (CI flags): exit 0, the same 9 findings as C-013; `low-level-calls` now points at
+`_checkedAdmin`.
+Gate (logs in `docs/gate-logs/P1.1/`, rerun in full, Forge 1.8.3):
+- G1 pass, `G1.log`: 116 passed, 0 failed, 0 skipped, exit 0.
+- G2 pass, `G2.log`: src lines 28/28, branches 8/8.
+- G3 pass, `G3.log`: exit 0.
+- G4 pass, `G4.log`: `forge build --deny warnings` exit 0.
+- G5 pass, `G5.log`: seeds 1 and 2, 116 passed each.
+- G6 pass, `G6.log`: three runs, 116 passed each.
+- G7 pass, `G7.log`: `ci` profile, 116 passed.
+- G8 pass, `G8.log`: `IndicoLedger` 4,517 B runtime; snapshot check 102 passed.
+- G9 pass, `G9.log`: see Mutations.
+- G10 pending: owner pushes.
+- G11: covered by C-014; no new manual check.
+- G12: this entry.
+Mutations (G9), each on `IndicoLedger.sol`, restored byte-identical by SHA-256 after each:
+- M1 to M5, M7, M8 as in C-013, patterns updated to the new code. All caught.
+- M6 `_checkedAdmin` returns `guardian_`, so the top role goes to the guardian: role sweep and
+  every transfer test fail. Caught.
+- M9 the checks moved after the base constructor (`admin_` passed straight in, `_checkedAdmin`
+  called in the body): `test_adminZero_reverts` and `test_allZero_revertsZeroAddress` fail with
+  `AccessControlInvalidDefaultAdmin(0x0) != ZeroAddress()`. Caught.
+- M10 delay 3 days to 0: `test_deploy_singleDefaultAdmin_threeDayDelay_nothingPending`
+  (`0 != 259200`) and `test_begin_schedulesExactlyThreeDaysOut` (`expected=259201, got=1`). Caught.
+A first G9 attempt did not run: the script had lost its `mutate` function ("command not
+found"), so no mutation was applied; `IndicoLedger.sol` was confirmed identical to its backup
+before the rerun.
+Open items: none raised.
+Commit: feat: top admin role behind AccessControlDefaultAdminRules with a 3-day two-step transfer (P1.1 reopen)
+
 ---
 
 ## Open items

@@ -4,6 +4,9 @@ pragma solidity 0.8.26;
 import {Vm} from "forge-std/Vm.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
+import {
+    IAccessControlDefaultAdminRules
+} from "@openzeppelin/contracts/access/extensions/IAccessControlDefaultAdminRules.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {IndicoLedger} from "../../src/IndicoLedger.sol";
 import {IIndicoLedger} from "../../src/interfaces/IIndicoLedger.sol";
@@ -312,7 +315,7 @@ contract ConstructorTest is StateSnapshot {
     function _calls(address caller) internal view returns (bytes[] memory c) {
         bytes32 adminRole = ledger.ADMIN_ROLE();
         bytes32 guardianRole = ledger.GUARDIAN_ROLE();
-        c = new bytes[](7);
+        c = new bytes[](12);
         c[0] = abi.encodeCall(IIndicoLedger.pause, ());
         c[1] = abi.encodeCall(IIndicoLedger.unpause, ());
         c[2] = abi.encodeCall(IAccessControl.grantRole, (adminRole, caller));
@@ -320,6 +323,11 @@ contract ConstructorTest is StateSnapshot {
         c[4] = abi.encodeCall(IAccessControl.revokeRole, (adminRole, admin));
         c[5] = abi.encodeCall(IAccessControl.renounceRole, (guardianRole, caller));
         c[6] = abi.encodeCall(IAccessControl.renounceRole, (DEFAULT_ADMIN, caller));
+        c[7] = abi.encodeCall(IAccessControlDefaultAdminRules.beginDefaultAdminTransfer, (caller));
+        c[8] = abi.encodeCall(IAccessControlDefaultAdminRules.cancelDefaultAdminTransfer, ());
+        c[9] = abi.encodeCall(IAccessControlDefaultAdminRules.acceptDefaultAdminTransfer, ());
+        c[10] = abi.encodeCall(IAccessControlDefaultAdminRules.changeDefaultAdminDelay, (0));
+        c[11] = abi.encodeCall(IAccessControlDefaultAdminRules.rollbackDefaultAdminDelay, ());
     }
 
     function _everyone() internal returns (address[] memory w) {

@@ -3,16 +3,18 @@ pragma solidity 0.8.26;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
-import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
+import {
+    AccessControlDefaultAdminRules
+} from "@openzeppelin/contracts/access/extensions/AccessControlDefaultAdminRules.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {IIndicoLedger} from "./interfaces/IIndicoLedger.sol";
-import {USDC_DECIMALS} from "./lib/Constants.sol";
+import {ADMIN_TRANSFER_DELAY, USDC_DECIMALS} from "./lib/Constants.sol";
 
 /// @title IndicoLedger
 /// @notice Credit, spending, the USDC pool and every loan, in one contract deployed once.
 /// @dev docs/contract-spec.md. Built portion by portion; functions not yet implemented are
 ///      absent, so calls to them revert. Inherits `IIndicoLedger` once every function exists.
-contract IndicoLedger is AccessControl, Pausable {
+contract IndicoLedger is AccessControlDefaultAdminRules, Pausable {
     bytes32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
     bytes32 public constant GUARDIAN_ROLE = keccak256("GUARDIAN_ROLE");
 
@@ -63,10 +65,29 @@ contract IndicoLedger is AccessControl, Pausable {
     // Constructor, contract-spec 6.0
     // ---------------------------------------------------------------------------------------
 
-    /// @dev `usdc_` must be a contract whose `decimals()` returns exactly 6 (D-16). Read with a
-    ///      low-level call so every malformed answer is a named revert, never a decode panic.
-    ///      `admin_ == guardian_` is allowed (D-15).
-    constructor(IERC20 usdc_, address admin_, address guardian_) {
+    /// @dev `admin_` becomes the single `DEFAULT_ADMIN_ROLE` holder, transferable only in two
+    ///      steps with `ADMIN_TRANSFER_DELAY` between them (D-19). It reaches the base
+    ///      constructor through `_checkedAdmin`, so the ledger's own checks run first and a zero
+    ///      `admin_` reverts `ZeroAddress`, never OpenZeppelin's `AccessControlInvalidDefaultAdmin`.
+    constructor(IERC20 usdc_, address admin_, address guardian_)
+        AccessControlDefaultAdminRules(
+            ADMIN_TRANSFER_DELAY, _checkedAdmin(usdc_, admin_, guardian_)
+        )
+    {
+        usdc = usdc_;
+        _grantRole(ADMIN_ROLE, admin_);
+        _grantRole(GUARDIAN_ROLE, guardian_);
+    }
+
+    /// @dev Every constructor check, returning `admin_` unchanged. `usdc_` must be a contract
+    ///      whose `decimals()` returns exactly 6 (D-16), read with a low-level call so every
+    ///      malformed answer is a named revert, never a decode panic. `admin_ == guardian_` is
+    ///      allowed (D-15).
+    function _checkedAdmin(IERC20 usdc_, address admin_, address guardian_)
+        private
+        view
+        returns (address)
+    {
         if (address(usdc_) == address(0) || admin_ == address(0) || guardian_ == address(0)) {
             revert IIndicoLedger.ZeroAddress();
         }
@@ -78,10 +99,7 @@ contract IndicoLedger is AccessControl, Pausable {
         uint256 decimals = abi.decode(data, (uint256));
         if (decimals != USDC_DECIMALS) revert IIndicoLedger.UsdcWrongDecimals(decimals);
 
-        usdc = usdc_;
-        _grantRole(DEFAULT_ADMIN_ROLE, admin_);
-        _grantRole(ADMIN_ROLE, admin_);
-        _grantRole(GUARDIAN_ROLE, guardian_);
+        return admin_;
     }
 
     // ---------------------------------------------------------------------------------------
