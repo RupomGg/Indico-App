@@ -574,6 +574,13 @@ Open items: closed O-015 (suppression on `termsHash` deleted in this gate); rais
 (backend admin screen warns that a role is permanent).
 Commit: feat: setTermsHash, setUserApproved, setMerchantApproved with permanent participant roles, working while paused (P1.2)
 
+### C-018 · P1.2 · CI gate line G10 · 2026-10-01
+Type: chore
+Files: none changed. Completes the line C-017 left pending.
+- G10 pass, `G10.log`: run 36832278687 on `d85f73d` green. Steps 1 to 3 and 5 to 7 pass; step 4
+  and the Phase-0 skip step skipped as designed.
+Commit: docs: record P1.2 CI gate result
+
 ---
 
 ## Open items
