@@ -145,28 +145,54 @@ contract PauseTest is StateSnapshot, Matrix {
 
     // ------------------------------------------------------------------ pause matrix, IT 2.3
 
-    /// @dev Rows: function. Columns: starting state. Each cell runs from a clean deployment.
-    ///      Expected: 0 succeeds, 1 EnforcedPause, 2 ExpectedPause.
+    /// @dev Rows: function. Columns: starting state (unpaused, paused). Each cell runs from a
+    ///      clean deployment. Expected: 0 succeeds, 1 EnforcedPause, 2 ExpectedPause.
+    ///
+    /// | Function            | unpaused      | paused                      |
+    /// |---------------------|---------------|-----------------------------|
+    /// | pause               | succeeds      | EnforcedPause               |
+    /// | unpause             | ExpectedPause | succeeds                    |
+    /// | setTermsHash        | succeeds      | succeeds, works while paused (D-24) |
+    /// | setUserApproved     | succeeds      | succeeds, works while paused (D-24) |
+    /// | setMerchantApproved | succeeds      | succeeds, works while paused (D-24) |
     function test_pauseMatrix_everyCell() public {
-        _crossProduct(_dims(2, 2), _pauseCell);
+        _crossProduct(_dims(5, 2), _pauseCell);
     }
 
     function _pauseCell(uint256[] memory c) internal {
-        bool isPause = c[0] == 0;
         bool startPaused = c[1] == 1;
         if (startPaused) _pause();
 
-        uint8[2][2] memory expected = [[uint8(0), 1], [uint8(2), 0]];
+        uint8[2][5] memory expected =
+            [[uint8(0), 1], [uint8(2), 0], [uint8(0), 0], [uint8(0), 0], [uint8(0), 0]];
         uint8 e = expected[c[0]][c[1]];
+        bytes32 h = keccak256("matrix-terms");
+        address target = makeAddr("matrixTarget");
 
         Snapshot memory s = _snapshot();
         if (e == 1) vm.expectRevert(Pausable.EnforcedPause.selector);
         if (e == 2) vm.expectRevert(Pausable.ExpectedPause.selector);
-        vm.prank(guardian);
-        if (isPause) ledger.pause();
-        else ledger.unpause();
-
-        if (e == 0) s.paused = isPause;
+        if (c[0] == 0) {
+            vm.prank(guardian);
+            ledger.pause();
+            if (e == 0) s.paused = true;
+        } else if (c[0] == 1) {
+            vm.prank(guardian);
+            ledger.unpause();
+            if (e == 0) s.paused = false;
+        } else if (c[0] == 2) {
+            vm.prank(admin);
+            ledger.setTermsHash(h);
+            s.termsHash = h;
+        } else if (c[0] == 3) {
+            vm.prank(admin);
+            ledger.setUserApproved(target, true);
+            assertTrue(ledger.approvedUser(target));
+        } else {
+            vm.prank(admin);
+            ledger.setMerchantApproved(target, true);
+            assertTrue(ledger.approvedMerchant(target));
+        }
         _assertUnchanged(s);
     }
 }

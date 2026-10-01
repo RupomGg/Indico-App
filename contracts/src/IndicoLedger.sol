@@ -8,7 +8,13 @@ import {
 } from "@openzeppelin/contracts/access/extensions/AccessControlDefaultAdminRules.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {IIndicoLedger} from "./interfaces/IIndicoLedger.sol";
-import {ADMIN_TRANSFER_DELAY, USDC_DECIMALS} from "./lib/Constants.sol";
+import {
+    ADMIN_TRANSFER_DELAY,
+    USDC_DECIMALS,
+    ROLE_NONE,
+    ROLE_USER,
+    ROLE_MERCHANT
+} from "./lib/Constants.sol";
 
 /// @title IndicoLedger
 /// @notice Credit, spending, the USDC pool and every loan, in one contract deployed once.
@@ -35,12 +41,13 @@ contract IndicoLedger is AccessControlDefaultAdminRules, Pausable {
 
     IERC20 public immutable usdc;
 
-    // forge-lint: disable-next-line(uninitialized-state)
     bytes32 public termsHash;
 
     mapping(address => bool) public approvedUser;
     mapping(address => bool) public approvedMerchant;
     mapping(address => bool) public termsSigned;
+    /// @dev First role an address was approved for, never cleared (D-22).
+    mapping(address => uint8) public participantRole;
 
     mapping(address => uint256) public credit;
     mapping(address => uint256) public lockedCredit;
@@ -105,6 +112,46 @@ contract IndicoLedger is AccessControlDefaultAdminRules, Pausable {
     // ---------------------------------------------------------------------------------------
     // Administration, contract-spec 6.1
     // ---------------------------------------------------------------------------------------
+
+    /// @notice Set the hash of the current terms. Existing signatures are not cleared.
+    /// @dev Not `whenNotPaused` (D-24). Zero is "never set" and is refused (D-21); repeating the
+    ///      current hash is allowed and emits again (D-20).
+    function setTermsHash(bytes32 newHash) external onlyRole(ADMIN_ROLE) {
+        if (newHash == bytes32(0)) revert IIndicoLedger.ZeroTermsHash();
+        termsHash = newHash;
+        emit IIndicoLedger.TermsHashSet(newHash);
+    }
+
+    /// @notice Approve or revoke a user. Revocation blocks new actions only; balances and
+    ///         loans are untouched.
+    /// @dev Not `whenNotPaused` (D-24). Repeats are allowed and emit (D-20).
+    function setUserApproved(address user, bool approved) external onlyRole(ADMIN_ROLE) {
+        _admit(user, approved, ROLE_USER);
+        approvedUser[user] = approved;
+        emit IIndicoLedger.UserApprovalSet(user, approved);
+    }
+
+    /// @notice Approve or revoke a merchant. A revoked merchant can still withdraw.
+    /// @dev Not `whenNotPaused` (D-24). Repeats are allowed and emit (D-20).
+    function setMerchantApproved(address m, bool approved) external onlyRole(ADMIN_ROLE) {
+        _admit(m, approved, ROLE_MERCHANT);
+        approvedMerchant[m] = approved;
+        emit IIndicoLedger.MerchantApprovalSet(m, approved);
+    }
+
+    /// @dev Zero is never valid. An approval also refuses the ledger and USDC addresses (D-23)
+    ///      and an address first approved in the other role (D-22), and records the role the
+    ///      first time. A revoke never sets the role.
+    function _admit(address account, bool approved, uint8 role) private {
+        if (account == address(0)) revert IIndicoLedger.ZeroAddress();
+        if (!approved) return;
+        if (account == address(this) || account == address(usdc)) {
+            revert IIndicoLedger.InvalidParticipant(account);
+        }
+        uint8 current = participantRole[account];
+        if (current == ROLE_NONE) participantRole[account] = role;
+        else if (current != role) revert IIndicoLedger.ParticipantRoleConflict(account);
+    }
 
     /// @notice Stop every `whenNotPaused` function. Reverts `EnforcedPause` if already paused.
     function pause() external onlyRole(GUARDIAN_ROLE) {

@@ -18,6 +18,7 @@ abstract contract StateSnapshot is FixtureBase {
         uint256[] shares;
         bool[] approvedUser;
         bool[] approvedMerchant;
+        uint8[] participantRole;
         bool[] termsSigned;
         uint256 totalLent;
         uint256 totalCredit;
@@ -40,6 +41,7 @@ abstract contract StateSnapshot is FixtureBase {
         s.shares = new uint256[](n);
         s.approvedUser = new bool[](n);
         s.approvedMerchant = new bool[](n);
+        s.participantRole = new uint8[](n);
         s.termsSigned = new bool[](n);
         for (uint256 i; i < n; ++i) {
             address a = actors[i];
@@ -49,6 +51,7 @@ abstract contract StateSnapshot is FixtureBase {
             s.shares[i] = ledger.shares(a);
             s.approvedUser[i] = ledger.approvedUser(a);
             s.approvedMerchant[i] = ledger.approvedMerchant(a);
+            s.participantRole[i] = ledger.participantRole(a);
             s.termsSigned[i] = ledger.termsSigned(a);
         }
         s.totalLent = ledger.totalLent();
@@ -71,6 +74,7 @@ abstract contract StateSnapshot is FixtureBase {
         assertEq(s.shares, before.shares, "shares");
         assertEq(s.approvedUser, before.approvedUser, "approvedUser");
         assertEq(s.approvedMerchant, before.approvedMerchant, "approvedMerchant");
+        _assertEqU8(s.participantRole, before.participantRole, "participantRole");
         assertEq(s.termsSigned, before.termsSigned, "termsSigned");
         assertEq(s.totalLent, before.totalLent, "totalLent");
         assertEq(s.totalCredit, before.totalCredit, "totalCredit");
@@ -81,6 +85,13 @@ abstract contract StateSnapshot is FixtureBase {
         assertEq(s.termsHash, before.termsHash, "termsHash");
         assertEq(s.paused, before.paused, "paused");
         assertEq(s.loansHash, before.loansHash, "loans");
+    }
+
+    function _assertEqU8(uint8[] memory a, uint8[] memory b, string memory what) private pure {
+        assertEq(a.length, b.length, what);
+        for (uint256 i; i < a.length; ++i) {
+            assertEq(a[i], b[i], what);
+        }
     }
 
     /// @dev Hashes loan ids `0..end` inclusive, so a phantom write one past the end is caught.

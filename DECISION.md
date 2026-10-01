@@ -489,6 +489,91 @@ Files: none changed. Completes the line C-015 left pending.
   and the Phase-0 skip step skipped as designed.
 Commit: docs: record P1.1 reopen CI gate result
 
+### C-017 · P1.2 · Membership and terms hash · 2026-10-01
+Type: feature
+Decisions: D-20, D-21, D-22, D-23, D-24 (new)
+Files:
+- Changed: `contracts/src/IndicoLedger.sol`:
+  - `setTermsHash(newHash)`: `ADMIN_ROLE`; zero reverts `ZeroTermsHash` (D-21); repeats allowed
+    and emit (D-20); emits `TermsHashSet`.
+  - `setUserApproved(user, approved)` and `setMerchantApproved(m, approved)`: `ADMIN_ROLE`;
+    shared private `_admit`: zero reverts `ZeroAddress`; on approval only, the ledger or USDC
+    address reverts `InvalidParticipant` (D-23), and an address first approved in the other role
+    reverts `ParticipantRoleConflict` (D-22); the first approval records `participantRole`, a
+    revoke never does. Repeats allowed and emit (D-20). Emit `UserApprovalSet` /
+    `MerchantApprovalSet`.
+  - None of the three is `whenNotPaused` (D-24).
+  - New state `participantRole` (D-22), added to the D-17 layout.
+  - Removed the `uninitialized-state` suppression on `termsHash`, now written (D-18, O-015).
+    Five suppressions remain.
+  Depends on it: `Fixture`'s onboarding helpers (`_approveUser`, `_approveMerchantAndSign`,
+  `_revokeUser`, `_revokeMerchant`) now work; `signTerms` (P1.3) reads `termsHash`.
+- Changed: `contracts/src/interfaces/IIndicoLedger.sol`: errors `ZeroTermsHash()`,
+  `ParticipantRoleConflict(address)`, `InvalidParticipant(address)`; view
+  `participantRole(address) returns (uint8)`; comments on the three setters. Depends on it: the
+  backend error map and indexer (P1.13).
+- Changed: `contracts/src/lib/Constants.sol`: `ROLE_NONE = 0`, `ROLE_USER = 1`,
+  `ROLE_MERCHANT = 2`.
+- Changed: `contracts/test/helpers/StateSnapshot.sol`: records `participantRole` per actor and
+  compares it in `_assertUnchanged`, so every revert test also proves no role was written.
+- New: `contracts/test/unit/Membership.t.sol`: partition tables for `setTermsHash` and both
+  setters, 31 tests. Zero, typical, max, same twice, changed hash, fuzz over non-zero hashes;
+  zero address for both setters and both values; ledger and USDC refused on approval, allowed
+  on revoke with role unchanged; fresh approval sets flag, role and exactly one event; revoke of
+  a never-approved address leaves the role at none; approve twice and revoke twice emit both
+  times; revoke keeps the role. D-22 as approved: approve as user, revoke, re-approve as user
+  succeeds; approve as user, revoke, approve as merchant reverts `ParticipantRoleConflict`
+  (and the merchant mirror); active user cannot become merchant and vice versa; revoking the
+  other role on an address that never had it is allowed and never sets the role; fuzz over any
+  address that the first approval fixes the role. Eight non-admins x both setters x both values,
+  and non-admins on `setTermsHash`, revert with state unchanged; a second `ADMIN_ROLE` holder
+  works; all three work while paused.
+- Changed: `contracts/test/unit/Pause.t.sol`: pause matrix (IT 2.3) from 2 x 2 to 5 x 2, with
+  the three setters shown as "works while paused" (D-24).
+- Changed: `contracts/test/unit/Constructor.t.sol`: the no-USDC sweep gains the three setters
+  (15 calls per caller).
+- Changed: `contracts/.gas-snapshot`: 29 new `MembershipTest` lines; 33 changed; none removed;
+  `HelpersTest` and `MathTest` unchanged. Over 10%, all explained by tests, not the ledger:
+  every test that takes a `StateSnapshot` rose about 40,000 gas per snapshot because the snapshot
+  now reads `participantRole` for six actors (for example `test_guardianPauses` 780,739 to
+  861,058, two snapshots); `test_pauseMatrix_everyCell` +183.7% (10 cells instead of 4);
+  `test_noCallerCanMoveUsdc_throughAnyFunction` +39.4% (15 calls per caller instead of 12, plus
+  the larger snapshot). Ledger call costs moved by dispatch only (for example
+  `test_begin_schedulesExactlyThreeDaysOut` +198 gas, +0.28%). Diff in `G8.log`.
+- Changed (local, not pushed): `docs/decisions.md` D-20 to D-24; `docs/contract-spec.md`
+  section 4 (`participantRole`), section 6 (the three setters are not `whenNotPaused`), 6.1
+  (the rules), 8 (three errors).
+Size: `IndicoLedger` runtime 4,517 B to 5,440 B (+923 B), margin 19,136 B.
+Slither (CI flags): exit 0, 8 findings, one fewer than C-015: `termsHash` left
+`constable-states`, which now lists the five still-unwritten scalars.
+Gate (logs in `docs/gate-logs/P1.2/`, Forge 1.8.3):
+- G1 pass, `G1.log`: 147 passed, 0 failed, 0 skipped, exit 0.
+- G2 pass, `G2.log`: src lines 48/48, branches 15/15.
+- G3 pass, `G3.log`: exit 0.
+- G4 pass, `G4.log`: `forge build --deny warnings` exit 0.
+- G5 pass, `G5.log`: seeds 1 and 2, 147 passed each.
+- G6 pass, `G6.log`: three runs, 147 passed each.
+- G7 pass, `G7.log`: `ci` profile, 147 passed.
+- G8 pass, `G8.log`: `IndicoLedger` 5,440 B runtime; snapshot check 131 passed.
+- G9 pass, `G9.log`: see Mutations.
+- G10 pending: owner pushes.
+- G11: none beyond the gate.
+- G12: this entry.
+Mutations (G9), each on `IndicoLedger.sol`, restored byte-identical by SHA-256 after each:
+- M1 zero terms hash accepted: `test_setTermsHash_zero_reverts`. Caught.
+- M2 zero-address check removed: `test_checkOrder_zeroBeforeEverything`. Caught.
+- M3 the ledger accepted as a participant: `test_approveLedgerOrUsdc_reverts`. Caught.
+- M4 role conflict check removed: the role fuzz and the four conflict tests. Caught.
+- M5 a revoke runs the approval checks: `InvalidParticipant` on revoking the ledger. Caught.
+- M6 `setUserApproved` writes the merchant flag: `user approval untouched`. Caught.
+- M7 `MerchantApprovalSet` not emitted: `test_approvalEmitsNothingElse` `0 != 1`. Caught.
+- M8 `setTermsHash` blocked while paused: `EnforcedPause()`. Caught.
+- M9 `setUserApproved` open to anyone: `test_setters_nonAdmins_revert`. Caught.
+- M10 every first approval records the user role: role fuzz `1 != 2`. Caught.
+Open items: closed O-015 (suppression on `termsHash` deleted in this gate); raised O-024
+(backend admin screen warns that a role is permanent).
+Commit: feat: setTermsHash, setUserApproved, setMerchantApproved with permanent participant roles, working while paused (P1.2)
+
 ---
 
 ## Open items
@@ -496,7 +581,7 @@ Commit: docs: record P1.1 reopen CI gate result
 | Id | Item | Owner | Closed by |
 |---|---|---|---|
 | O-001 | CI has known problems: Slither installed with plain `pip` (refused on the runner) and scanning tests and libraries; invariant step with no invariant tests; gas snapshot check may use different flags than the committed snapshot | engineer | Closed by C-007 |
-| O-002 | Loan matrix: `input-testing.md` says 144 cells, `Helpers.t.sol` checks 108; the agreed figure is 180 (five time points) | engineer | P0.3 |
+| O-002 | Loan matrix: `input-testing.md` says 144 cells, `Helpers.t.sol` checks 108; the agreed figure is 180 (five time points) | engineer | Closed by C-010 |
 | O-003 | Re-create the lost tag: `git tag interface-v0.2.0` on current `main`, then push it, and tell the backend that v0.1.0 no longer exists | owner | |
 | O-004 | GitHub CLI not installed; gate line G10 needs it | owner | Closed by C-007 |
 | O-005 | Foundry was not on PATH on 2026-09-29 | owner | Closed by C-009 |
@@ -509,7 +594,7 @@ Commit: docs: record P1.1 reopen CI gate result
 | O-012 | CI warnings: `actions/checkout@v4` runs on deprecated Node.js 20 (move to v5 in both workflows); `ubuntu-latest` becomes Ubuntu 26 from 2026-10-19, so recheck CI after that date | engineer | |
 | O-013 | Reconsider where the loan time axis lives: `_loanTimeAt` and `_loanDims` sit in `Matrix.sol` because `Actors.sol` could not build in Phase 0. Once it builds, decide whether to move them next to `LoanState` and replace the literal `4` with `LOAN_STATES` | engineer | P1.11 |
 | O-014 | `IndicoLedger` must inherit `IIndicoLedger`, so the compiler proves the implementation matches the interface the backend builds against | engineer | P1.13 at the latest |
-| O-015 | Delete the `uninitialized-state` suppression on `termsHash` (D-18) as part of the gate | engineer | P1.2 |
+| O-015 | Delete the `uninitialized-state` suppression on `termsHash` (D-18) as part of the gate | engineer | Closed by C-017 |
 | O-016 | Delete the `uninitialized-state` suppression on `totalCredit` (D-18) as part of the gate | engineer | P1.4 |
 | O-017 | Delete the `uninitialized-state` suppression on `totalShares` (D-18) as part of the gate | engineer | P1.7 |
 | O-018 | Delete the `uninitialized-state` suppression on `totalLent` (D-18) as part of the gate | engineer | P1.8 |
@@ -518,3 +603,4 @@ Commit: docs: record P1.1 reopen CI gate result
 | O-021 | Test for the `Fixture._default` clock fix (C-012): after `_default`, `block.timestamp` is back to its value before the call | engineer | P1.11 |
 | O-022 | Participant matrix (IT 2.2): the `pause` column, nine participants, moved from P1.1 because building them needs approvals and `signTerms` | engineer | P1.3 |
 | O-023 | The Phase-0 skip step in `ci.yml` and `deep.yml` no longer runs now that `src/IndicoLedger.sol` exists; delete it | engineer | P1.13 |
+| O-024 | Backend admin screen (AD-04, AD-02): before approving a wallet as user or merchant, warn that its role becomes permanent (D-22); a mistaken approval can only be fixed by the person using a different wallet | backend | Level 4 |

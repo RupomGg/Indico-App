@@ -106,6 +106,12 @@ interface IIndicoLedger {
     error ExtensionWindowNotOpen(uint64 opensAt);
     /// @notice A constructor argument was the zero address.
     error ZeroAddress();
+    /// @notice `setTermsHash(0)`. Zero means "never set", so it cannot be set again (D-21).
+    error ZeroTermsHash();
+    /// @notice `account` was once approved in the other role; roles are permanent (D-22).
+    error ParticipantRoleConflict(address account);
+    /// @notice The ledger or the USDC address cannot be approved as a participant (D-23).
+    error InvalidParticipant(address account);
     /// @notice Constructor: `token` has no code, so it cannot be USDC.
     error UsdcNotAContract(address token);
     /// @notice Constructor: `token.decimals()` reverted or returned less than one word.
@@ -124,16 +130,21 @@ interface IIndicoLedger {
     // ---------------------------------------------------------------------------------------
 
     /// @notice Set the hash of the current terms. Does not clear existing signatures.
-    /// @dev ADMIN_ROLE. Emits `TermsHashSet`.
+    /// @dev ADMIN_ROLE. Works while paused (D-24). Reverts `ZeroTermsHash` for zero. Setting the
+    ///      current hash again is allowed and emits again (D-20). Emits `TermsHashSet`.
     function setTermsHash(bytes32 newHash) external;
 
     /// @notice Approve or revoke a user. Revocation blocks new actions only; balances and
     ///         existing loans are untouched and can still be repaid and liquidated.
-    /// @dev ADMIN_ROLE. Emits `UserApprovalSet`.
+    /// @dev ADMIN_ROLE. Works while paused (D-24). Reverts `ZeroAddress` for zero; on approval,
+    ///      `InvalidParticipant` for the ledger or USDC address and `ParticipantRoleConflict` if
+    ///      the address was ever approved as a merchant. Repeats are allowed and emit (D-20).
+    ///      Emits `UserApprovalSet`.
     function setUserApproved(address user, bool approved) external;
 
     /// @notice Approve or revoke a merchant. A revoked merchant can still withdraw.
-    /// @dev ADMIN_ROLE. Emits `MerchantApprovalSet`.
+    /// @dev ADMIN_ROLE. Works while paused (D-24). Same checks as `setUserApproved`, with the
+    ///      roles swapped. Emits `MerchantApprovalSet`.
     function setMerchantApproved(address m, bool approved) external;
 
     /// @notice Stop every `whenNotPaused` function. GUARDIAN_ROLE. Callable while paused.
@@ -228,6 +239,9 @@ interface IIndicoLedger {
     function termsHash() external view returns (bytes32);
 
     function approvedUser(address user) external view returns (bool);
+    /// @notice The role `account` was first approved for: 0 none, 1 user, 2 merchant. Set by
+    ///         the first approval and never cleared, so an address never switches role (D-22).
+    function participantRole(address account) external view returns (uint8);
     function approvedMerchant(address m) external view returns (bool);
     function termsSigned(address account) external view returns (bool);
 
