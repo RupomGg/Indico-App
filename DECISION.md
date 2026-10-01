@@ -389,6 +389,16 @@ nine participants needs approvals and `signTerms` (O-022); the `_default` test t
 Open items: raised O-014 to O-023.
 Commit: feat: IndicoLedger constructor with USDC checks, roles and guardian pause; split test fixture (P1.1)
 
+### C-014 · P1.1 · CI gate lines G10 and G11 · 2026-10-01
+Type: chore
+Files: none changed. Completes the lines C-013 left pending.
+- G10 pass, `G10.log`: run 36815631589 on `b4b2bff` green. Steps 1 to 3 and 5 to 7 pass,
+  step 4 skipped as designed, 100 tests passed in CI.
+- G11 pass: in the same run `[PASS] test_usdcIsTheMock()` from `test/unit/Smoke.t.sol`, and the
+  step "Phase 0 only, drop test files that need src/IndicoLedger.sol until it exists" shows
+  `skipped`. It will stay skipped from now on; O-023 deletes it.
+Commit: docs: record P1.1 CI gate results
+
 ---
 
 ## Open items
