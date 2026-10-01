@@ -35,7 +35,8 @@ jobs:
       - name: 3. forge test
         run: forge test -vvv
 
-      - name: 4. invariant suite
+      - name: 4. invariant suite, skipped until test/invariant/ exists
+        if: hashFiles('contracts/test/invariant/**') != ''
         run: forge test -vvv --match-path "test/invariant/*"
 
       - name: 5. coverage, 100% lines and branches on src
@@ -52,15 +53,22 @@ jobs:
               exit (lf == 0 || lh < lf || bh < bf)
             }' lcov.info
 
+      # .gas-snapshot is regenerated with the same profile and filter, nothing else:
+      #   FOUNDRY_PROFILE=default forge snapshot --no-match-test testFuzz
+      # Fuzz tests are excluded because their gas varies with the random inputs.
       - name: 6. gas snapshot, fails on a regression over 10%
         env:
           FOUNDRY_PROFILE: default
         run: forge snapshot --check --tolerance 10 --no-match-test testFuzz
 
-      - name: 7. slither, fails on medium
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: 7. slither on src/ only, fails on medium
         run: |
-          pip install slither-analyzer
-          slither . --fail-medium --filter-paths "lib/"
+          pip install slither-analyzer==0.11.6
+          slither . --fail-medium --filter-paths "(lib|test|script)/"
 
       - name: 8. backend typecheck, lint, unit, integration, chain integration
         if: false
