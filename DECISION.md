@@ -657,6 +657,15 @@ Open items: closed O-022; raised O-025 (participant matrix 27 of 117 cells, all 
 P1.13, each portion adds its own at its gate).
 Commit: feat: signTerms with per-address terms version, and the first participant-matrix columns (P1.3)
 
+### C-020 · P1.3 · CI gate line G10 · 2026-10-01
+Type: chore
+Files: none changed. Completes the line C-019 left pending.
+- G10 pass, `G10.log`: run 36835961990 on `04b3c1b` green. Steps 1 to 3 and 5 to 7 pass; step 4
+  and the Phase-0 skip step skipped as designed. The run registered a few minutes after the push.
+- Noted, not part of this gate: the scheduled Deep fuzz run 36833476286 on `a16c2b8` (P1.2 plus
+  docs) was still in progress when this was written; its result is recorded when it finishes.
+Commit: docs: record P1.3 CI gate result
+
 ---
 
 ## Open items
