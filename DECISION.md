@@ -482,6 +482,13 @@ before the rerun.
 Open items: none raised.
 Commit: feat: top admin role behind AccessControlDefaultAdminRules with a 3-day two-step transfer (P1.1 reopen)
 
+### C-016 · P1.1 reopened · CI gate line G10 · 2026-10-01
+Type: chore
+Files: none changed. Completes the line C-015 left pending.
+- G10 pass, `G10.log`: run 36817863845 on `26f46e0` green. Steps 1 to 3 and 5 to 7 pass; step 4
+  and the Phase-0 skip step skipped as designed.
+Commit: docs: record P1.1 reopen CI gate result
+
 ---
 
 ## Open items
