@@ -581,6 +581,82 @@ Files: none changed. Completes the line C-017 left pending.
   and the Phase-0 skip step skipped as designed.
 Commit: docs: record P1.2 CI gate result
 
+### C-019 · P1.3 · signTerms, and the first participant-matrix columns · 2026-10-01
+Type: feature
+Decisions: D-25, D-26 (new)
+Files:
+- Changed: `contracts/src/IndicoLedger.sol`: `signTerms(acceptedHash)`, `whenNotPaused`, no
+  approval check (contract-spec 6.2). Reverts in order `EnforcedPause`, `TermsNotSet`,
+  `WrongTermsHash` (`acceptedHash != termsHash`), `AlreadySigned` (caller already signed the
+  current version). Sets `termsSigned`, records `signedTermsHash`, emits
+  `TermsSigned(caller, hash, block.timestamp)`; the timestamp is a record only (D-26). New state
+  `signedTermsHash` (D-25), added to the D-17 layout. Depends on it: `Fixture`'s onboarding,
+  which now runs; the `TermsNotSigned` gates from P1.4 on.
+- Changed: `contracts/src/interfaces/IIndicoLedger.sol`: view
+  `signedTermsHash(address) returns (bytes32)`; `signTerms` comment with the check order and D-25.
+- Changed: `contracts/test/helpers/StateSnapshot.sol`: records `signedTermsHash` per actor.
+- New: `contracts/test/unit/SignTerms.t.sol`: partition table, 19 tests. Not set (zero and
+  non-zero); current hash signs, records the version, exact event with a warped timestamp,
+  nothing else emitted; anyone may sign without approval (fresh address, user, merchant, admin,
+  guardian) and signing approves nobody; zero, other, max and fuzzed wrong hashes; stale hash
+  after a change, for a signer and a non-signer; second signature of the same version; fuzz over
+  callers, once then `AlreadySigned`; a hash change keeps the old signature and its version; a
+  newer version can be signed and emits again; as required, the admin setting an old hash again:
+  a user whose last signature is that hash gets `AlreadySigned`, a user who signed only the
+  newer one can sign it again; paused for a signer and a non-signer; check order.
+- New: `contracts/test/unit/ParticipantMatrix.t.sol`: the participant matrix (IT 2.2), 3 of 13
+  columns (`signTerms`, `setUserApproved`, `pause`), 27 cells with an expected-outcome table, and
+  a self-check that `Actors._participant` builds each of the nine states as named (flags, role,
+  access-control roles). Closes O-022.
+- Changed: `contracts/test/helpers/Fixture.t.sol`: new `FixtureTest`, 5 tests, for the onboarding
+  `Fixture` that first runs here: terms hash, alice and bob approved users who signed, both
+  merchants approved merchants who signed, admin and guardian not onboarded, six funded actors.
+  `Fixture` and `Actors` passed first time; no fix needed.
+- Changed: `contracts/test/unit/Constructor.t.sol`: the no-USDC sweep gains `signTerms` (16 calls
+  per caller). Found missing while reviewing the snapshot diff, added before the gate.
+- Changed: `contracts/.gas-snapshot`: 24 new lines (SignTerms 17, Fixture 5, ParticipantMatrix 2);
+  63 changed; none removed; `HelpersTest` and `MathTest` unchanged. Over 10%: only
+  `test_noCallerCanMoveUsdc_throughAnyFunction` 127,369,014 to 149,318,405 (+17.2%), 16 calls per
+  caller instead of 15 with a larger snapshot. The rest rose up to 9.5%, all snapshot-heavy tests:
+  each `StateSnapshot` now also reads `signedTermsHash` for six actors, about 39,000 gas per
+  snapshot. Diff in `G8.log`.
+- Changed (local, not pushed): `docs/decisions.md` D-25, D-26; `docs/contract-spec.md` section 4
+  (`signedTermsHash`) and 6.2 (versions, check order, timestamp as record);
+  `docs/event-catalogue.md`: `TermsSigned` can be emitted more than once per address, one per
+  version signed, so the indexer keeps every version and never overwrites on the first;
+  `CLAUDE.md`: "`block.timestamp` may be emitted in an event as a record; it is never used in a
+  condition except loan deadlines" (D-26).
+Size: `IndicoLedger` runtime 5,440 B to 5,719 B (+279 B), margin 18,857 B.
+Slither (CI flags): exit 0, 8 findings, unchanged from C-017.
+Gate (logs in `docs/gate-logs/P1.3/`, Forge 1.8.3):
+- G1 pass, `G1.log`: 173 passed, 0 failed, 0 skipped, exit 0.
+- G2 pass, `G2.log`: src lines 56/56, branches 18/18.
+- G3 pass, `G3.log`: exit 0.
+- G4 pass, `G4.log`: `forge build --deny warnings` exit 0.
+- G5 pass, `G5.log`: seeds 1 and 2, 173 passed each.
+- G6 pass, `G6.log`: three runs, 173 passed each.
+- G7 pass, `G7.log`: `ci` profile, 173 passed.
+- G8 pass, `G8.log`: `IndicoLedger` 5,719 B runtime; snapshot check 155 passed.
+- G9 pass, `G9.log`: see Mutations.
+- G10 pending: owner pushes.
+- G11: none beyond the gate.
+- G12: this entry.
+Mutations (G9), each on `IndicoLedger.sol`, restored byte-identical by SHA-256 after each:
+- M1 `TermsNotSet` check removed: `WrongTermsHash() != TermsNotSet()`. Caught.
+- M2 `WrongTermsHash` check removed: wrong-hash fuzz signs. Caught.
+- M3 `AlreadySigned` check removed: the participant matrix. Caught.
+- M4 one signature per address ever (the spec's `bool`, no D-25):
+  `test_newVersion_canBeSigned_recordsAndEmitsAgain` gets `AlreadySigned()`. Caught.
+- M5 works while paused: `AlreadySigned() != EnforcedPause()`. Caught.
+- M6 version not recorded: `signedTermsHash` zero. Caught.
+- M7 `termsSigned` not set: the participant matrix `signed`. Caught.
+- M8 event time 0: `expected=1800000000, got=0`. Caught.
+- M9 `AlreadySigned` checked before `WrongTermsHash`: `test_order_wrongHashBeforeAlreadySigned`. Caught.
+- M10 `WrongTermsHash` only for zero, so a stale hash is accepted: wrong-hash fuzz. Caught.
+Open items: closed O-022; raised O-025 (participant matrix 27 of 117 cells, all 13 columns by
+P1.13, each portion adds its own at its gate).
+Commit: feat: signTerms with per-address terms version, and the first participant-matrix columns (P1.3)
+
 ---
 
 ## Open items
@@ -608,6 +684,7 @@ Commit: docs: record P1.2 CI gate result
 | O-019 | Delete the `uninitialized-state` suppression on `nextLoanId` (D-18) as part of the gate | engineer | P1.8 |
 | O-020 | Delete the `uninitialized-state` suppression on `poolCredit` (D-18) as part of the gate | engineer | P1.11 |
 | O-021 | Test for the `Fixture._default` clock fix (C-012): after `_default`, `block.timestamp` is back to its value before the call | engineer | P1.11 |
-| O-022 | Participant matrix (IT 2.2): the `pause` column, nine participants, moved from P1.1 because building them needs approvals and `signTerms` | engineer | P1.3 |
+| O-022 | Participant matrix (IT 2.2): the `pause` column, nine participants, moved from P1.1 because building them needs approvals and `signTerms` | engineer | Closed by C-019 |
 | O-023 | The Phase-0 skip step in `ci.yml` and `deep.yml` no longer runs now that `src/IndicoLedger.sol` exists; delete it | engineer | P1.13 |
 | O-024 | Backend admin screen (AD-04, AD-02): before approving a wallet as user or merchant, warn that its role becomes permanent (D-22); a mistaken approval can only be fixed by the person using a different wallet | backend | Level 4 |
+| O-025 | Participant matrix (IT 2.2): 3 of 13 action columns (`signTerms`, `setUserApproved`, `pause`), 27 of 117 cells. Each later portion adds its own column at its gate; all 13 columns, 117 cells, by P1.13 | engineer | P1.13 |

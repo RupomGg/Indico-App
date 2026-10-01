@@ -158,8 +158,10 @@ interface IIndicoLedger {
     // ---------------------------------------------------------------------------------------
 
     /// @notice Record that the caller accepted the terms identified by `acceptedHash`.
-    /// @dev Reverts `AlreadySigned`, `TermsNotSet`, or `WrongTermsHash` if
-    ///      `acceptedHash != termsHash`. Emits `TermsSigned`.
+    /// @dev `whenNotPaused`. No approval needed (contract-spec 6.2). Reverts, in order,
+    ///      `TermsNotSet`, `WrongTermsHash` if `acceptedHash != termsHash`, and `AlreadySigned`
+    ///      if the caller already signed this exact version. Signing a newer current version
+    ///      is allowed and emits again (D-25). Emits `TermsSigned`.
     function signTerms(bytes32 acceptedHash) external;
 
     // ---------------------------------------------------------------------------------------
@@ -244,6 +246,8 @@ interface IIndicoLedger {
     function participantRole(address account) external view returns (uint8);
     function approvedMerchant(address m) external view returns (bool);
     function termsSigned(address account) external view returns (bool);
+    /// @notice The terms version `account` signed most recently, zero if never (D-25).
+    function signedTermsHash(address account) external view returns (bytes32);
 
     function credit(address account) external view returns (uint256);
     function lockedCredit(address account) external view returns (uint256);

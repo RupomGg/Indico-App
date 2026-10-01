@@ -46,6 +46,8 @@ contract IndicoLedger is AccessControlDefaultAdminRules, Pausable {
     mapping(address => bool) public approvedUser;
     mapping(address => bool) public approvedMerchant;
     mapping(address => bool) public termsSigned;
+    /// @dev The terms version each address signed most recently (D-25).
+    mapping(address => bytes32) public signedTermsHash;
     /// @dev First role an address was approved for, never cleared (D-22).
     mapping(address => uint8) public participantRole;
 
@@ -151,6 +153,27 @@ contract IndicoLedger is AccessControlDefaultAdminRules, Pausable {
         uint8 current = participantRole[account];
         if (current == ROLE_NONE) participantRole[account] = role;
         else if (current != role) revert IIndicoLedger.ParticipantRoleConflict(account);
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // Terms, contract-spec 6.2
+    // ---------------------------------------------------------------------------------------
+
+    /// @notice Record that the caller accepted the terms identified by `acceptedHash`.
+    /// @dev No approval check: an address may sign while it waits to be approved (6.2). The
+    ///      caller is the signer, because the transaction is signed by its wallet (D-08).
+    ///      `acceptedHash` must equal the current hash, so nobody is recorded as accepting a
+    ///      version they never saw. A newer version may be signed again (D-25).
+    ///      `block.timestamp` is emitted as a record only (D-26).
+    function signTerms(bytes32 acceptedHash) external whenNotPaused {
+        bytes32 current = termsHash;
+        if (current == bytes32(0)) revert IIndicoLedger.TermsNotSet();
+        if (acceptedHash != current) revert IIndicoLedger.WrongTermsHash();
+        if (signedTermsHash[msg.sender] == current) revert IIndicoLedger.AlreadySigned();
+
+        termsSigned[msg.sender] = true;
+        signedTermsHash[msg.sender] = current;
+        emit IIndicoLedger.TermsSigned(msg.sender, current, block.timestamp);
     }
 
     /// @notice Stop every `whenNotPaused` function. Reverts `EnforcedPause` if already paused.
