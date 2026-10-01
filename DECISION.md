@@ -282,6 +282,14 @@ Mutations (G9), each on `Matrix.sol`, restored byte-identical by SHA-256 after e
 Open items: raised O-013.
 Commit: test: loan matrix time axis to five points, 180 cells, with named reverts at both ends (P0.3)
 
+### C-011 · P0.3 · CI gate line G10 · 2026-10-01
+Type: chore
+Files: none changed. Completes the line C-010 left pending.
+- G10 pass, `G10.log`: run 36812233212 on `c5c1dbd` green; steps 1 to 3 and 5 to 7 pass,
+  step 4 skipped as designed. The regenerated `.gas-snapshot` passes the CI gas check on the
+  runner, so local and CI measure the same gas on Forge 1.8.3 (D-14).
+Commit: docs: record P0.3 CI gate result
+
 ---
 
 ## Open items
