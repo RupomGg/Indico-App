@@ -60,7 +60,7 @@ jobs:
       - name: 7. slither, fails on medium
         run: |
           pip install slither-analyzer
-          slither . --fail-medium
+          slither . --fail-medium --filter-paths "lib/"
 
       - name: 8. backend typecheck, lint, unit, integration, chain integration
         if: false

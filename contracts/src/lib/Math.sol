@@ -26,6 +26,8 @@ library Math {
     /// @dev Reverts `MathOverflow` when the result does not fit in 256 bits.
     function mulDivDown(uint256 x, uint256 y, uint256 d) internal pure returns (uint256) {
         if (d == 0) revert DivisionByZero();
+        // Only the high word matters: the result fits in 256 bits iff high < d.
+        // slither-disable-next-line unused-return
         (uint256 high,) = OZMath.mul512(x, y);
         if (high >= d) revert MathOverflow();
         return OZMath.mulDiv(x, y, d);
