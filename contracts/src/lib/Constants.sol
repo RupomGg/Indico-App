@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.26;
 
+/// @dev USDC decimals. Credit uses the same 6, so 1 credit = 1 USDC exactly.
+uint256 constant USDC_DECIMALS = 6;
 /// @dev Basis-point denominator.
 uint256 constant BPS = 10_000;
 /// @dev Loan to value, 80%. A compile-time constant because the figure is in a signed document.

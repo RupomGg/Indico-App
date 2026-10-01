@@ -10,7 +10,8 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 ///      Role management (`grantRole`, `revokeRole`, `hasRole`) and `paused()` come from
 ///      OpenZeppelin AccessControl and Pausable and are not repeated here.
 ///      Constructor (spec 6.0): `constructor(IERC20 usdc_, address admin_, address guardian_)`,
-///      reverts `ZeroAddress` on any zero argument.
+///      reverts `ZeroAddress` on any zero argument, then `UsdcNotAContract`,
+///      `UsdcDecimalsUnreadable` or `UsdcWrongDecimals` unless `usdc_` reports 6 decimals.
 interface IIndicoLedger {
     /// @notice Loan lifecycle. Stored as `uint8` in `Loan.status`.
     enum LoanStatus {
@@ -105,6 +106,12 @@ interface IIndicoLedger {
     error ExtensionWindowNotOpen(uint64 opensAt);
     /// @notice A constructor argument was the zero address.
     error ZeroAddress();
+    /// @notice Constructor: `token` has no code, so it cannot be USDC.
+    error UsdcNotAContract(address token);
+    /// @notice Constructor: `token.decimals()` reverted or returned less than one word.
+    error UsdcDecimalsUnreadable(address token);
+    /// @notice Constructor: `decimals()` returned `decimals`, not 6. 1 credit = 1 USDC needs 6.
+    error UsdcWrongDecimals(uint256 decimals);
     /// @notice `withdraw` asked to burn more shares than the caller holds.
     error InsufficientShares(uint256 requested, uint256 held);
     /// @notice Raised by `lib/Math.sol`; same selector as `Math.DivisionByZero`.

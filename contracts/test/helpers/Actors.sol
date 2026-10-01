@@ -2,6 +2,7 @@
 pragma solidity 0.8.26;
 
 import {StateSnapshot} from "./StateSnapshot.sol";
+import {Fixture, FixtureBase} from "./Fixture.sol";
 import {Matrix} from "./Matrix.sol";
 import {EXTENSION_WINDOW} from "../../src/lib/Constants.sol";
 
@@ -13,7 +14,7 @@ import {EXTENSION_WINDOW} from "../../src/lib/Constants.sol";
 ///         address who = _participant(Participant(c[0]));
 ///         ...
 ///     }
-abstract contract Actors is StateSnapshot, Matrix {
+abstract contract Actors is StateSnapshot, Fixture, Matrix {
     /// @dev Section 2.2.
     enum Participant {
         Unknown,
@@ -53,6 +54,11 @@ abstract contract Actors is StateSnapshot, Matrix {
     uint256 internal constant NO_LOAN = type(uint256).max;
 
     uint256 internal constant POOL_DEPOSIT = 1_000e6;
+
+    /// @dev Full onboarding from `Fixture`; `StateSnapshot` adds no setup of its own.
+    function setUp() public virtual override(FixtureBase, Fixture) {
+        super.setUp();
+    }
 
     /// @notice A fresh address in state `p`, tracked for snapshots, holding `FUND` USDC with
     ///         the ledger approved. Holds no credit; mint what the cell needs.

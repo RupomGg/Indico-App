@@ -296,7 +296,9 @@ pause matrix (IT §2.3) and the participant matrix (IT §2.2) with its own funct
 - Spec refs: IT §5; TS §2.2; `docs/ownership.md` §3.
 - Corner cases: every negative-space test (unknown selector, calldata one byte short, 100 bytes
   appended, raw ETH sent, stray ERC-20 sent); reentrancy cross product (4 USDC functions × 11
-  re-entry targets) as one loop; Slither on `src/` clean or triaged in writing.
+  re-entry targets) as one loop; Slither on `src/` clean or triaged in writing;
+  `grep -rn "forge-lint: disable" src/` returns nothing (any suppression still there fails the
+  gate unless it has its own written decision; see D-18).
 - Handover produced: ABI JSON, TypeScript client package (viem), custom-error decoder map, gas
   table per function.
 - Manual check: owner tags `interface-v1.0.0` and sends the handover to the backend. From here the

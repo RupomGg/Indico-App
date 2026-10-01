@@ -2,14 +2,14 @@
 pragma solidity 0.8.26;
 
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
-import {Fixture} from "./Fixture.sol";
+import {FixtureBase} from "./Fixture.sol";
 
 /// @notice Every observable value in one struct. A revert test is two lines:
 ///
 ///     Snapshot memory s = _snapshot();
 ///     vm.expectRevert(...); ledger.spend(...);
 ///     _assertUnchanged(s);
-abstract contract StateSnapshot is Fixture {
+abstract contract StateSnapshot is FixtureBase {
     struct Snapshot {
         address[] who;
         uint256[] credit;

@@ -8,14 +8,10 @@ import {Math} from "../../src/lib/Math.sol";
 import {BPS, LTV_BPS} from "../../src/lib/Constants.sol";
 import {MockUSDC} from "./MockUSDC.sol";
 
-/// @notice The only place test setup lives. Test files call these helpers; they never
-///         prank the admin themselves.
-///
-///         After `setUp`: terms hash set; `alice` and `bob` approved users who signed;
-///         `merchantA` and `merchantB` approved merchants who signed; every named actor
-///         holds `FUND` USDC and has approved the ledger to pull it. No credit, empty pool.
-abstract contract Fixture is Test {
-    bytes32 internal constant TERMS = keccak256("indico-terms-v1");
+/// @notice Deployment only: the ledger on `MockUSDC`, roles granted by the constructor, and
+///         every named actor holding `FUND` USDC with the ledger approved to pull it. Uses
+///         nothing but the constructor, so it works from the first portion that has a ledger.
+abstract contract FixtureBase is Test {
     uint256 internal constant FUND = 1_000_000e6;
 
     MockUSDC internal usdc;
@@ -35,6 +31,40 @@ abstract contract Fixture is Test {
         usdc = new MockUSDC();
         ledger = IIndicoLedger(address(new IndicoLedger(usdc, admin, guardian)));
 
+        _addActor(admin);
+        _addActor(guardian);
+        _addActor(alice);
+        _addActor(bob);
+        _addActor(merchantA);
+        _addActor(merchantB);
+    }
+
+    /// @dev Track `a` for snapshots, give it `FUND` USDC and an unlimited ledger allowance.
+    function _addActor(address a) internal {
+        actors.push(a);
+        usdc.mint(a, FUND);
+        vm.prank(a);
+        usdc.approve(address(ledger), type(uint256).max);
+    }
+
+    function _pause() internal {
+        vm.prank(guardian);
+        ledger.pause();
+    }
+}
+
+/// @notice The only place test setup lives. Test files call these helpers; they never
+///         prank the admin themselves.
+///
+///         After `setUp`: everything `FixtureBase` sets up, plus the terms hash set; `alice`
+///         and `bob` approved users who signed; `merchantA` and `merchantB` approved merchants
+///         who signed. No credit, empty pool.
+abstract contract Fixture is FixtureBase {
+    bytes32 internal constant TERMS = keccak256("indico-terms-v1");
+
+    function setUp() public virtual override {
+        super.setUp();
+
         vm.prank(admin);
         ledger.setTermsHash(TERMS);
 
@@ -42,13 +72,6 @@ abstract contract Fixture is Test {
         _approveAndSign(bob);
         _approveMerchantAndSign(merchantA);
         _approveMerchantAndSign(merchantB);
-
-        _addActor(admin);
-        _addActor(guardian);
-        _addActor(alice);
-        _addActor(bob);
-        _addActor(merchantA);
-        _addActor(merchantB);
     }
 
     // ------------------------------------------------------------------ the three named
@@ -97,19 +120,6 @@ abstract contract Fixture is Test {
         ledger.setMerchantApproved(m, false);
     }
 
-    function _pause() internal {
-        vm.prank(guardian);
-        ledger.pause();
-    }
-
-    /// @dev Track `a` for snapshots, give it `FUND` USDC and an unlimited ledger allowance.
-    function _addActor(address a) internal {
-        actors.push(a);
-        usdc.mint(a, FUND);
-        vm.prank(a);
-        usdc.approve(address(ledger), type(uint256).max);
-    }
-
     /// @dev Collateral computed independently of the ledger's own view.
     function _collateralFor(uint256 principal) internal pure returns (uint256) {
         return Math.ceilDiv(principal * BPS, LTV_BPS);
@@ -126,7 +136,8 @@ abstract contract Fixture is Test {
     /// @dev Moves past the due date, liquidates, and restores the clock.
     function _default(uint256 loanId) internal {
         (, uint64 dueDate,,,,) = ledger.loans(loanId);
-        uint256 now_ = block.timestamp;
+        // Not `block.timestamp`: under via_ir that read can be reused after `vm.warp`.
+        uint256 now_ = vm.getBlockTimestamp();
         vm.warp(uint256(dueDate) + 1);
         ledger.liquidate(loanId);
         vm.warp(now_);

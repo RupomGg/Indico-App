@@ -290,6 +290,105 @@ Files: none changed. Completes the line C-010 left pending.
   runner, so local and CI measure the same gas on Forge 1.8.3 (D-14).
 Commit: docs: record P0.3 CI gate result
 
+### C-012 · P1.1 · Test helpers that first compiled with the ledger · 2026-10-01
+Type: fix
+Decisions: none
+Root causes and fixes, found when `src/IndicoLedger.sol` made the Phase-0 files compile:
+- `Fixture.setUp()` called `setTermsHash`, the approvals and `signTerms` (P1.2, P1.3), so
+  every test built on it, `Smoke.t.sol` included, would revert in P1.1. With the CI skip step
+  gone, CI would have gone red. Fix: split it.
+- `Actors` inherits both `StateSnapshot` and `Fixture`, which after the split both reach
+  `setUp`; the compiler requires an explicit override (error 6480).
+- `Fixture._default` saved the clock with `block.timestamp` before `vm.warp`; under `via_ir`
+  that read can be reused after the warp, so the clock would be restored wrongly. Found by the
+  Forge 1.8.3 linter (`environment-read-across-mutation`).
+Files:
+- Changed: `contracts/test/helpers/Fixture.sol`: new `FixtureBase` (deploy, the six named actors
+  funded with `FUND` and the ledger approved, `_addActor`, `_pause`), using only the constructor.
+  `Fixture is FixtureBase` keeps the onboarding (terms hash, approvals, signatures) and every
+  other helper, unchanged. `_default` now reads `vm.getBlockTimestamp()`. Depends on it: every
+  test file.
+- Changed: `contracts/test/helpers/StateSnapshot.sol`: inherits `FixtureBase` instead of
+  `Fixture`, since it only reads state. Depends on it: `Actors.sol`, the P1.1 unit tests.
+- Changed: `contracts/test/helpers/Actors.sol`: `is StateSnapshot, Fixture, Matrix`, with
+  `setUp() override(FixtureBase, Fixture)` calling `super.setUp()`, so it still gets full
+  onboarding. Compiles in P1.1; nothing runs it until P1.3.
+- Changed: `contracts/test/unit/Smoke.t.sol`: inherits `FixtureBase`; its one assertion is
+  unchanged. Comment updated: it passes from P1.1.
+- New: `contracts/test/helpers/Fixture.t.sol`: the split's own test, 4 tests. `FixtureBase`
+  deploys on the mock, tracks exactly the six named actors in order, funds each with `FUND` and
+  an unlimited allowance, and onboards nobody (terms hash zero, no approval, no signature).
+- Test for `_default` moved to P1.11, because it needs `liquidate` (O-021).
+Gate: covered by the P1.1 gate in C-013.
+Commit: part of the P1.1 commit.
+
+### C-013 · P1.1 · Constructor, roles, pause · 2026-10-01
+Type: feature
+Decisions: D-15, D-16, D-17, D-18 (new)
+Files:
+- New: `contracts/src/IndicoLedger.sol`: `AccessControl` and `Pausable`; `ADMIN_ROLE` and
+  `GUARDIAN_ROLE`; the full contract-spec section 4 state, public, nothing reading or writing it
+  (D-17), six scalars with a lint suppression (D-18); constructor reverting `ZeroAddress`
+  (any argument), then `UsdcNotAContract`, `UsdcDecimalsUnreadable`, `UsdcWrongDecimals`
+  (D-16), granting `DEFAULT_ADMIN_ROLE` and `ADMIN_ROLE` to `admin_` and `GUARDIAN_ROLE` to
+  `guardian_`, `admin_ == guardian_` allowed (D-15); `pause` and `unpause`, guardian only. Does
+  not inherit `IIndicoLedger` yet (O-014). Depends on it: every test, and the CI skip step,
+  which stops running now that the file exists.
+- Changed: `contracts/src/interfaces/IIndicoLedger.sol`: errors `UsdcNotAContract(address)`,
+  `UsdcDecimalsUnreadable(address)`, `UsdcWrongDecimals(uint256)`; constructor comment. Depends
+  on it: the backend error map (P1.13), `docs/contract-spec.md` sections 6.0 and 8 (updated
+  locally).
+- Changed: `contracts/src/lib/Constants.sol`: `USDC_DECIMALS = 6`.
+- New: `contracts/test/unit/Constructor.t.sol`: partition table for all three arguments, 24
+  tests. Zero address per argument and all three; EOA, precompile, the ledger's own future
+  address; decimals 0, 5, 7, 18, 256 and a fuzz over every value but 6; `decimals()` that
+  reverts, does not exist, returns nothing, or burns all its gas; exactly three `RoleGranted`
+  events with exact topics; exact role holders over ten addresses; role ids and role admins;
+  admin equal to guardian; every caller x every state-changing function that exists moves no
+  USDC.
+- New: `contracts/test/unit/Pause.t.sol`: caller x state table, 11 tests. Guardian pauses and
+  unpauses with exact events and nothing else changed; `EnforcedPause` and `ExpectedPause`;
+  ten non-guardians x both functions x both states get `AccessControlUnauthorizedAccount`
+  with state unchanged; revoked and newly granted guardian; fuzz over random callers; the
+  2 x 2 pause matrix (IT 2.3) for these two functions.
+- Changed: `INSTRUCTION.md`: P1.13 corner case, `grep -rn "forge-lint: disable" src/` returns
+  nothing.
+- Changed: `contracts/.gas-snapshot`: 38 new lines (Constructor 23, Pause 10, FixtureBase 4,
+  Smoke 1). Every existing line unchanged, compared with HEAD; diff in `G8.log`.
+- Changed (local, not pushed): `docs/decisions.md` D-15 to D-18; `docs/contract-spec.md` 6.0, 8.
+Found on re-reading (INSTRUCTION 1.4): a token whose `decimals()` burns all forwarded gas.
+`staticcall` keeps 1/64, so the call fails and the constructor reverts
+`UsdcDecimalsUnreadable`; the trace shows `OutOfGas` then the named revert. Now a test.
+Slither (CI flags, local 0.11.6): exit 0. Findings on `src/`: `constable-states` on the same six
+scalars (optimization), `low-level-calls` on the `decimals()` read (informational, deliberate,
+D-16), `naming-convention` on the role getters (informational, pre-existing).
+Gate (logs in `docs/gate-logs/P1.1/`, Forge 1.8.3, no Phase-0 skip):
+- G1 pass, `G1.log`: 100 passed, 0 failed, 0 skipped, exit 0.
+- G2 pass, `G2.log`: src lines 26/26, branches 8/8.
+- G3 pass, `G3.log`: exit 0.
+- G4 pass, `G4.log`: `forge build --deny warnings` exit 0, lint included.
+- G5 pass, `G5.log`: seeds 1 and 2, 100 passed each.
+- G6 pass, `G6.log`: three runs, 100 passed each.
+- G7 pass, `G7.log`: `ci` profile, 100 passed.
+- G8 pass, `G8.log`: `IndicoLedger` 2,415 B runtime, 22,161 B margin; snapshot check 86 passed.
+- G9 pass, `G9.log`: see Mutations.
+- G10 pending: owner pushes.
+- G11 pending: owner sees `Smoke.t.sol` pass and the CI Phase-0 skip step not run.
+- G12: this entry and C-012.
+Mutations (G9), each on `IndicoLedger.sol`, restored byte-identical by SHA-256 after each:
+- M1 `usdc_` zero check dropped: `UsdcNotAContract(0x0) != ZeroAddress()`. Caught.
+- M2 has-code check deleted: an EOA gives `UsdcDecimalsUnreadable`, not `UsdcNotAContract`. Caught.
+- M3 `!= 6` to `> 6`: decimals 0 and 5 deploy. Caught.
+- M4 `!ok ||` dropped: a reverting `decimals()` has its revert data decoded as a number. Caught.
+- M5 guardian role granted to `admin_`: `test_guardianPauses` gets `AccessControlUnauthorizedAccount`. Caught.
+- M6 `DEFAULT_ADMIN_ROLE` not granted: two events instead of three, role sweep fails. Caught.
+- M7 `onlyRole` removed from `pause`: non-guardians pause. Caught.
+- M8 `unpause` calls `_pause`: `EnforcedPause`. Caught.
+Moved, not dropped: the participant-matrix `pause` column (IT 2.2) to P1.3, because building the
+nine participants needs approvals and `signTerms` (O-022); the `_default` test to P1.11 (O-021).
+Open items: raised O-014 to O-023.
+Commit: feat: IndicoLedger constructor with USDC checks, roles and guardian pause; split test fixture (P1.1)
+
 ---
 
 ## Open items
@@ -309,3 +408,13 @@ Commit: docs: record P0.3 CI gate result
 | O-011 | Decisions due inside portions: duplicate approvals, zero terms hash, one address as user and merchant (P1.2); maximum declared asset value so `totalCredit` cannot overflow, zero document hash (P1.4); issuing credit to an unapproved address (P1.5); first-deposit inflation mitigation (P1.7) | engineer proposes, owner approves | P1.2, P1.4, P1.5, P1.7 |
 | O-012 | CI warnings: `actions/checkout@v4` runs on deprecated Node.js 20 (move to v5 in both workflows); `ubuntu-latest` becomes Ubuntu 26 from 2026-10-19, so recheck CI after that date | engineer | |
 | O-013 | Reconsider where the loan time axis lives: `_loanTimeAt` and `_loanDims` sit in `Matrix.sol` because `Actors.sol` could not build in Phase 0. Once it builds, decide whether to move them next to `LoanState` and replace the literal `4` with `LOAN_STATES` | engineer | P1.11 |
+| O-014 | `IndicoLedger` must inherit `IIndicoLedger`, so the compiler proves the implementation matches the interface the backend builds against | engineer | P1.13 at the latest |
+| O-015 | Delete the `uninitialized-state` suppression on `termsHash` (D-18) as part of the gate | engineer | P1.2 |
+| O-016 | Delete the `uninitialized-state` suppression on `totalCredit` (D-18) as part of the gate | engineer | P1.4 |
+| O-017 | Delete the `uninitialized-state` suppression on `totalShares` (D-18) as part of the gate | engineer | P1.7 |
+| O-018 | Delete the `uninitialized-state` suppression on `totalLent` (D-18) as part of the gate | engineer | P1.8 |
+| O-019 | Delete the `uninitialized-state` suppression on `nextLoanId` (D-18) as part of the gate | engineer | P1.8 |
+| O-020 | Delete the `uninitialized-state` suppression on `poolCredit` (D-18) as part of the gate | engineer | P1.11 |
+| O-021 | Test for the `Fixture._default` clock fix (C-012): after `_default`, `block.timestamp` is back to its value before the call | engineer | P1.11 |
+| O-022 | Participant matrix (IT 2.2): the `pause` column, nine participants, moved from P1.1 because building them needs approvals and `signTerms` | engineer | P1.3 |
+| O-023 | The Phase-0 skip step in `ci.yml` and `deep.yml` no longer runs now that `src/IndicoLedger.sol` exists; delete it | engineer | P1.13 |
