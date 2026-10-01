@@ -206,17 +206,93 @@ Files: none changed. Completes the two lines C-007 left pending.
 Open items: O-005 still open until a fresh terminal shows `forge Version: 1.8.3`.
 Commit: docs: record P0.2 CI gate results
 
+### C-009 · chore · Forge on PATH · 2026-10-01
+Type: chore
+Files: none changed.
+- A fresh PowerShell, with PATH rebuilt from the machine and user registry values only,
+  resolves `forge` to `C:\Users\Radwan\.foundry\bin\forge.exe` and prints
+  `forge Version: 1.8.3` (commit `cae51ad`). Closes O-005.
+- Open-items table: O-001 and O-004 marked closed by C-007, O-005 by this entry.
+Commit: docs: close O-005, forge 1.8.3 on PATH
+
+### C-010 · P0.3 · Loan matrix to 180 cells · 2026-10-01
+Type: feature
+Decisions: D-13 (existing), none new
+Files:
+- Changed: `contracts/test/helpers/Matrix.sol`: new `LOAN_TIMES = 5`, `_loanDims()`
+  (4 states x 3 actions x 3 callers x 5 times = 180), `_loanTimeAt(uint256 t, uint64 dueDate)`
+  returning the five moments `dueDate - EXTENSION_WINDOW - 1`, `dueDate - EXTENSION_WINDOW`,
+  `dueDate - EXTENSION_WINDOW / 2`, `dueDate`, `dueDate + 1`; named errors
+  `LoanTimeOutOfRange(t)` and `DueDateBeforeWindow(dueDate)`; usage comment updated. Why: the
+  loan matrix now has one shared definition of its time axis instead of each test choosing its
+  own moments. Depends on it: `Actors.sol` (inherits `Matrix`), `Helpers.t.sol`, and the
+  P1.11 loan matrix.
+  - Overflow: `_loanTimeAt` returns `uint256` and widens `dueDate` before adding, so
+    `dueDate + 1` cannot overflow; at `dueDate = type(uint64).max` it returns exactly `2**64`.
+  - Underflow: a `dueDate <= EXTENSION_WINDOW` has no moment before its window, so it is a named
+    revert, never an arithmetic panic. When both inputs are invalid, the index is checked first.
+- Changed: `contracts/test/helpers/Helpers.t.sol`: the cross-product self-check uses `_loanDims()`
+  and expects 180 cells, each visited once (was `_dims(4, 3, 3, 3)`, 108). New partition table
+  for `_loanTimeAt` as a comment, plus 10 unit tests (`test_loanDims_is4x3x3x5`, the five exact
+  points at a typical due date, the smallest valid due date, `uint64` max, index 5, index
+  `uint256` max, due date 0, due date exactly the window, both invalid) and 3 fuzz properties
+  (exact and strictly increasing for every valid due date; named revert for every due date inside
+  the window; named revert for every out-of-range index).
+- Changed: `docs/input-testing.md` section 2.1 (local, not pushed): 144 cells became 180, with a
+  table of the five time points and a pointer to `_loanTimeAt` and `_loanDims`.
+- Changed: `contracts/.gas-snapshot`: regenerated with
+  `FOUNDRY_PROFILE=default forge snapshot --no-match-test testFuzz`. Only `HelpersTest` lines
+  changed; every `MathTest` value is identical (diff in `G8.log`):
+  - `test_crossProduct_everyCellOnceFromCleanState` 7,571,574 to 10,048,005 (+32.7%). Over the
+    10% line, explained: the loan self-check now visits 180 cells, not 108.
+  - The seven `test_mock_*` lines each rose by 0.03% to 0.18% (for example 216,575 to 216,773).
+    No mock code changed; the test contract has ten more functions, so its function dispatch
+    costs slightly more.
+  - Ten new lines for the new unit tests. Fuzz tests are excluded by the command.
+  - The file no longer ends with a newline, because `forge snapshot` does not write one. C-006's
+    hand-built copy had one.
+- Placement: the helper lives in `Matrix.sol`, not `Actors.sol`. `Actors.sol` imports the
+  ledger, so it is excluded from every build until `src/IndicoLedger.sol` exists (the Phase-0
+  skip). A helper there could not be compiled or tested in this portion. `Matrix.sol` does not
+  depend on the ledger. Cost: `_loanDims()` writes the state count as the literal `4` because
+  `LOAN_STATES` is in `Actors.sol`. See O-013.
+Gate (logs in `docs/gate-logs/P0.3/`, Forge 1.8.3):
+- G1 pass, `G1.log`: 60 passed, 0 failed, 0 skipped, exit 0.
+- G2 pass, `G2.log`: src lines 9/9, branches 4/4 (nothing under `src/` changed).
+- G3 pass, `G3.log`: exit 0.
+- G4 pass, `G4.log`: `forge build --deny warnings` exit 0.
+- G5 pass, `G5.log`: seeds 1 and 2, 60 passed each.
+- G6 pass, `G6.log`: three runs, 60 passed each.
+- G7 pass, `G7.log`: `ci` profile, 60 passed.
+- G8 pass, `G8.log`: largest artifact `MockUSDC` 4,091 B runtime; snapshot check 48 passed, no
+  diff after regeneration; the diff against the committed snapshot is in the same log.
+- G9 pass, `G9.log`: see Mutations.
+- G10 pending: owner pushes.
+- G11: none beyond the gate.
+- G12: this entry.
+Mutations (G9), each on `Matrix.sol`, restored byte-identical by SHA-256 after each:
+- M1 `t >= LOAN_TIMES` to `t > LOAN_TIMES`: `test_loanTime_indexPastEnd_reverts`,
+  `test_loanTime_bothInvalid_indexCheckedFirst` and the out-of-range fuzz fail. Caught.
+- M2 early-dueDate check deleted: `test_loanTime_dueDateZero_reverts` fails with
+  `panic: arithmetic underflow or overflow (0x11)`, plus two more. Caught.
+- M3 `dueDate <= EXTENSION_WINDOW` to `<`: `test_loanTime_dueDateExactlyWindow_reverts` and the
+  inside-window fuzz fail. Caught.
+- M4 time axis back to four points: `loan: 144 != 180` and `times: 4 != 5`. Caught.
+- M5 `afterDue` without `+ 1`: `afterDue: 1707776000 != 1707776001` and three more. Caught.
+Open items: raised O-013.
+Commit: test: loan matrix time axis to five points, 180 cells, with named reverts at both ends (P0.3)
+
 ---
 
 ## Open items
 
 | Id | Item | Owner | Closed by |
 |---|---|---|---|
-| O-001 | CI has known problems: Slither installed with plain `pip` (refused on the runner) and scanning tests and libraries; invariant step with no invariant tests; gas snapshot check may use different flags than the committed snapshot | engineer | P0.2 |
+| O-001 | CI has known problems: Slither installed with plain `pip` (refused on the runner) and scanning tests and libraries; invariant step with no invariant tests; gas snapshot check may use different flags than the committed snapshot | engineer | Closed by C-007 |
 | O-002 | Loan matrix: `input-testing.md` says 144 cells, `Helpers.t.sol` checks 108; the agreed figure is 180 (five time points) | engineer | P0.3 |
 | O-003 | Re-create the lost tag: `git tag interface-v0.2.0` on current `main`, then push it, and tell the backend that v0.1.0 no longer exists | owner | |
-| O-004 | GitHub CLI not installed; gate line G10 needs it | owner | before P0.2 sign-off |
-| O-005 | Foundry was not on PATH on 2026-09-29 | owner | before P1.1 |
+| O-004 | GitHub CLI not installed; gate line G10 needs it | owner | Closed by C-007 |
+| O-005 | Foundry was not on PATH on 2026-09-29 | owner | Closed by C-009 |
 | O-006 | Backend stack: NestJS container, or Next.js + Supabase + a committed worker. The backend owner decides before Level 4 | backend | |
 | O-007 | Client: what defaulted collateral held by the pool is for. Until answered it is inert and a default is a straight USDC loss to depositors | owner, client | |
 | O-008 | Client: what merchants do with credit they receive. No redemption path is built until answered | owner, client | |
@@ -224,3 +300,4 @@ Commit: docs: record P0.2 CI gate results
 | O-010 | Client: written acknowledgement that no external audit was bought, before any real money | owner, client | before P3.3 |
 | O-011 | Decisions due inside portions: duplicate approvals, zero terms hash, one address as user and merchant (P1.2); maximum declared asset value so `totalCredit` cannot overflow, zero document hash (P1.4); issuing credit to an unapproved address (P1.5); first-deposit inflation mitigation (P1.7) | engineer proposes, owner approves | P1.2, P1.4, P1.5, P1.7 |
 | O-012 | CI warnings: `actions/checkout@v4` runs on deprecated Node.js 20 (move to v5 in both workflows); `ubuntu-latest` becomes Ubuntu 26 from 2026-10-19, so recheck CI after that date | engineer | |
+| O-013 | Reconsider where the loan time axis lives: `_loanTimeAt` and `_loanDims` sit in `Matrix.sol` because `Actors.sol` could not build in Phase 0. Once it builds, decide whether to move them next to `LoanState` and replace the literal `4` with `LOAN_STATES` | engineer | P1.11 |
