@@ -122,8 +122,9 @@ contract PauseTest is StateSnapshot, Matrix {
     }
 
     function testFuzz_randomCaller_cannotPause(address who) public {
-        vm.assume(who != guardian);
-        assumeNotForgeAddress(who);
+        // Remapped, never discarded (INSTRUCTION 1.2).
+        who = _remapForgeAddress(who);
+        if (who == guardian) who = makeAddr("remapped-not-guardian");
         _assertDenied(who, true);
     }
 

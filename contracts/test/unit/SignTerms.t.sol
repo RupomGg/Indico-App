@@ -129,7 +129,7 @@ contract SignTermsTest is StateSnapshot {
 
     function testFuzz_anyHashButCurrent_revertsWrongTermsHash(bytes32 h) public {
         _setHash(H1);
-        vm.assume(h != H1);
+        if (h == H1) h = H2; // remapped, never discarded (INSTRUCTION 1.2)
         _expectRevertUnchanged(x, h, abi.encodeWithSelector(IIndicoLedger.WrongTermsHash.selector));
     }
 
@@ -153,7 +153,7 @@ contract SignTermsTest is StateSnapshot {
     }
 
     function testFuzz_anyCaller_signsOnce_thenAlreadySigned(address who) public {
-        assumeNotForgeAddress(who);
+        who = _remapForgeAddress(who); // remapped, never discarded (INSTRUCTION 1.2)
         _setHash(H1);
         _signAs(who, H1);
         assertEq(ledger.signedTermsHash(who), H1);

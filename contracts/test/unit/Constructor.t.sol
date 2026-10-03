@@ -177,7 +177,7 @@ contract ConstructorTest is StateSnapshot {
     }
 
     function testFuzz_decimalsNotSix_alwaysNamedRevert(uint256 d) public {
-        vm.assume(d != 6);
+        if (d == 6) d = 7; // remapped, never discarded (INSTRUCTION 1.2)
         _assertWrongDecimals(d);
     }
 

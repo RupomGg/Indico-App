@@ -73,6 +73,23 @@ contract FixtureBaseTest is FixtureBase {
         }
     }
 
+    function test_remapForgeAddress_remapsExactlyTheThree() public {
+        address fallbackAddr = makeAddr("remapped-forge-address");
+        assertEq(_remapForgeAddress(VM_ADDRESS), fallbackAddr);
+        assertEq(_remapForgeAddress(CONSOLE), fallbackAddr);
+        assertEq(_remapForgeAddress(CREATE2_FACTORY), fallbackAddr);
+        address[5] memory keep = [address(0), alice, address(ledger), address(usdc), address(1)];
+        for (uint256 i; i < keep.length; ++i) {
+            assertEq(_remapForgeAddress(keep[i]), keep[i]);
+        }
+    }
+
+    function testFuzz_remapForgeAddress_neverAForgeAddress(address a) public {
+        address r = _remapForgeAddress(a);
+        assertTrue(r != VM_ADDRESS && r != CONSOLE && r != CREATE2_FACTORY);
+        if (a != VM_ADDRESS && a != CONSOLE && a != CREATE2_FACTORY) assertEq(r, a);
+    }
+
     function test_noOnboarding() public view {
         assertEq(ledger.termsHash(), bytes32(0), "terms hash");
         for (uint256 i; i < actors.length; ++i) {

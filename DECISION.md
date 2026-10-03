@@ -666,6 +666,91 @@ Files: none changed. Completes the line C-019 left pending.
   docs) was still in progress when this was written; its result is recorded when it finishes.
 Commit: docs: record P1.3 CI gate result
 
+### C-021 · P1.2 reopened · Deep fuzz run 36833476286 failed · 2026-10-01
+Type: fix (result recorded; fix pending owner approval)
+Result of the scheduled Deep fuzz run noted in C-020: run 36833476286 on `a16c2b8`
+(5,000,000 fuzz runs), **failed**, 146 passed, 1 failed:
+`[FAIL: vm.assume rejected too many inputs (65536 allowed)]
+testFuzz_firstApprovalFixesRole(address,bool) (runs: 591248)` in `test/unit/Membership.t.sol`.
+No counterexample: the contract did not break a property. The test stopped because its
+`vm.assume(a != 0 && a != ledger && a != usdc)` threw away more than Forge's limit of 65,536
+inputs. Forge's fuzzer deliberately feeds addresses it finds in contract state, and the ledger
+and USDC addresses are among them, so about 11% of inputs were rejected. At the default 10,000
+runs and the `ci` 100,000 runs that stays under the limit; at 5,000,000 it does not.
+Reopens P1.2, the portion that wrote the test. Six other fuzz tests use the same
+`vm.assume` pattern on values the fuzzer favours and are exposed to the same failure at 5,000,000
+runs: `Constructor.t.sol:180`, `Membership.t.sol:146`, `Pause.t.sol:125-126`,
+`SignTerms.t.sol:132` and `:156`.
+Fix: see the entry that follows this one, once approved.
+
+### C-022 · P1.2 reopened · Fuzz tests remap instead of discarding input · 2026-10-03
+Type: fix
+Decisions: none (process rules added to INSTRUCTION.md)
+Root cause (C-021): fuzz tests discarded input with `vm.assume` on values Forge's fuzzer
+deliberately favours (addresses and constants it finds in state). At 5,000,000 runs the rejects
+pass Forge's limit of 65,536 and the test stops. No property of the contract was broken.
+Confirmed again by the next nightly, run 36979982138 on `9249add` (P1.3, fix not yet pushed):
+the same test, `vm.assume rejected too many inputs (runs: 587534)`, 172 other tests passing.
+Fix, every caller (INSTRUCTION 1.3): no test discards input any more. Each excluded value is
+remapped to a valid one, so every run tests something. No assertion or property changed.
+Files:
+- Changed: `contracts/test/helpers/Fixture.sol`: `FixtureBase._remapForgeAddress(a)` returns one
+  ordinary address for Forge's own three (the cheatcode VM, console, the CREATE2 deployer) and
+  every other address unchanged.
+- Changed: `contracts/test/helpers/Fixture.t.sol`: two tests for it: the three are remapped and
+  five ordinary addresses (zero, alice, ledger, USDC, `address(1)`) are not; a fuzz that the
+  result is never a Forge address and is unchanged for any other.
+- Changed: `contracts/test/unit/Constructor.t.sol`: `testFuzz_decimalsNotSix_alwaysNamedRevert`,
+  `d == 6` becomes `7`.
+- Changed: `contracts/test/unit/Membership.t.sol`: `testFuzz_setTermsHash_anyNonZero_stored`, a
+  zero hash becomes `keccak256("remapped-zero")`; `testFuzz_firstApprovalFixesRole`, zero, the
+  ledger or USDC becomes `makeAddr("remapped")`.
+- Changed: `contracts/test/unit/Pause.t.sol`: `testFuzz_randomCaller_cannotPause`, a Forge address
+  is remapped, then the guardian becomes `makeAddr("remapped-not-guardian")`.
+- Changed: `contracts/test/unit/SignTerms.t.sol`: `testFuzz_anyHashButCurrent_revertsWrongTermsHash`,
+  the current hash becomes the other one; `testFuzz_anyCaller_signsOnce_thenAlreadySigned`, a
+  Forge address is remapped.
+- Changed: `INSTRUCTION.md` 1.2: every session starts by checking the latest Deep fuzz run, and a
+  red one reopens the portion it ran on before any new work (the gap: P1.2 was signed off before
+  its nightly deep run finished); fuzz tests never discard input, they remap or `bound`. Gate
+  table: new line G13, `grep -rn "vm.assume\|assumeNot" test/` returns nothing; an exception needs
+  its own decision entry.
+- Changed: `contracts/.gas-snapshot`: one new line,
+  `FixtureBaseTest:test_remapForgeAddress_remapsExactlyTheThree`; the four other `FixtureBaseTest`
+  lines rose 0.02% to 0.44% (the test contract has more functions); nothing else changed.
+- Changed (local, not pushed): `prompts/RUNBOOK.md` session opener starts by checking the latest
+  Deep fuzz run.
+Proof, local, at the deep profile (`docs/gate-logs/P1.2/deep-local.log`):
+`FOUNDRY_PROFILE=deep forge test` on the six fixed tests and the new remap fuzz,
+**5,000,000 runs each, 7 passed, 0 failed**, exit 0, 5,794 s. That includes
+`testFuzz_firstApprovalFixesRole`, the test that failed on CI.
+Gate (logs in `docs/gate-logs/P1.2/`, rerun in full after crash recovery, Forge 1.8.3):
+- G1 pass, `G1.log`: 175 passed, 0 failed, 0 skipped, exit 0.
+- G2 pass, `G2.log`: src lines 56/56, branches 18/18.
+- G3 pass, `G3.log`: exit 0.
+- G4 pass, `G4.log`: `forge build --deny warnings` exit 0.
+- G5 pass, `G5.log`: seeds 1 and 2, 175 passed each.
+- G6 pass, `G6.log`: three runs, 175 passed each.
+- G7 pass, `G7.log`: `ci` profile, 175 passed.
+- G8 pass, `G8.log`: `IndicoLedger` 5,719 B runtime (unchanged, nothing under `src/` touched);
+  snapshot check 156 passed.
+- G9 pass, `G9.log`: the P1.2 mutations M1 to M10 rerun on `IndicoLedger.sol`, all caught,
+  restored byte-identical by SHA-256 after each.
+- G13 pass, `G13.log`: the grep returns nothing (exit 1). Negative check: a planted
+  `test/unit/G13Probe.t.sol` containing `vm.assume` is found (exit 0), then removed.
+- G10 pending: owner pushes.
+- Deep fuzz on CI pending: after the push, `deep.yml` is triggered by hand; the run that failed
+  is the run that has to go green, and its result is recorded in the next entry.
+- G12: this entry.
+Crash recovery: the session running the first gate attempt ended mid-G2. Before the rerun:
+`IndicoLedger.sol` matched its mutation backup by SHA-256, no probe file was left, no project file
+was blank or zero-filled, `forge clean`. That attempt had already deleted two local logs kept from
+before the reopen, `G10-d85f73d.log` and `G9-before-reopen.log`, because the script's
+`rm -f G*.log` matched their new names; their results stand in C-017 and C-018. The script now
+deletes only `G1` to `G9` and `G13`.
+Open items: none raised.
+Commit: test: fuzz tests remap excluded values instead of discarding them, G13 gate check (P1.2 reopen)
+
 ---
 
 ## Open items

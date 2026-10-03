@@ -143,7 +143,7 @@ contract MembershipTest is StateSnapshot {
     }
 
     function testFuzz_setTermsHash_anyNonZero_stored(bytes32 h) public {
-        vm.assume(h != bytes32(0));
+        if (h == bytes32(0)) h = keccak256("remapped-zero"); // remapped, never discarded
         vm.prank(admin);
         ledger.setTermsHash(h);
         assertEq(ledger.termsHash(), h);
@@ -360,7 +360,10 @@ contract MembershipTest is StateSnapshot {
     }
 
     function testFuzz_firstApprovalFixesRole(address a, bool userFirst) public {
-        vm.assume(a != address(0) && a != address(ledger) && a != address(usdc));
+        // Remapped, never discarded (INSTRUCTION 1.2): the fuzzer favours these three.
+        if (a == address(0) || a == address(ledger) || a == address(usdc)) {
+            a = makeAddr("remapped");
+        }
         _set(admin, userFirst, a, true);
         uint8 role = userFirst ? ROLE_USER : ROLE_MERCHANT;
         assertEq(ledger.participantRole(a), role);

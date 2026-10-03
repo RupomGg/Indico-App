@@ -26,6 +26,17 @@ build session with:
   never dropped.
 
 ### 1.2 Tests first, then code
+**Every session starts by checking the latest Deep fuzz run** (`gh run list --workflow deep.yml
+--limit 1`). A red one reopens the portion whose commit it ran on, and that is fixed before any
+new work. A portion is not truly done until a Deep fuzz run on its code is green (C-021: P1.2 was
+signed off before its nightly deep run finished, and that run failed).
+
+**Fuzz tests never discard input.** No `vm.assume` and no `assumeNot*` helper in `test/`: an
+excluded value is remapped to a valid one (for example `if (d == 6) d = 7;`, or
+`_remapForgeAddress`), or the range is set with `bound`. Discarding fails at deep fuzz volumes,
+because the fuzzer favours exactly the values a test tends to exclude. Gate line G13 checks it. Any
+exception needs its own decision entry.
+
 For every portion:
 1. Read the spec sections listed for the portion.
 2. Write the **input partition table** (`docs/input-testing.md` §1) as a comment at the top of the
@@ -100,6 +111,7 @@ The summary shown to the owner is taken from those files. Never pipe a gate run 
 | G10 | CI green | After the owner pushes: `gh run list --branch main --limit 1`, then `gh run watch <id> --exit-status`; on failure `gh run view <id> --log-failed` into the G10 log | The run for the pushed commit is green |
 | G11 | Manual check | The portion's "Manual check" line in §4 | Owner sees it |
 | G12 | Logged | DECISION.md entry for this portion | Lists every new or changed file, why, and the gate result |
+| G13 | No discarded fuzz input | `grep -rn "vm.assume\|assumeNot" test/` | Returns nothing (§1.2); an exception needs its own decision entry |
 
 **Deliberate-bug checks must be crash-safe.** Before breaking a file on purpose, copy it to a
 backup **outside the project**; restore from that backup in a `finally`; finish by confirming the

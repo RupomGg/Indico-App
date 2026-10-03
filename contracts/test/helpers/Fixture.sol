@@ -51,6 +51,16 @@ abstract contract FixtureBase is Test {
         vm.prank(guardian);
         ledger.pause();
     }
+
+    /// @dev Fuzzed addresses are remapped, never discarded (INSTRUCTION 1.2): Forge's own
+    ///      addresses (the cheatcode VM, console, the CREATE2 deployer) become one ordinary
+    ///      address; every other address is returned unchanged.
+    function _remapForgeAddress(address a) internal returns (address) {
+        if (a == VM_ADDRESS || a == CONSOLE || a == CREATE2_FACTORY) {
+            return makeAddr("remapped-forge-address");
+        }
+        return a;
+    }
 }
 
 /// @notice The only place test setup lives. Test files call these helpers; they never
