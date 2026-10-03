@@ -1086,6 +1086,17 @@ Mutations (G9), each on `src/lib/Math.sol`, restored byte-identical by SHA-256 a
 Open items: closed O-030; raised O-031 (backend: merchant terms status and "merchant not ready").
 Commit: fix: rename Math to LedgerMath so Slither analyses mulDivDown in full; CI fails on Slither IR errors (P0.1 reopen)
 
+### C-031 · P0.1 reopened · CI red/green for the Slither guard · 2026-10-04
+Type: chore
+Files: none changed. Completes the CI proof C-030 left pending.
+- Red: branch `slither-guard`, commit `adff058` (guard only, pre-rename code), run 37161519237
+  failed at step 7 on `4:ERROR:ContractSolcParsing:Impossible to generate IR for Math.mulDivDown`,
+  while Slither itself reported "7 result(s) found" and would have passed.
+- Green: commit `300ec28` (rename added), run 37161530402, step 7 green; the only log line
+  matching "Impossible to generate IR" is the runner echoing the guard's own `grep` command.
+- Both commits go to `main` by fast-forward; the branch is then deleted.
+Commit: docs: record CI red/green for the Slither guard
+
 ---
 
 ## Open items
