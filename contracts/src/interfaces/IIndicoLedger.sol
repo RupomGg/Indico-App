@@ -106,6 +106,13 @@ interface IIndicoLedger {
     error ExtensionWindowNotOpen(uint64 opensAt);
     /// @notice A constructor argument was the zero address.
     error ZeroAddress();
+    /// @notice `registerAsset` with a zero document hash (D-28).
+    error ZeroDocHash();
+    /// @notice `registerAsset` with an asset type above 5 (D-29).
+    error InvalidAssetType(uint8 assetType);
+    /// @notice A mint of `requested` would push one account above 2^128 - 1; `room` is that
+    ///         account's remaining headroom (D-27).
+    error CreditCapExceeded(uint256 requested, uint256 room);
     /// @notice `setTermsHash(0)`. Zero means "never set", so it cannot be set again (D-21).
     error ZeroTermsHash();
     /// @notice `account` was once approved in the other role; roles are permanent (D-22).
@@ -169,8 +176,10 @@ interface IIndicoLedger {
     // ---------------------------------------------------------------------------------------
 
     /// @notice Register a document fingerprint and mint `value` credit to the caller.
-    /// @dev Approved user, terms signed, `value > 0`, hash not already registered.
-    ///      Emits `AssetRegistered` and `CreditMinted`.
+    /// @dev `whenNotPaused`. Reverts, in order, `NotApprovedUser`, `TermsNotSigned`,
+    ///      `ZeroAmount`, `ZeroDocHash` (D-28), `InvalidAssetType` for a type above 5 (D-29),
+    ///      `AssetAlreadyRegistered`, and `CreditCapExceeded` if the caller's credit would pass
+    ///      2^128 - 1 (D-27). Emits `AssetRegistered` and `CreditMinted` with `reason = docHash`.
     function registerAsset(bytes32 docHash, uint8 assetType, uint256 value) external;
 
     /// @notice Issue credit to `user` for a payment received off platform.

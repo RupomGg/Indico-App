@@ -751,6 +751,110 @@ deletes only `G1` to `G9` and `G13`.
 Open items: none raised.
 Commit: test: fuzz tests remap excluded values instead of discarding them, G13 gate check (P1.2 reopen)
 
+### C-023 · P1.2 reopened · CI and Deep fuzz green · 2026-10-03
+Type: chore
+Files: none changed. Completes the lines C-022 left pending.
+- G10 pass, `G10.log`: CI run 37090198074 on `4fabf1f` green. Steps 1 to 3 and 5 to 7 pass;
+  step 4 and the Phase-0 skip step skipped as designed. The commit subject reached GitHub as
+  " fuzz tests remap excluded values ..." without the `test:` prefix given in C-022; cosmetic.
+- Deep fuzz pass, `deep-ci.log`: run 37090561580 on `4fabf1f`, triggered by hand
+  (`gh workflow run deep.yml`), **175 passed, 0 failed, 0 skipped** at 5,000,000 runs, 6,635 s.
+  All seven tests changed in C-022 at 5,000,000 runs, including
+  `testFuzz_firstApprovalFixesRole`, the test that failed in runs 36833476286 and 36979982138.
+  This is the first green Deep fuzz run in the project; it covers P1.2 and P1.3, whose code it
+  ran on.
+Commit: docs: record P1.2 reopen CI and Deep fuzz results
+
+### C-024 · P1.4 · registerAsset and the shared mint · 2026-10-03
+Type: feature
+Decisions: D-27, D-28, D-29, D-30 (new)
+Session start (INSTRUCTION 1.2): latest Deep fuzz run 37090561580 green (C-023), so P1.4 began.
+Files:
+- Changed: `contracts/src/IndicoLedger.sol`:
+  - `registerAsset(docHash, assetType, value)`, `whenNotPaused`. Reverts in order
+    `NotApprovedUser`, `TermsNotSigned` (any signed version counts, D-25), `ZeroAmount`,
+    `ZeroDocHash` (D-28), `InvalidAssetType` above 5 (D-29), `AssetAlreadyRegistered`, then
+    `CreditCapExceeded` from the mint. Marks the hash, emits `AssetRegistered`, mints.
+  - Private `_mint(account, amount, reason)`: the only way credit enters circulation; refuses a
+    mint that would push one account above `CREDIT_CAP = 2^128 - 1`, computing `room` first so it
+    cannot overflow for any `amount` (D-27); updates `credit` and `totalCredit`; emits
+    `CreditMinted(account, amount, reason)`. For an asset, `reason` is the `docHash`, linking a
+    mint to its asset, never a loan to a document (D-12). `adminIssueCredit` (P1.5) will use it.
+  - Removed the `uninitialized-state` suppression on `totalCredit`, now written (D-18, O-016).
+    Four remain: `poolCredit`, `totalShares`, `totalLent`, `nextLoanId`.
+  - Added the D-30 suppression above `approvedUser[user] = approved;` in `setUserApproved`, with
+    a reason comment: `registerAsset` is the first gate on `approvedUser`, and Forge 1.8.3's
+    `missing-events-access-control` lint cannot match the `UserApprovalSet` event to a mapping
+    write. `approvedMerchant` gets none yet (D-30: only when a portion triggers it).
+  Depends on it: P1.5 (`adminIssueCredit` uses `_mint`), loans (credit is what they lock).
+- Changed: `contracts/src/interfaces/IIndicoLedger.sol`: errors `ZeroDocHash()`,
+  `InvalidAssetType(uint8)`, `CreditCapExceeded(uint256 requested, uint256 room)`; the
+  `registerAsset` comment with the check order and `reason = docHash`.
+- Changed: `contracts/src/lib/Constants.sol`: `CREDIT_CAP = type(uint128).max`,
+  `MAX_ASSET_TYPE = 5`.
+- New: `contracts/test/unit/RegisterAsset.t.sol`: partition tables for value, docHash, assetType
+  and caller, 31 tests. Exact mint, hash marked, exactly two events with exact arguments; one wei;
+  max hash; several assets sum into one balance and `totalCredit` equals the sum; signed only an
+  older terms version is enough (D-25); fuzz over value and hash within the cap. Value: zero;
+  exactly the cap; cap plus one; `uint256` max (named revert, no panic); exactly the room left;
+  room plus one; a full account; fuzz over every value above the room. As required (D-27): one
+  user at the cap does not stop another, and `totalCredit` then exceeds `2^128`. docHash: zero;
+  again by the same user and by another. assetType: all 256 `uint8` values, 0 to 5 registered and
+  emitted as given, 6 to 255 `InvalidAssetType(t)` (IT 2.5). Caller: six non-users, approved but
+  unsigned, revoked, paused. Check order: seven pairwise tests. Every revert asserts the full
+  snapshot unchanged.
+- Changed: `contracts/test/unit/ParticipantMatrix.t.sol`: `registerAsset` column (O-025), 4 of
+  13 columns, 36 of 117 cells: only `ApprovedAndSigned` registers; `ApprovedNotSigned` gets
+  `TermsNotSigned`; the other seven get `NotApprovedUser`.
+- Changed: `contracts/test/unit/Pause.t.sol`: pause matrix 6 x 2 with `registerAsset`
+  (unpaused succeeds, paused `EnforcedPause`); that row onboards alice before pausing.
+- Changed: `contracts/test/unit/Constructor.t.sol`: the no-USDC sweep gains `registerAsset`
+  (17 calls per caller).
+- Changed: `contracts/.gas-snapshot`: 29 new `RegisterAssetTest` lines; 63 changed; none
+  removed; `HelpersTest` and `MathTest` unchanged. Over 10%, both matrices that grew:
+  `test_participantMatrix_everyCell` 30,609,045 to 41,351,100 (+35.1%, 36 cells instead of 27)
+  and `test_pauseMatrix_everyCell` 9,700,883 to 12,078,413 (+24.5%, 12 cells instead of 10, the
+  new row onboarding a user). All others +0.01% to +6.62%. Diff in `G8.log`.
+- Changed (local, not pushed): `docs/decisions.md` D-27 to D-30;
+  `docs/lint-probes/missing-events-access-control/` (the D-30 probe and its 1.8.3 result).
+Found on re-reading (INSTRUCTION 1.4): `_mint`'s `CREDIT_CAP - credit[account]` would underflow
+for an account already above the cap, which only a merchant can be (D-27). Unreachable in P1.4,
+which mints only to users; moved to P1.5 with its test (O-027), not dropped.
+Size: `IndicoLedger` runtime 5,719 B to 6,188 B (+469 B), margin 18,388 B.
+Slither (CI flags): exit 0, 7 findings, one fewer than C-022: `totalCredit` left
+`constable-states`.
+Gate (logs in `docs/gate-logs/P1.4/`, Forge 1.8.3):
+- G1 pass, `G1.log`: 206 passed, 0 failed, 0 skipped, exit 0.
+- G2 pass, `G2.log`: src lines 72/72, branches 25/25.
+- G3 pass, `G3.log`: exit 0.
+- G4 pass, `G4.log`: `forge build --deny warnings` exit 0, after the D-30 suppression.
+- G5 pass, `G5.log`: seeds 1 and 2, 206 passed each.
+- G6 pass, `G6.log`: three runs, 206 passed each.
+- G7 pass, `G7.log`: `ci` profile, 206 passed.
+- G8 pass, `G8.log`: `IndicoLedger` 6,188 B runtime; snapshot check 185 passed.
+- G9 pass, `G9.log`: see Mutations.
+- G13 pass, `G13.log`: grep finds nothing; the planted probe is found, then removed.
+- G10 pending: owner pushes. Deep fuzz on this code: the next run after the push.
+- G11: none beyond the gate.
+- G12: this entry.
+Mutations (G9), each on `IndicoLedger.sol`, restored byte-identical by SHA-256 after each:
+- M1 approved-user check removed: participant matrix `TermsNotSigned() != NotApprovedUser()`. Caught.
+- M2 terms check removed: participant matrix. Caught.
+- M3 zero value accepted: `ZeroDocHash() != ZeroAmount()`. Caught.
+- M4 zero hash accepted: `test_docHash_zero_revertsZeroDocHash`. Caught.
+- M5 type 5 rejected: `InvalidAssetType(5)` in the 256-value loop. Caught.
+- M6 duplicate hash accepted: `test_docHash_againByOtherUser_reverts`. Caught.
+- M7 hash not marked: participant matrix. Caught.
+- M8 exact room rejected: `CreditCapExceeded` at exactly the cap. Caught.
+- M9 `totalCredit` not increased: `total: 0 != 1000000000`. Caught.
+- M10 mint reason zero: `CreditMinted param mismatch at reason`. Caught.
+- M11 works while paused: pause matrix. Caught.
+- M12 cap on the total, not the account (the design D-27 rejected):
+  `test_oneUserAtCap_doesNotStopAnother` gets `CreditCapExceeded(2^128 - 1, 0)`. Caught.
+Open items: closed O-016; O-025 now 36 of 117 cells; raised O-026 (re-run the D-30 probe on
+any Forge upgrade) and O-027 (`_mint` above-cap underflow, for P1.5).
+Commit: feat: registerAsset with per-account credit cap, six asset types, shared mint (P1.4)
+
 ---
 
 ## Open items
@@ -772,7 +876,7 @@ Commit: test: fuzz tests remap excluded values instead of discarding them, G13 g
 | O-013 | Reconsider where the loan time axis lives: `_loanTimeAt` and `_loanDims` sit in `Matrix.sol` because `Actors.sol` could not build in Phase 0. Once it builds, decide whether to move them next to `LoanState` and replace the literal `4` with `LOAN_STATES` | engineer | P1.11 |
 | O-014 | `IndicoLedger` must inherit `IIndicoLedger`, so the compiler proves the implementation matches the interface the backend builds against | engineer | P1.13 at the latest |
 | O-015 | Delete the `uninitialized-state` suppression on `termsHash` (D-18) as part of the gate | engineer | Closed by C-017 |
-| O-016 | Delete the `uninitialized-state` suppression on `totalCredit` (D-18) as part of the gate | engineer | P1.4 |
+| O-016 | Delete the `uninitialized-state` suppression on `totalCredit` (D-18) as part of the gate | engineer | Closed by C-024 |
 | O-017 | Delete the `uninitialized-state` suppression on `totalShares` (D-18) as part of the gate | engineer | P1.7 |
 | O-018 | Delete the `uninitialized-state` suppression on `totalLent` (D-18) as part of the gate | engineer | P1.8 |
 | O-019 | Delete the `uninitialized-state` suppression on `nextLoanId` (D-18) as part of the gate | engineer | P1.8 |
@@ -781,4 +885,6 @@ Commit: test: fuzz tests remap excluded values instead of discarding them, G13 g
 | O-022 | Participant matrix (IT 2.2): the `pause` column, nine participants, moved from P1.1 because building them needs approvals and `signTerms` | engineer | Closed by C-019 |
 | O-023 | The Phase-0 skip step in `ci.yml` and `deep.yml` no longer runs now that `src/IndicoLedger.sol` exists; delete it | engineer | P1.13 |
 | O-024 | Backend admin screen (AD-04, AD-02): before approving a wallet as user or merchant, warn that its role becomes permanent (D-22); a mistaken approval can only be fixed by the person using a different wallet | backend | Level 4 |
-| O-025 | Participant matrix (IT 2.2): 3 of 13 action columns (`signTerms`, `setUserApproved`, `pause`), 27 of 117 cells. Each later portion adds its own column at its gate; all 13 columns, 117 cells, by P1.13 | engineer | P1.13 |
+| O-025 | Participant matrix (IT 2.2): 4 of 13 action columns (`signTerms`, `setUserApproved`, `pause`, `registerAsset`), 36 of 117 cells. Each later portion adds its own column at its gate; all 13 columns, 117 cells, by P1.13 | engineer | P1.13 |
+| O-026 | On any Forge upgrade (D-14), re-run the D-30 probe (`docs/lint-probes/missing-events-access-control`, `forge build --deny warnings`); if the mapping rows are no longer flagged, delete every `missing-events-access-control` suppression in the same commit as the upgrade | engineer | next Forge upgrade |
+| O-027 | `_mint` computes `room = CREDIT_CAP - credit[account]`, which underflows (panic) if the account already holds more than the cap. Only a merchant can (via `spend`, D-27), and P1.4 mints only to users, so it is unreachable now. P1.5 decides whether `adminIssueCredit` may credit a merchant (O-011); if it can, P1.5 writes the failing test first (mint to a merchant above the cap must revert `CreditCapExceeded(amount, 0)`, never panic) and fixes `_mint` | engineer | P1.5 |

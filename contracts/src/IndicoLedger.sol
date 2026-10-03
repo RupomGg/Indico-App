@@ -13,7 +13,9 @@ import {
     USDC_DECIMALS,
     ROLE_NONE,
     ROLE_USER,
-    ROLE_MERCHANT
+    ROLE_MERCHANT,
+    CREDIT_CAP,
+    MAX_ASSET_TYPE
 } from "./lib/Constants.sol";
 
 /// @title IndicoLedger
@@ -53,7 +55,6 @@ contract IndicoLedger is AccessControlDefaultAdminRules, Pausable {
 
     mapping(address => uint256) public credit;
     mapping(address => uint256) public lockedCredit;
-    // forge-lint: disable-next-line(uninitialized-state)
     uint256 public totalCredit;
     // forge-lint: disable-next-line(uninitialized-state)
     uint256 public poolCredit;
@@ -129,6 +130,8 @@ contract IndicoLedger is AccessControlDefaultAdminRules, Pausable {
     /// @dev Not `whenNotPaused` (D-24). Repeats are allowed and emit (D-20).
     function setUserApproved(address user, bool approved) external onlyRole(ADMIN_ROLE) {
         _admit(user, approved, ROLE_USER);
+        // Linter cannot match an event to a mapping write; UserApprovalSet follows (D-30).
+        // forge-lint: disable-next-line(missing-events-access-control)
         approvedUser[user] = approved;
         emit IIndicoLedger.UserApprovalSet(user, approved);
     }
@@ -174,6 +177,37 @@ contract IndicoLedger is AccessControlDefaultAdminRules, Pausable {
         termsSigned[msg.sender] = true;
         signedTermsHash[msg.sender] = current;
         emit IIndicoLedger.TermsSigned(msg.sender, current, block.timestamp);
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // Assets and credit, contract-spec 6.3
+    // ---------------------------------------------------------------------------------------
+
+    /// @notice Register a document fingerprint and mint `value` credit to the caller.
+    /// @dev Only the hash, type and value go on chain; nothing reads the document (A-10). The
+    ///      credit joins one fungible balance with no link to this asset afterwards (D-12).
+    function registerAsset(bytes32 docHash, uint8 assetType, uint256 value) external whenNotPaused {
+        if (!approvedUser[msg.sender]) revert IIndicoLedger.NotApprovedUser();
+        if (!termsSigned[msg.sender]) revert IIndicoLedger.TermsNotSigned();
+        if (value == 0) revert IIndicoLedger.ZeroAmount();
+        if (docHash == bytes32(0)) revert IIndicoLedger.ZeroDocHash();
+        if (assetType > MAX_ASSET_TYPE) revert IIndicoLedger.InvalidAssetType(assetType);
+        if (assetRegistered[docHash]) revert IIndicoLedger.AssetAlreadyRegistered();
+
+        assetRegistered[docHash] = true;
+        emit IIndicoLedger.AssetRegistered(msg.sender, docHash, assetType, value);
+        _mint(msg.sender, value, docHash);
+    }
+
+    /// @dev The only way credit enters circulation. Refuses a mint that would push one account
+    ///      above `CREDIT_CAP`, so no balance a loan can lock against exceeds `uint128` (D-27).
+    ///      Written as `amount > room` so it cannot overflow for any `amount`.
+    function _mint(address account, uint256 amount, bytes32 reason) private {
+        uint256 room = CREDIT_CAP - credit[account];
+        if (amount > room) revert IIndicoLedger.CreditCapExceeded(amount, room);
+        credit[account] += amount;
+        totalCredit += amount;
+        emit IIndicoLedger.CreditMinted(account, amount, reason);
     }
 
     /// @notice Stop every `whenNotPaused` function. Reverts `EnforcedPause` if already paused.

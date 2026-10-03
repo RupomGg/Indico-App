@@ -156,16 +156,28 @@ contract PauseTest is StateSnapshot, Matrix {
     /// | setTermsHash        | succeeds      | succeeds, works while paused (D-24) |
     /// | setUserApproved     | succeeds      | succeeds, works while paused (D-24) |
     /// | setMerchantApproved | succeeds      | succeeds, works while paused (D-24) |
+    /// | registerAsset       | succeeds      | EnforcedPause               |
+    /// The registerAsset row onboards alice (terms set, approved, signed) before pausing, so the
+    /// paused cell fails for the pause alone.
     function test_pauseMatrix_everyCell() public {
-        _crossProduct(_dims(5, 2), _pauseCell);
+        _crossProduct(_dims(6, 2), _pauseCell);
     }
 
     function _pauseCell(uint256[] memory c) internal {
+        if (c[0] == 5) {
+            vm.prank(admin);
+            ledger.setTermsHash(keccak256("matrix-terms-v1"));
+            vm.prank(admin);
+            ledger.setUserApproved(alice, true);
+            vm.prank(alice);
+            ledger.signTerms(keccak256("matrix-terms-v1"));
+        }
         bool startPaused = c[1] == 1;
         if (startPaused) _pause();
 
-        uint8[2][5] memory expected =
-            [[uint8(0), 1], [uint8(2), 0], [uint8(0), 0], [uint8(0), 0], [uint8(0), 0]];
+        uint8[2][6] memory expected = [
+            [uint8(0), 1], [uint8(2), 0], [uint8(0), 0], [uint8(0), 0], [uint8(0), 0], [uint8(0), 1]
+        ];
         uint8 e = expected[c[0]][c[1]];
         bytes32 h = keccak256("matrix-terms");
         address target = makeAddr("matrixTarget");
@@ -189,10 +201,17 @@ contract PauseTest is StateSnapshot, Matrix {
             vm.prank(admin);
             ledger.setUserApproved(target, true);
             assertTrue(ledger.approvedUser(target));
-        } else {
+        } else if (c[0] == 4) {
             vm.prank(admin);
             ledger.setMerchantApproved(target, true);
             assertTrue(ledger.approvedMerchant(target));
+        } else {
+            vm.prank(alice);
+            ledger.registerAsset(keccak256("matrix-doc"), 0, 1_000e6);
+            if (e == 0) {
+                s.credit[2] += 1_000e6; // alice is actors[2]
+                s.totalCredit += 1_000e6;
+            }
         }
         _assertUnchanged(s);
     }

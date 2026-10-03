@@ -9,6 +9,12 @@ uint48 constant ADMIN_TRANSFER_DELAY = 3 days;
 uint8 constant ROLE_NONE = 0;
 uint8 constant ROLE_USER = 1;
 uint8 constant ROLE_MERCHANT = 2;
+/// @dev Highest balance a mint may produce for one account (D-27): a technical bound so loan
+///      fields (`uint128`) and `collateralFor` can never overflow, not a business limit.
+uint256 constant CREDIT_CAP = type(uint128).max;
+/// @dev Asset types 0 to 5 are valid (D-29): arbitration award, bill of exchange, promissory
+///      note, bond, real estate, jewellery.
+uint8 constant MAX_ASSET_TYPE = 5;
 /// @dev Basis-point denominator.
 uint256 constant BPS = 10_000;
 /// @dev Loan to value, 80%. A compile-time constant because the figure is in a signed document.
