@@ -320,7 +320,8 @@ pause matrix (IT §2.3) and the participant matrix (IT §2.2) with its own funct
 
 **P2.1 Handler and permissive invariants** · TS §2.3, CS §9 (I1 to I13), `prompts/02-invariants.md` §1 to §2.
 Corner cases: every handler action reachable (revert counts reported per action); warp crosses
-the 90-day boundary; each invariant is its own `invariant_` function.
+the 90-day boundary; each invariant is its own `invariant_` function; every user's `credit` is at
+most `CREDIT_CAP` (D-33, the no-underflow guarantee for `_mint`).
 
 **P2.2 Strict invariants** · same refs. `fail_on_revert = true`, handler only makes calls it has
 computed to be valid.

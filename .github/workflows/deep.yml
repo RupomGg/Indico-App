@@ -5,8 +5,35 @@ on:
     - cron: "0 2 * * *"
   workflow_dispatch:
 
+permissions:
+  contents: read
+  actions: read
+
 jobs:
+  # Skips the nightly run when nothing under contracts/ (or this workflow) changed since the last
+  # green run, and stays red without re-running when nothing changed since a red one (D-31).
+  # A manual dispatch always runs.
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.decide.outputs.run }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          runs="repos/${{ github.repository }}/actions/workflows/deep.yml/runs?branch=main&per_page=1"
+          green=$(gh api "$runs&status=success" -q '.workflow_runs[0].head_sha // ""')
+          read -r last last_conclusion <<< "$(gh api "$runs&status=completed" -q '.workflow_runs[0] | "\(.head_sha) \(.conclusion)"')"
+          bash .github/scripts/deep-should-run.sh "${{ github.event_name }}" "$green" "${last:-}" "${last_conclusion:-}" >> "$GITHUB_OUTPUT"
+
   deep:
+    needs: check
+    if: needs.check.outputs.run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 360
     defaults:

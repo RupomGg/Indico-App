@@ -864,6 +864,41 @@ Files: none changed. Completes the line C-024 left pending.
 - Deep fuzz on P1.4's code (`62e45b9`): pending. P1.4 is not done until it is green (1.2).
 Commit: docs: record P1.4 CI gate result
 
+### C-026 · chore · Nightly Deep fuzz skips unchanged code; P1.5 decisions · 2026-10-03
+Type: chore
+Decisions: D-31, D-32, D-33 (new)
+Why: the repository is private; one full Deep fuzz run is about 115 to 120 Actions minutes, so
+running every night would be about 3,600 minutes a month, above the private-repository allowance.
+Measured from the job timings of October 1 to 3: CI 20 runs, 70 minutes; Deep fuzz 3 runs,
+271 minutes (122, 112, and 37 for the run that stopped early); 341 in total. The account plan and
+the official usage figure were not readable: both endpoints need the `user` scope, which the
+`gh` login does not have (`gh auth refresh -h github.com -s user`).
+Files:
+- Changed: `.github/workflows/deep.yml`: `permissions: contents: read, actions: read`; new `check`
+  job (`actions/checkout` with `fetch-depth: 0`) that looks up the last green and the last
+  finished Deep fuzz run on `main` with `gh api` and runs the gate script; the `deep` job now
+  `needs: check` and runs only when it says `run=true`. Steps of the `deep` job unchanged.
+- New: `.github/scripts/deep-should-run.sh`: the decision (D-31). Manual dispatch always runs;
+  skip and stay green when `contracts/`, `deep.yml` and `.github/scripts/` are unchanged since the
+  last green run; skip and fail (stay red) when unchanged since a red run; otherwise run. Called
+  with `bash`, so no executable bit is needed; `.gitattributes` keeps it LF.
+- New: `.github/scripts/deep-should-run.test.sh`: self-check in a throwaway git repository, 11
+  cases, all `ok`: dispatch; no green run yet; unknown sha; unchanged; docs-only change; contracts
+  change; red unchanged; red with docs-only change; red then contracts change; workflow change;
+  gate-script change.
+- Changed: `INSTRUCTION.md` P2.1: new corner case, every user's `credit` is at most `CREDIT_CAP`
+  (D-33).
+- Changed (local, not pushed): `docs/decisions.md` D-31 to D-33.
+Checks before push: the YAML parses (`check`, `deep`; `deep` needs `check`); the two `gh api`
+queries run live and return the last green run (`4fabf1f`, success); a dry run of the gate on the
+real repository says `run=true` against `4fabf1f` (P1.4 changed `contracts/` since) and
+`run=false` with `HEAD` as the green sha.
+Proof on CI, pending (two nights, as agreed): one night where the run is skipped because
+`contracts/` is unchanged, and one real run after a `contracts/` change. The first night after this
+push is a real run (this commit changes `deep.yml`). Recorded in a later entry.
+Open items: closed O-027 by D-33 (no guard; reopens if D-22, D-27 or users-only minting changes).
+Commit: ci: nightly deep fuzz skips itself when contracts/ is unchanged since the last green or red run
+
 ---
 
 ## Open items
@@ -896,4 +931,4 @@ Commit: docs: record P1.4 CI gate result
 | O-024 | Backend admin screen (AD-04, AD-02): before approving a wallet as user or merchant, warn that its role becomes permanent (D-22); a mistaken approval can only be fixed by the person using a different wallet | backend | Level 4 |
 | O-025 | Participant matrix (IT 2.2): 4 of 13 action columns (`signTerms`, `setUserApproved`, `pause`, `registerAsset`), 36 of 117 cells. Each later portion adds its own column at its gate; all 13 columns, 117 cells, by P1.13 | engineer | P1.13 |
 | O-026 | On any Forge upgrade (D-14), re-run the D-30 probe (`docs/lint-probes/missing-events-access-control`, `forge build --deny warnings`); if the mapping rows are no longer flagged, delete every `missing-events-access-control` suppression in the same commit as the upgrade | engineer | next Forge upgrade |
-| O-027 | `_mint` computes `room = CREDIT_CAP - credit[account]`, which underflows (panic) if the account already holds more than the cap. Only a merchant can (via `spend`, D-27), and P1.4 mints only to users, so it is unreachable now. P1.5 decides whether `adminIssueCredit` may credit a merchant (O-011); if it can, P1.5 writes the failing test first (mint to a merchant above the cap must revert `CreditCapExceeded(amount, 0)`, never panic) and fixes `_mint` | engineer | P1.5 |
+| O-027 | `_mint` computes `room = CREDIT_CAP - credit[account]`, which underflows (panic) if the account already holds more than the cap. Only a merchant can (via `spend`, D-27), and P1.4 mints only to users, so it is unreachable now. P1.5 decides whether `adminIssueCredit` may credit a merchant (O-011); if it can, P1.5 writes the failing test first (mint to a merchant above the cap must revert `CreditCapExceeded(amount, 0)`, never panic) and fixes `_mint` | engineer | Closed by D-33 (C-026) |
