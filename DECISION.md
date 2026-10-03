@@ -1018,6 +1018,18 @@ in P1.8), O-029 (`Math.sol`'s C-006 Slither triage needs its own decision to sur
 O-030 (the `mulDivDown` IR error).
 Commit: feat: adminIssueCredit and adminDebitCredit, users only, with per-account cap and available-credit debit (P1.5)
 
+### C-029 · P1.5 · CI gate line G10 · 2026-10-03
+Type: chore
+Files: none changed. Completes the line C-028 left pending.
+- Session start (INSTRUCTION 1.2): latest Deep fuzz run 37105728701 on `d397496` green.
+- G10 pass, `G10.log`: CI run 37145112275 on `76af755` green. Steps 1 to 3 and 5 to 7 pass,
+  step 7 (Slither) with the D-34 line in place; step 4 skipped as designed. The GitHub API
+  returned HTTP 504 several times while watching; the run itself was not affected.
+- Deep fuzz on P1.5's code (`76af755`): pending, the next nightly. It is also the first night
+  under the new `deep.yml` (C-026); `deep.yml` and `contracts/` both changed since the last green
+  run, so the gate should run the full deep job. P1.5 is not done until that run is green.
+Commit: docs: record P1.5 CI gate result
+
 ---
 
 ## Open items
