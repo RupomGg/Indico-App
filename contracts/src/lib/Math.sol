@@ -3,12 +3,12 @@ pragma solidity 0.8.26;
 
 import {Math as OZMath} from "@openzeppelin/contracts/utils/math/Math.sol";
 
-/// @title Math
+/// @title LedgerMath
 /// @notice Integer maths with explicit rounding. Rounding always favours the pool:
 ///         collateral rounds up (`ceilDiv`), payouts and share conversions round down
 ///         (`mulDivDown`).
 /// @dev Every failure is a named revert, never a panic.
-library Math {
+library LedgerMath {
     error DivisionByZero();
     error MathOverflow();
 

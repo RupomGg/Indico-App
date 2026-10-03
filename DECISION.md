@@ -1030,6 +1030,62 @@ Files: none changed. Completes the line C-028 left pending.
   run, so the gate should run the full deep job. P1.5 is not done until that run is green.
 Commit: docs: record P1.5 CI gate result
 
+### C-030 · P0.1 reopened · `Math` renamed `LedgerMath`; CI fails when Slither skips code · 2026-10-04
+Type: fix
+Decisions: D-35 (new); D-36, D-37 logged for P1.6
+Root cause (O-030): two libraries named `Math` in one build, ours and OpenZeppelin's; Slither
+resolved `OZMath.mul512` by name to ours and could not build IR for most of `mulDivDown`. Present
+from P1.3 to P1.5, bisected by portion. CI step 7 stayed green throughout (runs 36835961990,
+37101839327, 37145112275, each logging the error once), because Slither's exit code reflects
+findings only. Full analysis in D-35.
+Files:
+- Changed: `contracts/src/lib/Math.sol`: `library Math` becomes `library LedgerMath` (and the
+  `@title`); the OpenZeppelin import stays `Math as OZMath`. Behaviour, error selectors and
+  bytecode logic unchanged.
+- Changed: `contracts/test/unit/Math.t.sol` (12 references) and `contracts/test/helpers/Fixture.sol`
+  (2): `LedgerMath`. No assertion changed.
+- Changed: `contracts/src/interfaces/IIndicoLedger.sol`: two comments name
+  `LedgerMath.DivisionByZero` / `LedgerMath.MathOverflow`.
+- Changed: `.github/workflows/ci.yml` step 7: Slither's output is kept (`2>&1 | tee slither.log`;
+  the runner's `bash -eo pipefail` still fails the step on findings), and the step fails with an
+  `::error::` line if it contains `Impossible to generate IR` or `Traceback (most recent call
+  last)`.
+- Unchanged: `contracts/.gas-snapshot` is byte-identical; the rename costs no gas.
+- Changed (local, not pushed): `docs/decisions.md` D-35, D-36, D-37.
+Proof:
+- IR printer (`--print slithir`), after the rename: `LedgerMath.mulDivDown` has IR for every
+  statement: `LIBRARY_CALL, dest:Math, function:Math.mul512(...)`, `UNPACK TUPLE_16 index: 0`,
+  `high >= d`, `SOLIDITY_CALL revert MathOverflow()()`, `LIBRARY_CALL ... Math.mulDiv(...)`,
+  `RETURN`. Before, everything from the `mul512` call on had empty IR.
+- The step-7 body run locally under `bash -eo pipefail`: on the pre-rename source (`76af755`)
+  it finds `Impossible to generate IR`, prints `::error::` and exits 1
+  (`slither-red-pre-rename.log`); on the renamed source it exits 0 with 7 results
+  (`slither.log`). CI red/green on a branch: pending, owner pushes (next entry).
+- The C-006 `unused-return` triage in `mulDivDown` is now actually exercised (the tuple has IR) and
+  still holds: 7 findings, unchanged.
+Gate (logs in `docs/gate-logs/P0.1-reopen/`, Forge 1.8.3):
+- G1 pass, `G1.log`: 238 passed, 0 failed, 0 skipped, exit 0.
+- G2 pass, `G2.log`: src lines 86/86, branches 29/29.
+- G3 pass, `G3.log`: exit 0.
+- G4 pass, `G4.log`: `forge build --deny warnings` exit 0.
+- G5 pass, `G5.log`: seeds 1 and 2, 238 passed each.
+- G6 pass, `G6.log`: three runs, 238 passed each.
+- G7 pass, `G7.log`: `ci` profile, 238 passed.
+- G8 pass, `G8.log`: `IndicoLedger` 6,598 B, `MathHarness` 469 B; snapshot check 214 passed, no
+  change.
+- G9 pass, `G9.log`: see Mutations.
+- G13 pass, `G13.log`.
+- G10 pending: owner pushes the branch (red, then green), then `main`.
+- G12: this entry.
+Mutations (G9), each on `src/lib/Math.sol`, restored byte-identical by SHA-256 after each:
+- M1 `ceilDiv` rounds down: the rounding property `true != false`. Caught.
+- M2 `ceilDiv` zero divisor unchecked: panic `0x12` instead of `DivisionByZero`. Caught.
+- M3 `mulDivDown` overflow check removed: panic `0x11` instead of `MathOverflow`. Caught.
+- M4 overflow check `>=` to `>`: panic `0x11` instead of `MathOverflow`. Caught.
+- M5 `mulDivDown` zero divisor unchecked: `MathOverflow` instead of `DivisionByZero`. Caught.
+Open items: closed O-030; raised O-031 (backend: merchant terms status and "merchant not ready").
+Commit: fix: rename Math to LedgerMath so Slither analyses mulDivDown in full; CI fails on Slither IR errors (P0.1 reopen)
+
 ---
 
 ## Open items
@@ -1065,4 +1121,5 @@ Commit: docs: record P1.5 CI gate result
 | O-027 | `_mint` computes `room = CREDIT_CAP - credit[account]`, which underflows (panic) if the account already holds more than the cap. Only a merchant can (via `spend`, D-27), and P1.4 mints only to users, so it is unreachable now. P1.5 decides whether `adminIssueCredit` may credit a merchant (O-011); if it can, P1.5 writes the failing test first (mint to a merchant above the cap must revert `CreditCapExceeded(amount, 0)`, never panic) and fixes `_mint` | engineer | Closed by D-33 (C-026) |
 | O-028 | Delete the `slither-disable-next-line uninitialized-state` above `lockedCredit` (D-34) as part of the gate; it covers every read site (`adminDebitCredit`, and `spend` in P1.6) | engineer | P1.8 |
 | O-029 | `src/lib/Math.sol` carries `slither-disable-next-line unused-return` (C-006 triage). The P1.13 grep now covers Slither, so it fails close-out unless it gets its own decision allowing it to survive, or is removed | engineer, owner | before P1.13 |
-| O-030 | Slither has logged `ERROR:ContractSolcParsing: Impossible to generate IR for Math.mulDivDown (src/lib/Math.sol#27-34): 'NoneType' object has no attribute 'parameters'` since P1.3, locally and on CI (run 37108382319); P1.1 and P1.2 runs did not. Detectors still run on everything else and the exit code ignores it, so CI stays green, but `mulDivDown` is not being analysed. Find the trigger and fix or triage in writing | engineer | before P1.8 (first ledger use of `Math`) |
+| O-030 | Slither has logged `ERROR:ContractSolcParsing: Impossible to generate IR for Math.mulDivDown (src/lib/Math.sol#27-34): 'NoneType' object has no attribute 'parameters'` since P1.3, locally and on CI (run 37108382319); P1.1 and P1.2 runs did not. Detectors still run on everything else and the exit code ignores it, so CI stays green, but `mulDivDown` is not being analysed. Find the trigger and fix or triage in writing | engineer | Closed by C-030 |
+| O-031 | Backend (AD-04, AD-08, U-13): the admin merchant screen shows each merchant's on-chain terms signature (`termsSigned`, `signedTermsHash`); a user paying a merchant who has not signed gets a readable "merchant not ready" instead of `MerchantTermsNotSigned` (D-36, D-37) | backend | Level 4 |

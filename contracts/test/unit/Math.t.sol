@@ -2,17 +2,17 @@
 pragma solidity 0.8.26;
 
 import {Test} from "forge-std/Test.sol";
-import {Math} from "../../src/lib/Math.sol";
+import {LedgerMath} from "../../src/lib/Math.sol";
 import {BPS, LTV_BPS} from "../../src/lib/Constants.sol";
 
 /// @dev External boundary so reverts can be asserted with `vm.expectRevert` and `try`.
 contract MathHarness {
     function ceilDiv(uint256 a, uint256 b) external pure returns (uint256) {
-        return Math.ceilDiv(a, b);
+        return LedgerMath.ceilDiv(a, b);
     }
 
     function mulDivDown(uint256 x, uint256 y, uint256 d) external pure returns (uint256) {
-        return Math.mulDivDown(x, y, d);
+        return LedgerMath.mulDivDown(x, y, d);
     }
 }
 
@@ -125,9 +125,9 @@ contract MathTest is Test {
     }
 
     function test_ceilDiv_divisorZero_reverts() public {
-        vm.expectRevert(Math.DivisionByZero.selector);
+        vm.expectRevert(LedgerMath.DivisionByZero.selector);
         h.ceilDiv(1, 0);
-        vm.expectRevert(Math.DivisionByZero.selector);
+        vm.expectRevert(LedgerMath.DivisionByZero.selector);
         h.ceilDiv(0, 0);
     }
 
@@ -216,9 +216,9 @@ contract MathTest is Test {
     }
 
     function test_mulDivDown_resultOverflow_reverts() public {
-        vm.expectRevert(Math.MathOverflow.selector);
+        vm.expectRevert(LedgerMath.MathOverflow.selector);
         h.mulDivDown(U256, 2, 1);
-        vm.expectRevert(Math.MathOverflow.selector);
+        vm.expectRevert(LedgerMath.MathOverflow.selector);
         h.mulDivDown(U256, U256, U256 - 1);
     }
 
@@ -227,9 +227,9 @@ contract MathTest is Test {
     }
 
     function test_mulDivDown_divisorZero_reverts() public {
-        vm.expectRevert(Math.DivisionByZero.selector);
+        vm.expectRevert(LedgerMath.DivisionByZero.selector);
         h.mulDivDown(1, 1, 0);
-        vm.expectRevert(Math.DivisionByZero.selector);
+        vm.expectRevert(LedgerMath.DivisionByZero.selector);
         h.mulDivDown(0, 0, 0);
     }
 
@@ -271,7 +271,7 @@ contract MathTest is Test {
             assertGt(b, 0);
         } catch (bytes memory err) {
             assertEq(b, 0);
-            assertEq(err, abi.encodeWithSelector(Math.DivisionByZero.selector));
+            assertEq(err, abi.encodeWithSelector(LedgerMath.DivisionByZero.selector));
         }
     }
 
@@ -328,9 +328,9 @@ contract MathTest is Test {
             if (x <= U128 && y <= U128) assertEq(r, x * y / d);
         } catch (bytes memory err) {
             if (d == 0) {
-                assertEq(err, abi.encodeWithSelector(Math.DivisionByZero.selector));
+                assertEq(err, abi.encodeWithSelector(LedgerMath.DivisionByZero.selector));
             } else {
-                assertEq(err, abi.encodeWithSelector(Math.MathOverflow.selector));
+                assertEq(err, abi.encodeWithSelector(LedgerMath.MathOverflow.selector));
                 // Overflow is only legitimate when the true quotient exceeds 2^256 - 1,
                 // which needs x * y >= d * 2^256, so both factors must exceed d / 2^128.
                 assertTrue(x > U128 || y > U128, "overflow claimed for a fitting product");

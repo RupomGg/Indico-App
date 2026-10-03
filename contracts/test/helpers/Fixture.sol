@@ -4,7 +4,7 @@ pragma solidity 0.8.26;
 import {Test} from "forge-std/Test.sol";
 import {IndicoLedger} from "../../src/IndicoLedger.sol";
 import {IIndicoLedger} from "../../src/interfaces/IIndicoLedger.sol";
-import {Math} from "../../src/lib/Math.sol";
+import {LedgerMath} from "../../src/lib/Math.sol";
 import {BPS, LTV_BPS} from "../../src/lib/Constants.sol";
 import {MockUSDC} from "./MockUSDC.sol";
 
@@ -132,7 +132,7 @@ abstract contract Fixture is FixtureBase {
 
     /// @dev Collateral computed independently of the ledger's own view.
     function _collateralFor(uint256 principal) internal pure returns (uint256) {
-        return Math.ceilDiv(principal * BPS, LTV_BPS);
+        return LedgerMath.ceilDiv(principal * BPS, LTV_BPS);
     }
 
     /// @dev Mints exactly enough credit and pool liquidity, then `borrower` borrows.

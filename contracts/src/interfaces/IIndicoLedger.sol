@@ -129,9 +129,9 @@ interface IIndicoLedger {
     error UsdcWrongDecimals(uint256 decimals);
     /// @notice `withdraw` asked to burn more shares than the caller holds.
     error InsufficientShares(uint256 requested, uint256 held);
-    /// @notice Raised by `lib/Math.sol`; same selector as `Math.DivisionByZero`.
+    /// @notice Raised by `lib/Math.sol`; same selector as `LedgerMath.DivisionByZero`.
     error DivisionByZero();
-    /// @notice Raised by `lib/Math.sol`; same selector as `Math.MathOverflow`.
+    /// @notice Raised by `lib/Math.sol`; same selector as `LedgerMath.MathOverflow`.
     error MathOverflow();
 
     // ---------------------------------------------------------------------------------------
