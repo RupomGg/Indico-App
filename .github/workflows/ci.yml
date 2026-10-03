@@ -65,10 +65,16 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: 7. slither on src/ only, fails on medium
+      # Also fails if Slither could not analyse part of the code: it exits 0 on an IR error or a
+      # crash inside a detector, so the output is checked too (D-35).
+      - name: 7. slither on src/ only, fails on medium or on any part left unanalysed
         run: |
           pip install slither-analyzer==0.11.6
-          slither . --fail-medium --filter-paths "(lib|test|script)/"
+          slither . --fail-medium --filter-paths "(lib|test|script)/" 2>&1 | tee slither.log
+          if grep -nE 'Impossible to generate IR|Traceback \(most recent call last\)' slither.log; then
+            echo "::error::Slither could not analyse part of src/; see the lines above"
+            exit 1
+          fi
 
       - name: 8. backend typecheck, lint, unit, integration, chain integration
         if: false
