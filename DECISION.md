@@ -909,6 +909,115 @@ Files: none changed.
   workflow-file error; its first run is the next nightly, a full run because `deep.yml` changed.
 Commit: docs: record P1.4 Deep fuzz result and C-026 CI
 
+### C-028 · P1.5 · adminIssueCredit, adminDebitCredit · 2026-10-03
+Type: feature
+Decisions: D-32, D-33 (C-026), D-34 (new)
+Session start (INSTRUCTION 1.2): latest Deep fuzz run 37105728701 on `d397496` green (C-027).
+Files:
+- Changed: `contracts/src/IndicoLedger.sol`:
+  - `adminIssueCredit(user, amount, memo)`: `onlyRole(ADMIN_ROLE)`, `whenNotPaused`; then the
+    shared `_mint`, so the per-account cap applies (D-27); emits `CreditMinted(user, amount,
+    memo)`.
+  - `adminDebitCredit(user, amount, memo)`: same guards; reverts
+    `InsufficientAvailableCredit(amount, available)` above `credit - lockedCredit`; decreases
+    `credit` and `totalCredit`; emits `CreditBurned(user, amount, memo)`.
+  - Private `_checkCreditTarget(user, amount)`, shared by both, in `_admit`'s order:
+    `ZeroAddress`, then `NotAUser` unless `participantRole` is `ROLE_USER` (approved or revoked,
+    D-32), then `ZeroAmount`. Full order: AccessControl, `EnforcedPause`, `ZeroAddress`,
+    `NotAUser`, `ZeroAmount`, then the cap or the available-credit check.
+  - D-34: `// slither-disable-next-line uninitialized-state` above the `lockedCredit`
+    declaration, with a reason comment. Slither reports the finding once per variable at its
+    declaration, so the planned per-read-site line had no effect (tried); the one line covers
+    every read site, `spend` (P1.6) included.
+  Depends on it: the participant and pause matrices; `Fixture._mintCredit` now works; P1.6 and
+  P1.8 read available credit the same way.
+- Changed: `contracts/src/interfaces/IIndicoLedger.sol`: error `NotAUser(address)`; the two
+  functions' comments with guards and check order.
+- New: `contracts/test/unit/AdminCredit.t.sol`: partition tables for user, amount and memo, 32
+  tests. Issue: exact mint and event, exactly one event, one wei, zero and max memo emitted as
+  given, revoked user, adds to registered credit in one balance, exactly the room, room plus
+  one, `uint256` max (named, no panic). Debit: exact burn and event, one event, one wei, exactly
+  available to zero, available plus one, `uint256` max, empty balance, revoked user, fuzz within
+  and above available. As required: user zero reverts `ZeroAddress` first; never-approved,
+  merchant, revoked merchant, the ledger and USDC revert `NotAUser` on both functions (for issue
+  to a merchant, the D-33 evidence); approved and revoked users succeed; signed-but-unapproved is
+  `NotAUser`, approved-but-unsigned can be issued; debit to zero then issue the full cap again
+  succeeds (the cap limits balance, not lifetime issuance); a property fuzz over 24-step
+  sequences of issues and debits (valid or not) on three users asserting `totalCredit` equals the
+  sum of all balances and every user is at most `CREDIT_CAP` (D-33, ahead of P2.1). Seven
+  non-admins on both, paused on both, and four check-order tests. Every revert asserts the full
+  snapshot unchanged.
+- Changed: `contracts/test/unit/ParticipantMatrix.t.sol`: `adminIssueCredit` and
+  `adminDebitCredit` columns (O-025), 6 of 13 columns, 54 of 117 cells: only Admin succeeds,
+  every other participant is denied `ADMIN_ROLE`. The debit cells mint to bob before the
+  snapshot.
+- Changed: `contracts/test/unit/Pause.t.sol`: pause matrix 8 x 2 with both functions (unpaused
+  succeeds, paused `EnforcedPause`); the debit row issues credit before pausing.
+- Changed: `contracts/test/unit/Constructor.t.sol`: the no-USDC sweep gains both functions
+  (19 calls per caller).
+- Changed: `INSTRUCTION.md`: P1.8 carried-in item names the exact locked-collateral debit test
+  (lock everything, a debit of 1 reverts `InsufficientAvailableCredit(1, 0)`, a debit of exactly
+  the unlocked part succeeds), moved from P1.5; P1.13 close-out grep now covers both
+  `forge-lint: disable` and `slither-disable` in `src/`, with D-30 as the only allowed survivor
+  so far.
+- Changed: `contracts/.gas-snapshot`: 29 new `AdminCreditTest` lines; 115 changed; none removed;
+  `HelpersTest` and `MathTest` unchanged. Over 10%, the three harnesses that grew: the no-USDC
+  sweep 159,207,849 to 179,306,245 (+12.6%, 19 calls instead of 17), the participant matrix
+  41,351,100 to 63,900,315 (+54.5%, 54 cells instead of 36, debit cells mint first), the pause
+  matrix 12,078,413 to 16,955,676 (+40.4%, 16 cells instead of 12). All others +0.02% to
+  +0.40%. Diff in `G8.log`.
+- Changed (local, not pushed): `docs/decisions.md` D-34.
+Slither: with the D-34 line, exit 0, 7 findings (`low-level-calls`, `naming-convention`,
+`constable-states`), `slither.log`. Without it, 8 findings including `uninitialized-state`
+(high) on `lockedCredit`, so CI step 7 would have failed. **Exit code:** on findings Slither
+calls `sys.exit(-1)`; Linux reports 255 (CI run 36807172474, the P0.2 failure), Git Bash on
+Windows reports 127 (a bare `sys.exit(-1)` in the same venv also gives 127). The local 127 meant
+findings, not "command not found"; Slither ran and printed its results.
+Also seen, and pre-existing: `ERROR:ContractSolcParsing: Impossible to generate IR for
+Math.mulDivDown`, in every Slither run since P1.3, locally and on CI; raised as O-030.
+Size: `IndicoLedger` runtime 6,188 B to 6,598 B (+410 B), margin 17,978 B.
+Gate (logs in `docs/gate-logs/P1.5/`, Forge 1.8.3), final run on verified-clean source:
+- G1 pass, `G1.log`: 238 passed, 0 failed, 0 skipped, exit 0.
+- G2 pass, `G2.log`: src lines 86/86, branches 29/29.
+- G3 pass, `G3.log`: exit 0.
+- G4 pass, `G4.log`: `forge build --deny warnings` exit 0.
+- G5 pass, `G5.log`: seeds 1 and 2, 238 passed each.
+- G6 pass, `G6.log`: three runs, 238 passed each.
+- G7 pass, `G7.log`: `ci` profile, 238 passed.
+- G8 pass, `G8.log`: `IndicoLedger` 6,598 B runtime; snapshot check 214 passed.
+- G9 pass, `G9.log`: see Mutations.
+- G13 pass, `G13.log`: grep finds nothing; the planted probe is found, then removed.
+- G10 pending: owner pushes. Deep fuzz on this code: the next nightly after the push.
+- G11: none beyond the gate.
+- G12: this entry.
+Mutations (G9), each on `IndicoLedger.sol`, restored byte-identical by SHA-256 after each:
+- M1 issue open to anyone: participant matrix. Caught.
+- M2 debit works while paused: pause matrix. Caught.
+- M3 zero-address check removed: `NotAUser(0x0) != ZeroAddress()`. Caught.
+- M4 only merchants refused, never-approved accepted: `test_user_notAUser_bothFunctions`. Caught.
+- M5 users refused too: participant matrix `NotAUser(...)`. Caught.
+- M6 zero amount accepted: `test_amount_zero_revertsZeroAmount_bothFunctions`. Caught.
+- M7 exact available rejected: `InsufficientAvailableCredit(1, 1)`. Caught.
+- M8 debit leaves `totalCredit`: `total: 2000000 != 1000000`. Caught.
+- M9 debit leaves the balance: `bob: 2000000 != 1000000`. Caught.
+- M10 `CreditBurned` memo dropped: `param mismatch at reason`. Caught.
+- M11 issue memo dropped: `CreditMinted param mismatch at reason`. Caught.
+Incident, the first full gate run (recovered, INSTRUCTION 2 crash rule): the background run that
+held G1 to G9 was stopped by the session's background time limit during M10, but its child
+process kept running. It left M10 in `IndicoLedger.sol` (found by comparing against the backup,
+restored, verified by SHA-256), then went on to apply and restore M11 on its own. A recovery
+rerun started inside that window, so its G1 compiled the M11 source and failed
+(`CreditMinted param mismatch at reason`), while G2 to G8, built after the restore, passed. No
+mutation process was left (`ps`), the source matched its backup, `forge clean`, and the whole
+gate ran again: G1 to G8 and G13 in one run, G9 and Slither alone in another. All the results
+above are from that final run. The mutation script was also fixed: it refuses to start if a
+leftover backup differs from the source (before, it would have copied a still-mutated source
+over the good backup), and deletes the backup only after a verified clean finish.
+Open items: closed O-027 (C-026); O-025 now 54 of 117 cells; raised O-028 (remove the D-34 line
+in P1.8), O-029 (`Math.sol`'s C-006 Slither triage needs its own decision to survive P1.13), and
+O-030 (the `mulDivDown` IR error).
+Commit: feat: adminIssueCredit and adminDebitCredit, users only, with per-account cap and available-credit debit (P1.5)
+
 ---
 
 ## Open items
@@ -939,6 +1048,9 @@ Commit: docs: record P1.4 Deep fuzz result and C-026 CI
 | O-022 | Participant matrix (IT 2.2): the `pause` column, nine participants, moved from P1.1 because building them needs approvals and `signTerms` | engineer | Closed by C-019 |
 | O-023 | The Phase-0 skip step in `ci.yml` and `deep.yml` no longer runs now that `src/IndicoLedger.sol` exists; delete it | engineer | P1.13 |
 | O-024 | Backend admin screen (AD-04, AD-02): before approving a wallet as user or merchant, warn that its role becomes permanent (D-22); a mistaken approval can only be fixed by the person using a different wallet | backend | Level 4 |
-| O-025 | Participant matrix (IT 2.2): 4 of 13 action columns (`signTerms`, `setUserApproved`, `pause`, `registerAsset`), 36 of 117 cells. Each later portion adds its own column at its gate; all 13 columns, 117 cells, by P1.13 | engineer | P1.13 |
+| O-025 | Participant matrix (IT 2.2): 6 of 13 action columns (`signTerms`, `setUserApproved`, `pause`, `registerAsset`, `adminIssueCredit`, `adminDebitCredit`), 54 of 117 cells. Each later portion adds its own column at its gate; all 13 columns, 117 cells, by P1.13 | engineer | P1.13 |
 | O-026 | On any Forge upgrade (D-14), re-run the D-30 probe (`docs/lint-probes/missing-events-access-control`, `forge build --deny warnings`); if the mapping rows are no longer flagged, delete every `missing-events-access-control` suppression in the same commit as the upgrade | engineer | next Forge upgrade |
 | O-027 | `_mint` computes `room = CREDIT_CAP - credit[account]`, which underflows (panic) if the account already holds more than the cap. Only a merchant can (via `spend`, D-27), and P1.4 mints only to users, so it is unreachable now. P1.5 decides whether `adminIssueCredit` may credit a merchant (O-011); if it can, P1.5 writes the failing test first (mint to a merchant above the cap must revert `CreditCapExceeded(amount, 0)`, never panic) and fixes `_mint` | engineer | Closed by D-33 (C-026) |
+| O-028 | Delete the `slither-disable-next-line uninitialized-state` above `lockedCredit` (D-34) as part of the gate; it covers every read site (`adminDebitCredit`, and `spend` in P1.6) | engineer | P1.8 |
+| O-029 | `src/lib/Math.sol` carries `slither-disable-next-line unused-return` (C-006 triage). The P1.13 grep now covers Slither, so it fails close-out unless it gets its own decision allowing it to survive, or is removed | engineer, owner | before P1.13 |
+| O-030 | Slither has logged `ERROR:ContractSolcParsing: Impossible to generate IR for Math.mulDivDown (src/lib/Math.sol#27-34): 'NoneType' object has no attribute 'parameters'` since P1.3, locally and on CI (run 37108382319); P1.1 and P1.2 runs did not. Detectors still run on everything else and the exit code ignores it, so CI stays green, but `mulDivDown` is not being analysed. Find the trigger and fix or triage in writing | engineer | before P1.8 (first ledger use of `Math`) |

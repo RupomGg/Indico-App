@@ -106,6 +106,8 @@ interface IIndicoLedger {
     error ExtensionWindowNotOpen(uint64 opensAt);
     /// @notice A constructor argument was the zero address.
     error ZeroAddress();
+    /// @notice Admin credit target `account` was never approved as a user (D-32).
+    error NotAUser(address account);
     /// @notice `registerAsset` with a zero document hash (D-28).
     error ZeroDocHash();
     /// @notice `registerAsset` with an asset type above 5 (D-29).
@@ -183,12 +185,15 @@ interface IIndicoLedger {
     function registerAsset(bytes32 docHash, uint8 assetType, uint256 value) external;
 
     /// @notice Issue credit to `user` for a payment received off platform.
-    /// @dev ADMIN_ROLE. Emits `CreditMinted`.
+    /// @dev ADMIN_ROLE, `whenNotPaused`. Reverts, in order, `ZeroAddress`, `NotAUser` unless
+    ///      `user` was approved as a user (revoked included, D-32), `ZeroAmount`, then
+    ///      `CreditCapExceeded` (D-27). Emits `CreditMinted(user, amount, memo)`.
     function adminIssueCredit(address user, uint256 amount, bytes32 memo) external;
 
     /// @notice Debit `user`'s credit for a private cash settlement.
-    /// @dev ADMIN_ROLE. Reverts `InsufficientAvailableCredit` if `amount > available(user)`;
-    ///      never reaches locked collateral. Emits `CreditBurned`.
+    /// @dev ADMIN_ROLE, `whenNotPaused`. Reverts, in order, `ZeroAddress`, `NotAUser`,
+    ///      `ZeroAmount`, then `InsufficientAvailableCredit` if `amount > available(user)`; never
+    ///      reaches locked collateral. Emits `CreditBurned(user, amount, memo)`.
     function adminDebitCredit(address user, uint256 amount, bytes32 memo) external;
 
     // ---------------------------------------------------------------------------------------

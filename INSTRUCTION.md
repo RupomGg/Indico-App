@@ -266,8 +266,10 @@ pause matrix (IT §2.3) and the participant matrix (IT §2.2) with its own funct
   `requestLoan(maxBorrow(u))` succeeds; principal above `uint128` max → named revert; principal
   above pool liquidity; three concurrent loans lock exactly the sum; revoked user cannot borrow;
   blacklisted borrower → full rollback; `LoanOpened` and `CollateralLocked` exact.
-  **Carried in:** `spend` and `adminDebitCredit` can never reach locked collateral; revocation
-  leaves balances and loans untouched.
+  **Carried in:** `spend` and `adminDebitCredit` can never reach locked collateral (for
+  `adminDebitCredit`: lock everything, then a debit of 1 reverts
+  `InsufficientAvailableCredit(1, 0)`, and a debit of exactly the unlocked part succeeds; D-32,
+  moved from P1.5); revocation leaves balances and loans untouched.
 - Manual check: none beyond the gate.
 
 **P1.9 `repay`**
@@ -309,8 +311,9 @@ pause matrix (IT §2.3) and the participant matrix (IT §2.2) with its own funct
 - Corner cases: every negative-space test (unknown selector, calldata one byte short, 100 bytes
   appended, raw ETH sent, stray ERC-20 sent); reentrancy cross product (4 USDC functions × 11
   re-entry targets) as one loop; Slither on `src/` clean or triaged in writing;
-  `grep -rn "forge-lint: disable" src/` returns nothing (any suppression still there fails the
-  gate unless it has its own written decision; see D-18).
+  `grep -rnE "forge-lint: disable|slither-disable" src/` returns nothing (any suppression still
+  there fails the gate unless it has its own written decision that says it may survive: so far
+  only D-30's linter suppressions; see D-18, D-34, O-029).
 - Handover produced: ABI JSON, TypeScript client package (viem), custom-error decoder map, gas
   table per function.
 - Manual check: owner tags `interface-v1.0.0` and sends the handover to the backend. From here the

@@ -54,6 +54,8 @@ contract IndicoLedger is AccessControlDefaultAdminRules, Pausable {
     mapping(address => uint8) public participantRole;
 
     mapping(address => uint256) public credit;
+    // Read before P1.8 first writes it (requestLoan), correctly 0 until then (D-34).
+    // slither-disable-next-line uninitialized-state
     mapping(address => uint256) public lockedCredit;
     uint256 public totalCredit;
     // forge-lint: disable-next-line(uninitialized-state)
@@ -197,6 +199,40 @@ contract IndicoLedger is AccessControlDefaultAdminRules, Pausable {
         assetRegistered[docHash] = true;
         emit IIndicoLedger.AssetRegistered(msg.sender, docHash, assetType, value);
         _mint(msg.sender, value, docHash);
+    }
+
+    /// @notice Issue credit to `user` for a payment received off platform (AD-10, AD-11).
+    /// @dev Users only, revoked included (D-32); the mint is capped per account (D-27).
+    function adminIssueCredit(address user, uint256 amount, bytes32 memo)
+        external
+        onlyRole(ADMIN_ROLE)
+        whenNotPaused
+    {
+        _checkCreditTarget(user, amount);
+        _mint(user, amount, memo);
+    }
+
+    /// @notice Debit `user`'s credit for a private cash settlement (AD-12).
+    /// @dev Users only (D-32). Limited to available credit, so it never reaches collateral
+    ///      locked against a loan.
+    function adminDebitCredit(address user, uint256 amount, bytes32 memo)
+        external
+        onlyRole(ADMIN_ROLE)
+        whenNotPaused
+    {
+        _checkCreditTarget(user, amount);
+        uint256 avail = credit[user] - lockedCredit[user];
+        if (amount > avail) revert IIndicoLedger.InsufficientAvailableCredit(amount, avail);
+        credit[user] -= amount;
+        totalCredit -= amount;
+        emit IIndicoLedger.CreditBurned(user, amount, memo);
+    }
+
+    /// @dev Same order as `_admit`: zero address first, then the role, then the amount.
+    function _checkCreditTarget(address user, uint256 amount) private view {
+        if (user == address(0)) revert IIndicoLedger.ZeroAddress();
+        if (participantRole[user] != ROLE_USER) revert IIndicoLedger.NotAUser(user);
+        if (amount == 0) revert IIndicoLedger.ZeroAmount();
     }
 
     /// @dev The only way credit enters circulation. Refuses a mint that would push one account
