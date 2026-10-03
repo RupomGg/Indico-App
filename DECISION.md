@@ -899,6 +899,16 @@ push is a real run (this commit changes `deep.yml`). Recorded in a later entry.
 Open items: closed O-027 by D-33 (no guard; reopens if D-22, D-27 or users-only minting changes).
 Commit: ci: nightly deep fuzz skips itself when contracts/ is unchanged since the last green or red run
 
+### C-027 · P1.4 done; CI for C-026 · 2026-10-03
+Type: chore
+Files: none changed.
+- Deep fuzz pass, `docs/gate-logs/P1.4/deep-ci.log`: scheduled run 37105728701 on `d397496`
+  (P1.4's code, `62e45b9`, plus a docs-only commit), **206 passed, 0 failed, 0 skipped** at
+  5,000,000 runs, 6,065 s, including both `RegisterAsset` fuzz tests. P1.4 is done (1.2).
+- CI for C-026: run 37108382319 on `dca7318` green. The new `deep.yml` was accepted with no
+  workflow-file error; its first run is the next nightly, a full run because `deep.yml` changed.
+Commit: docs: record P1.4 Deep fuzz result and C-026 CI
+
 ---
 
 ## Open items
