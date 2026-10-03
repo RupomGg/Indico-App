@@ -855,6 +855,15 @@ Open items: closed O-016; O-025 now 36 of 117 cells; raised O-026 (re-run the D-
 any Forge upgrade) and O-027 (`_mint` above-cap underflow, for P1.5).
 Commit: feat: registerAsset with per-account credit cap, six asset types, shared mint (P1.4)
 
+### C-025 · P1.4 · CI gate line G10 · 2026-10-03
+Type: chore
+Files: none changed. Completes the line C-024 left pending.
+- Session start (INSTRUCTION 1.2): latest Deep fuzz run 37090561580 on `4fabf1f` green.
+- G10 pass, `G10.log`: CI run 37101839327 on `62e45b9` green. Steps 1 to 3 and 5 to 7 pass;
+  step 4 and the Phase-0 skip step skipped as designed.
+- Deep fuzz on P1.4's code (`62e45b9`): pending. P1.4 is not done until it is green (1.2).
+Commit: docs: record P1.4 CI gate result
+
 ---
 
 ## Open items
