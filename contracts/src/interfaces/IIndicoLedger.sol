@@ -106,6 +106,8 @@ interface IIndicoLedger {
     error ExtensionWindowNotOpen(uint64 opensAt);
     /// @notice A constructor argument was the zero address.
     error ZeroAddress();
+    /// @notice `spend` to an approved merchant that has not signed the terms (D-37).
+    error MerchantTermsNotSigned(address merchant);
     /// @notice Admin credit target `account` was never approved as a user (D-32).
     error NotAUser(address account);
     /// @notice `registerAsset` with a zero document hash (D-28).
@@ -201,8 +203,10 @@ interface IIndicoLedger {
     // ---------------------------------------------------------------------------------------
 
     /// @notice Pay `amount` of the caller's available credit to an approved merchant.
-    /// @dev Approved user, terms signed, approved merchant, `0 < amount <= available(caller)`.
-    ///      Emits `Spent` and `MerchantReceipt`.
+    /// @dev `whenNotPaused`. Reverts, in order, `NotApprovedUser`, `TermsNotSigned`,
+    ///      `ZeroAddress`, `NotApprovedMerchant`, `MerchantTermsNotSigned` (D-37), `ZeroAmount`,
+    ///      `InsufficientAvailableCredit`. No fee: the merchant receives exactly `amount`.
+    ///      Emits `Spent` and `MerchantReceipt` (its `at` is a record only, D-26).
     function spend(address merchant, uint256 amount) external;
 
     // ---------------------------------------------------------------------------------------

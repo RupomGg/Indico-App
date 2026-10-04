@@ -159,10 +159,12 @@ contract PauseTest is StateSnapshot, Matrix {
     /// | registerAsset       | succeeds      | EnforcedPause               |
     /// | adminIssueCredit    | succeeds      | EnforcedPause               |
     /// | adminDebitCredit    | succeeds      | EnforcedPause               |
-    /// The last three rows onboard alice (terms set, approved, signed) before pausing, and the
-    /// debit row issues her credit first, so each paused cell fails for the pause alone.
+    /// | spend               | succeeds      | EnforcedPause               |
+    /// The last four rows onboard alice (terms set, approved, signed) before pausing; the debit
+    /// and spend rows issue her credit first, and the spend row approves and signs merchantA, so
+    /// each paused cell fails for the pause alone.
     function test_pauseMatrix_everyCell() public {
-        _crossProduct(_dims(8, 2), _pauseCell);
+        _crossProduct(_dims(9, 2), _pauseCell);
     }
 
     function _pauseCell(uint256[] memory c) internal {
@@ -174,19 +176,26 @@ contract PauseTest is StateSnapshot, Matrix {
             vm.prank(alice);
             ledger.signTerms(keccak256("matrix-terms-v1"));
         }
-        if (c[0] == 7) {
+        if (c[0] >= 7) {
             vm.prank(admin);
             ledger.adminIssueCredit(alice, 2e6, "matrix");
+        }
+        if (c[0] == 8) {
+            vm.prank(admin);
+            ledger.setMerchantApproved(merchantA, true);
+            vm.prank(merchantA);
+            ledger.signTerms(keccak256("matrix-terms-v1"));
         }
         bool startPaused = c[1] == 1;
         if (startPaused) _pause();
 
-        uint8[2][8] memory expected = [
+        uint8[2][9] memory expected = [
             [uint8(0), 1],
             [uint8(2), 0],
             [uint8(0), 0],
             [uint8(0), 0],
             [uint8(0), 0],
+            [uint8(0), 1],
             [uint8(0), 1],
             [uint8(0), 1],
             [uint8(0), 1]
@@ -232,12 +241,19 @@ contract PauseTest is StateSnapshot, Matrix {
                 s.credit[2] += 1e6;
                 s.totalCredit += 1e6;
             }
-        } else {
+        } else if (c[0] == 7) {
             vm.prank(admin);
             ledger.adminDebitCredit(alice, 1e6, "matrix");
             if (e == 0) {
                 s.credit[2] -= 1e6;
                 s.totalCredit -= 1e6;
+            }
+        } else {
+            vm.prank(alice);
+            ledger.spend(merchantA, 1e6);
+            if (e == 0) {
+                s.credit[2] -= 1e6; // alice is actors[2]
+                s.credit[4] += 1e6; // merchantA is actors[4]
             }
         }
         _assertUnchanged(s);

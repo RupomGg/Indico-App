@@ -1097,6 +1097,84 @@ Files: none changed. Completes the CI proof C-030 left pending.
 - Both commits go to `main` by fast-forward; the branch is then deleted.
 Commit: docs: record CI red/green for the Slither guard
 
+### C-032 · P1.6 · spend · 2026-10-04
+Type: feature
+Decisions: D-36, D-37 (logged in C-030); D-22, D-26, D-27, D-30, D-34 applied
+Session start (INSTRUCTION 1.2): latest Deep fuzz run 37105728701 green; P1.5's own deep run
+(next nightly) still pending. `main` CI after the P0.1 reopen, run 37162976091 on `b16bd30`,
+green including the guarded step 7.
+Files:
+- Changed: `contracts/src/IndicoLedger.sol`: `spend(merchant, amount)`, `whenNotPaused`. Reverts
+  in order `NotApprovedUser`, `TermsNotSigned`, `ZeroAddress` (D-37), `NotApprovedMerchant`,
+  `MerchantTermsNotSigned(merchant)` (D-37), `ZeroAmount`,
+  `InsufficientAvailableCredit(amount, available)`. Moves exactly `amount` from payer to
+  merchant, no fee (S-05); `totalCredit` unchanged; emits `Spent` and `MerchantReceipt(...,
+  block.timestamp)`, the time a record only (D-26). Paying yourself is refused by the merchant
+  check: a user is never an approved merchant (D-22). A merchant may exceed `CREDIT_CAP`, since
+  `spend` is not a mint (D-27).
+  - D-34: no new line. `spend` reads `lockedCredit`; Slither reports per declaration, and the
+    existing line above `lockedCredit` covers it (CI-guarded step 7 exits 0, 7 results).
+  - D-30: no line yet. The Forge linter does not flag `approvedMerchant`: it treats a check
+    against `msg.sender` as access control (`approvedUser[msg.sender]`), and `spend` checks the
+    payee parameter (`approvedMerchant[merchant]`). Confirmed with a fresh build, and in a scratch
+    copy without the existing `approvedUser` line only `approvedUser` is flagged. It should fire
+    in P1.7, when `deposit` checks `approvedMerchant[msg.sender]`.
+- Changed: `contracts/src/interfaces/IIndicoLedger.sol`: error
+  `MerchantTermsNotSigned(address merchant)`; the `spend` comment with the check order.
+- New: `contracts/test/unit/Spend.t.sol`: partition tables for merchant and amount, 28 tests.
+  Exact move with both events and the warped time, exactly two events, one wei, exactly
+  available, two merchants, signed only older terms on both sides, a merchant above the cap via
+  two spends (D-27), fuzz within available conserving `totalCredit`. Amount: zero, available plus
+  one, `uint256` max, no credit, fuzz above available. Merchant: zero (`ZeroAddress`); the
+  ledger, USDC, a stranger, another user, a revoked merchant and the admin
+  (`NotApprovedMerchant`); `test_spendToSelf_revertsNotApprovedMerchant_D22`; an approved but
+  unsigned merchant reverts `MerchantTermsNotSigned` and can be paid once signed. Caller: five
+  non-users, revoked (credit kept), approved but unsigned, paused. Seven check-order tests.
+  Every revert asserts the full snapshot unchanged.
+- Changed: `contracts/test/unit/ParticipantMatrix.t.sol`: `spend` column (O-025), 7 of 13, 63 of
+  117 cells; every participant holding the user role gets credit first, so each cell fails on
+  access alone: only ApprovedAndSigned pays, ApprovedNotSigned gets `TermsNotSigned`, the other
+  seven `NotApprovedUser`.
+- Changed: `contracts/test/unit/Pause.t.sol`: pause matrix 9 x 2 with `spend` (paused
+  `EnforcedPause`); the row approves and signs merchantA and issues alice credit before pausing.
+- Changed: `contracts/test/unit/Constructor.t.sol`: the no-USDC sweep gains `spend` (20 calls).
+- Changed: `contracts/.gas-snapshot`: 26 new `SpendTest` lines; 122 changed; none removed;
+  `HelpersTest` and `MathTest` unchanged. Over 10%: the participant matrix 63,900,315 to
+  75,247,520 (+17.8%, 63 cells instead of 54) and the pause matrix 16,955,676 to 19,779,603
+  (+16.7%, 18 cells instead of 16). All others -0.01% to +5.62%. Diff in `G8.log`.
+Size: `IndicoLedger` runtime 6,598 B to 6,974 B (+376 B), margin 17,602 B.
+Slither, CI step 7 body under `bash -eo pipefail`: exit 0, no IR error, 7 findings (`slither.log`).
+Gate (logs in `docs/gate-logs/P1.6/`, Forge 1.8.3; G1 to G8 and G13 in one run, G9 and Slither in
+another):
+- G1 pass, `G1.log`: 266 passed, 0 failed, 0 skipped, exit 0.
+- G2 pass, `G2.log`: src lines 99/99, branches 36/36.
+- G3 pass, `G3.log`: exit 0.
+- G4 pass, `G4.log`: `forge build --deny warnings` exit 0.
+- G5 pass, `G5.log`: seeds 1 and 2, 266 passed each.
+- G6 pass, `G6.log`: three runs, 266 passed each.
+- G7 pass, `G7.log`: `ci` profile, 266 passed.
+- G8 pass, `G8.log`: `IndicoLedger` 6,974 B runtime; snapshot check 240 passed.
+- G9 pass, `G9.log`: see Mutations.
+- G13 pass, `G13.log`.
+- G10 pending: owner pushes. Deep fuzz: the next nightly covers P1.5, the P0.1 reopen and P1.6.
+- G11: none beyond the gate.
+- G12: this entry.
+Mutations (G9), each on `IndicoLedger.sol`, restored byte-identical by SHA-256 after each:
+- M1 payer approval removed: `TermsNotSigned() != NotApprovedUser()`. Caught.
+- M2 payer terms removed: participant matrix. Caught.
+- M3 zero merchant unchecked: `NotApprovedMerchant() != ZeroAddress()`. Caught.
+- M4 merchant approval removed: `MerchantTermsNotSigned(...) != NotApprovedMerchant()`. Caught.
+- M5 merchant terms removed (D-37): `test_merchant_approvedNotSigned_reverts`. Caught.
+- M6 zero amount accepted: `test_amount_zero_revertsZeroAmount`. Caught.
+- M7 exact available rejected: `InsufficientAvailableCredit(1e6, 1e6)`. Caught.
+- M8 merchant not credited: `merchant: 0 != 1000000`. Caught.
+- M9 payer not debited: `payer: 1000000 != 0`. Caught.
+- M10 a hidden 1% fee (S-05): `merchant: 990000 != 1000000`. Caught.
+- M11 receipt time zero: `MerchantReceipt param mismatch at at`. Caught.
+- M12 works while paused: pause matrix. Caught.
+Open items: O-025 now 63 of 117 cells. None raised.
+Commit: feat: spend with no fee, merchant must be approved and have signed, receipt with time (P1.6)
+
 ---
 
 ## Open items
@@ -1127,7 +1205,7 @@ Commit: docs: record CI red/green for the Slither guard
 | O-022 | Participant matrix (IT 2.2): the `pause` column, nine participants, moved from P1.1 because building them needs approvals and `signTerms` | engineer | Closed by C-019 |
 | O-023 | The Phase-0 skip step in `ci.yml` and `deep.yml` no longer runs now that `src/IndicoLedger.sol` exists; delete it | engineer | P1.13 |
 | O-024 | Backend admin screen (AD-04, AD-02): before approving a wallet as user or merchant, warn that its role becomes permanent (D-22); a mistaken approval can only be fixed by the person using a different wallet | backend | Level 4 |
-| O-025 | Participant matrix (IT 2.2): 6 of 13 action columns (`signTerms`, `setUserApproved`, `pause`, `registerAsset`, `adminIssueCredit`, `adminDebitCredit`), 54 of 117 cells. Each later portion adds its own column at its gate; all 13 columns, 117 cells, by P1.13 | engineer | P1.13 |
+| O-025 | Participant matrix (IT 2.2): 7 of 13 action columns (`signTerms`, `setUserApproved`, `pause`, `registerAsset`, `adminIssueCredit`, `adminDebitCredit`, `spend`), 63 of 117 cells. Each later portion adds its own column at its gate; all 13 columns, 117 cells, by P1.13 | engineer | P1.13 |
 | O-026 | On any Forge upgrade (D-14), re-run the D-30 probe (`docs/lint-probes/missing-events-access-control`, `forge build --deny warnings`); if the mapping rows are no longer flagged, delete every `missing-events-access-control` suppression in the same commit as the upgrade | engineer | next Forge upgrade |
 | O-027 | `_mint` computes `room = CREDIT_CAP - credit[account]`, which underflows (panic) if the account already holds more than the cap. Only a merchant can (via `spend`, D-27), and P1.4 mints only to users, so it is unreachable now. P1.5 decides whether `adminIssueCredit` may credit a merchant (O-011); if it can, P1.5 writes the failing test first (mint to a merchant above the cap must revert `CreditCapExceeded(amount, 0)`, never panic) and fixes `_mint` | engineer | Closed by D-33 (C-026) |
 | O-028 | Delete the `slither-disable-next-line uninitialized-state` above `lockedCredit` (D-34) as part of the gate; it covers every read site (`adminDebitCredit`, and `spend` in P1.6) | engineer | P1.8 |

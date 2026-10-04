@@ -235,6 +235,30 @@ contract IndicoLedger is AccessControlDefaultAdminRules, Pausable {
         if (amount == 0) revert IIndicoLedger.ZeroAmount();
     }
 
+    // ---------------------------------------------------------------------------------------
+    // Spending, contract-spec 6.4
+    // ---------------------------------------------------------------------------------------
+
+    /// @notice Pay `amount` of the caller's available credit to an approved merchant.
+    /// @dev No fee: the merchant receives exactly `amount` (S-05). Paying yourself is impossible,
+    ///      since a user is never an approved merchant (D-22). The merchant must have signed the
+    ///      terms (D-37). `block.timestamp` in the receipt is a record only (D-26).
+    function spend(address merchant, uint256 amount) external whenNotPaused {
+        if (!approvedUser[msg.sender]) revert IIndicoLedger.NotApprovedUser();
+        if (!termsSigned[msg.sender]) revert IIndicoLedger.TermsNotSigned();
+        if (merchant == address(0)) revert IIndicoLedger.ZeroAddress();
+        if (!approvedMerchant[merchant]) revert IIndicoLedger.NotApprovedMerchant();
+        if (!termsSigned[merchant]) revert IIndicoLedger.MerchantTermsNotSigned(merchant);
+        if (amount == 0) revert IIndicoLedger.ZeroAmount();
+        uint256 avail = credit[msg.sender] - lockedCredit[msg.sender];
+        if (amount > avail) revert IIndicoLedger.InsufficientAvailableCredit(amount, avail);
+
+        credit[msg.sender] -= amount;
+        credit[merchant] += amount;
+        emit IIndicoLedger.Spent(msg.sender, merchant, amount);
+        emit IIndicoLedger.MerchantReceipt(merchant, msg.sender, amount, block.timestamp);
+    }
+
     /// @dev The only way credit enters circulation. Refuses a mint that would push one account
     ///      above `CREDIT_CAP`, so no balance a loan can lock against exceeds `uint128` (D-27).
     ///      Written as `amount > room` so it cannot overflow for any `amount`.

@@ -6,11 +6,14 @@ import {IIndicoLedger} from "../../src/interfaces/IIndicoLedger.sol";
 import {ROLE_NONE, ROLE_USER, ROLE_MERCHANT} from "../../src/lib/Constants.sol";
 import {Actors} from "../helpers/Actors.sol";
 
-/// @notice Participant state x action, docs/input-testing.md 2.2. Columns so far: 6 of 13
+/// @notice Participant state x action, docs/input-testing.md 2.2. Columns so far: 7 of 13
 ///         (`signTerms`, `setUserApproved`, `pause`, `registerAsset`, `adminIssueCredit`,
-///         `adminDebitCredit`); each later portion adds its own at its gate until all
+///         `adminDebitCredit`, `spend`); each later portion adds its own at its gate until all
 ///         13 x 9 = 117 cells exist (O-025). The two admin-credit columns target bob, and every
-///         participant but Admin is denied (ADMIN_ROLE).
+///         participant but Admin is denied (ADMIN_ROLE). The `spend` column pays merchantA; every
+///         participant holding the user role gets credit first, so each cell fails on access
+///         alone: only ApprovedAndSigned pays, ApprovedNotSigned gets TermsNotSigned, the rest
+///         NotApprovedUser.
 ///
 /// | Participant           | signTerms(TERMS) | setUserApproved(t, true) | pause()       | registerAsset   |
 /// |-----------------------|------------------|--------------------------|---------------|-----------------|
@@ -32,23 +35,23 @@ contract ParticipantMatrixTest is Actors {
     uint8 internal constant NOT_USER = 4;
     uint8 internal constant NOT_SIGNED = 5;
 
-    uint256 internal constant COLUMNS = 6;
+    uint256 internal constant COLUMNS = 7;
     uint256 internal constant ADMIN_CREDIT = 1e6;
     uint256 internal constant REGISTER_VALUE = 1_000e6;
 
     function _expected(uint256 p, uint256 action) internal pure returns (uint8) {
         // Rows in Participant order; columns signTerms, setUserApproved, pause, registerAsset,
         // adminIssueCredit, adminDebitCredit.
-        uint8[6][9] memory t = [
-            [OK, NOT_ADMIN, NOT_GUARDIAN, NOT_USER, NOT_ADMIN, NOT_ADMIN],
-            [ALREADY_SIGNED, NOT_ADMIN, NOT_GUARDIAN, NOT_USER, NOT_ADMIN, NOT_ADMIN],
-            [OK, NOT_ADMIN, NOT_GUARDIAN, NOT_SIGNED, NOT_ADMIN, NOT_ADMIN],
-            [ALREADY_SIGNED, NOT_ADMIN, NOT_GUARDIAN, OK, NOT_ADMIN, NOT_ADMIN],
-            [ALREADY_SIGNED, NOT_ADMIN, NOT_GUARDIAN, NOT_USER, NOT_ADMIN, NOT_ADMIN],
-            [ALREADY_SIGNED, NOT_ADMIN, NOT_GUARDIAN, NOT_USER, NOT_ADMIN, NOT_ADMIN],
-            [ALREADY_SIGNED, NOT_ADMIN, NOT_GUARDIAN, NOT_USER, NOT_ADMIN, NOT_ADMIN],
-            [OK, OK, NOT_GUARDIAN, NOT_USER, OK, OK],
-            [OK, NOT_ADMIN, OK, NOT_USER, NOT_ADMIN, NOT_ADMIN]
+        uint8[7][9] memory t = [
+            [OK, NOT_ADMIN, NOT_GUARDIAN, NOT_USER, NOT_ADMIN, NOT_ADMIN, NOT_USER],
+            [ALREADY_SIGNED, NOT_ADMIN, NOT_GUARDIAN, NOT_USER, NOT_ADMIN, NOT_ADMIN, NOT_USER],
+            [OK, NOT_ADMIN, NOT_GUARDIAN, NOT_SIGNED, NOT_ADMIN, NOT_ADMIN, NOT_SIGNED],
+            [ALREADY_SIGNED, NOT_ADMIN, NOT_GUARDIAN, OK, NOT_ADMIN, NOT_ADMIN, OK],
+            [ALREADY_SIGNED, NOT_ADMIN, NOT_GUARDIAN, NOT_USER, NOT_ADMIN, NOT_ADMIN, NOT_USER],
+            [ALREADY_SIGNED, NOT_ADMIN, NOT_GUARDIAN, NOT_USER, NOT_ADMIN, NOT_ADMIN, NOT_USER],
+            [ALREADY_SIGNED, NOT_ADMIN, NOT_GUARDIAN, NOT_USER, NOT_ADMIN, NOT_ADMIN, NOT_USER],
+            [OK, OK, NOT_GUARDIAN, NOT_USER, OK, OK, NOT_USER],
+            [OK, NOT_ADMIN, OK, NOT_USER, NOT_ADMIN, NOT_ADMIN, NOT_USER]
         ];
         return t[p][action];
     }
@@ -62,6 +65,7 @@ contract ParticipantMatrixTest is Actors {
         uint8 e = _expected(c[0], c[1]);
         address target = makeAddr("matrixTarget");
         if (c[1] == 5) _mintCredit(bob, 2 * ADMIN_CREDIT); // something to debit
+        if (c[1] == 6 && ledger.participantRole(who) == ROLE_USER) _mintCredit(who, ADMIN_CREDIT);
 
         Snapshot memory s = _snapshot();
         if (e == ALREADY_SIGNED) vm.expectRevert(IIndicoLedger.AlreadySigned.selector);
@@ -92,7 +96,8 @@ contract ParticipantMatrixTest is Actors {
         else if (c[1] == 2) ledger.pause();
         else if (c[1] == 3) ledger.registerAsset(keccak256("matrix-doc"), 0, REGISTER_VALUE);
         else if (c[1] == 4) ledger.adminIssueCredit(bob, ADMIN_CREDIT, "matrix");
-        else ledger.adminDebitCredit(bob, ADMIN_CREDIT, "matrix");
+        else if (c[1] == 5) ledger.adminDebitCredit(bob, ADMIN_CREDIT, "matrix");
+        else ledger.spend(merchantA, ADMIN_CREDIT);
 
         if (e != OK) return _assertUnchanged(s);
 
@@ -108,10 +113,13 @@ contract ParticipantMatrixTest is Actors {
             assertEq(ledger.credit(who), REGISTER_VALUE, "minted");
             assertEq(ledger.totalCredit(), REGISTER_VALUE, "total");
             assertTrue(ledger.assetRegistered(keccak256("matrix-doc")));
-        } else {
+        } else if (c[1] < 6) {
             // Issue: 0 + 1 unit. Debit: the 2 units minted before the snapshot, less 1.
             assertEq(ledger.credit(bob), ADMIN_CREDIT, "bob");
             assertEq(ledger.totalCredit(), ADMIN_CREDIT, "total");
+        } else {
+            assertEq(ledger.credit(who), 0, "payer");
+            assertEq(ledger.credit(merchantA), ADMIN_CREDIT, "merchant");
         }
     }
 
