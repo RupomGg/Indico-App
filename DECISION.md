@@ -1310,6 +1310,17 @@ Open items: closed O-017; O-018 now covers both `totalLent` suppressions; O-025 
 raised O-032, O-033, O-034.
 Commit: feat: share pool with internal USDC accounting and virtual offset, withdraw by amount and withdrawAll (P1.7)
 
+### C-035 · P1.7 · CI gate line G10 · 2026-10-04
+Type: chore
+Files: none changed. Completes the line C-034 left pending.
+- G10 pass, `G10.log`: CI run 37176543026 on `13bfa7d` (branch `p1.7`) green. Steps 1 to 3 and 5
+  to 7 pass, step 7 with the D-40 suppressions in place; step 4 and the Phase-0 skip step skipped
+  as designed. A second run, 37176538588, is the branch's first push at `6b91448` (P1.6 docs),
+  also green.
+- Deep fuzz run 37169050467 on `1a9c993` (P1.6, covering P1.5 and the P0.1 reopen): still in
+  progress. `p1.7` merges to `main` only once it is green (INSTRUCTION 1.1, branch rule).
+Commit: docs: record P1.7 CI gate result
+
 ---
 
 ## Open items
