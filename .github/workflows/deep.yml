@@ -17,6 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       run: ${{ steps.decide.outputs.run }}
+      files: ${{ steps.shards.outputs.files }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -31,11 +32,25 @@ jobs:
           read -r last last_conclusion <<< "$(gh api "$runs&status=completed" -q '.workflow_runs[0] | "\(.head_sha) \(.conclusion)"')"
           bash .github/scripts/deep-should-run.sh "${{ github.event_name }}" "$green" "${last:-}" "${last_conclusion:-}" >> "$GITHUB_OUTPUT"
 
+      # One deep shard per test file, so no single job holds the whole suite against the
+      # 360-minute limit. Built from the files on disk, so a new test file is never left out.
+      - id: shards
+        working-directory: contracts
+        run: echo "files=$(find test -name '*.t.sol' | sort | jq -R . | jq -cs .)" >> "$GITHUB_OUTPUT"
+
+      - name: deep-runs-guard self-check
+        run: bash .github/scripts/deep-runs-guard.test.sh
+
   deep:
     needs: check
     if: needs.check.outputs.run == 'true'
+    name: deep (${{ matrix.file }})
     runs-on: ubuntu-latest
     timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        file: ${{ fromJSON(needs.check.outputs.files) }}
     defaults:
       run:
         working-directory: contracts
@@ -52,5 +67,10 @@ jobs:
         if: hashFiles('contracts/src/IndicoLedger.sol') == ''
         run: rm test/unit/Smoke.t.sol test/helpers/Fixture.sol test/helpers/Actors.sol test/helpers/StateSnapshot.sol
 
-      - name: forge test --profile deep (5,000,000 fuzz runs)
-        run: forge test --profile deep
+      - name: forge test --profile deep (5,000,000 fuzz runs), this file only
+        shell: bash
+        run: forge test --profile deep --match-path "${{ matrix.file }}" 2>&1 | tee deep.log
+
+      # Fails the shard if any fuzz test ran fewer than the deep profile's runs (O-036).
+      - name: every fuzz test ran 5,000,000 times
+        run: bash ../.github/scripts/deep-runs-guard.sh deep.log 5000000

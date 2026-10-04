@@ -320,6 +320,7 @@ contract MathTest is Test {
     // ------------------------------------------ properties (input-testing 3.2), 100k runs
 
     /// forge-config: default.fuzz.runs = 100000
+    /// forge-config: deep.fuzz.runs = 5000000
     function testFuzz_ceilDiv_neverBelowExactNeverAbovePlusOne(uint256 a, uint256 b) public view {
         b = bound(b, 1, U256);
         uint256 r = h.ceilDiv(a, b);
@@ -330,6 +331,7 @@ contract MathTest is Test {
     }
 
     /// forge-config: default.fuzz.runs = 100000
+    /// forge-config: deep.fuzz.runs = 5000000
     function testFuzz_ceilDiv_monotonicInNumerator(uint256 a1, uint256 a2, uint256 b) public view {
         b = bound(b, 1, U256);
         (a1, a2) = a1 <= a2 ? (a1, a2) : (a2, a1);
@@ -337,6 +339,7 @@ contract MathTest is Test {
     }
 
     /// forge-config: default.fuzz.runs = 100000
+    /// forge-config: deep.fuzz.runs = 5000000
     function testFuzz_ceilDiv_antitoneInDivisor(uint256 a, uint256 b1, uint256 b2) public view {
         b1 = bound(b1, 1, U256);
         b2 = bound(b2, 1, U256);
@@ -346,6 +349,7 @@ contract MathTest is Test {
 
     /// @dev Over the whole domain the only failure is a named DivisionByZero, never a panic.
     /// forge-config: default.fuzz.runs = 100000
+    /// forge-config: deep.fuzz.runs = 5000000
     function testFuzz_ceilDiv_revertsCleanlyNeverPanics(uint256 a, uint256 b) public view {
         try h.ceilDiv(a, b) returns (uint256) {
             assertGt(b, 0);
@@ -356,6 +360,7 @@ contract MathTest is Test {
     }
 
     /// forge-config: default.fuzz.runs = 100000
+    /// forge-config: deep.fuzz.runs = 5000000
     function testFuzz_collateral_properties(uint256 p1, uint256 p2) public view {
         p1 = bound(p1, 0, U256 / BPS);
         p2 = bound(p2, 0, U256 / BPS);
@@ -369,6 +374,7 @@ contract MathTest is Test {
 
     /// @dev maxBorrow(a) always passes the collateral check, and one wei more never does.
     /// forge-config: default.fuzz.runs = 100000
+    /// forge-config: deep.fuzz.runs = 5000000
     function testFuzz_maxBorrow_isExactlyTheLargestBorrowable(uint256 available) public view {
         available = bound(available, 0, U256 / BPS);
         uint256 mb = _maxBorrow(available);
@@ -378,6 +384,7 @@ contract MathTest is Test {
 
     /// @dev Differential against plain arithmetic where the product fits in 256 bits.
     /// forge-config: default.fuzz.runs = 100000
+    /// forge-config: deep.fuzz.runs = 5000000
     function testFuzz_mulDivDown_matchesPlainArithmetic(uint128 x, uint128 y, uint256 d)
         public
         view
@@ -387,6 +394,7 @@ contract MathTest is Test {
     }
 
     /// forge-config: default.fuzz.runs = 100000
+    /// forge-config: deep.fuzz.runs = 5000000
     function testFuzz_mulDivDown_monotonicInX(uint128 x1, uint128 x2, uint128 y, uint256 d)
         public
         view
@@ -399,6 +407,7 @@ contract MathTest is Test {
     /// @dev Over the whole domain: returns, or reverts with one of the two named errors for
     ///      exactly the right reason. Never a panic.
     /// forge-config: default.fuzz.runs = 100000
+    /// forge-config: deep.fuzz.runs = 5000000
     function testFuzz_mulDivDown_revertsCleanlyNeverPanics(uint256 x, uint256 y, uint256 d)
         public
         view
@@ -420,6 +429,7 @@ contract MathTest is Test {
 
     /// @dev Up is down, plus one exactly when there is a remainder (plain arithmetic reference).
     /// forge-config: default.fuzz.runs = 100000
+    /// forge-config: deep.fuzz.runs = 5000000
     function testFuzz_mulDivUp_isDownPlusRemainder(uint128 x, uint128 y, uint256 d) public view {
         d = bound(d, 1, U256);
         uint256 p = uint256(x) * y;
@@ -429,6 +439,7 @@ contract MathTest is Test {
     /// @dev Over the whole domain: returns up = down or down + 1, or reverts with one of the two
     ///      named errors for exactly the right reason. Never a panic.
     /// forge-config: default.fuzz.runs = 100000
+    /// forge-config: deep.fuzz.runs = 5000000
     function testFuzz_mulDivUp_revertsCleanlyNeverPanics(uint256 x, uint256 y, uint256 d)
         public
         view

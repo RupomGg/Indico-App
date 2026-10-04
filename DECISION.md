@@ -1369,6 +1369,45 @@ Gate (logs in `docs/gate-logs/P1.7/`, Forge 1.8.3, rerun in full):
 - G10 pending: owner pushes `p1.7`.
 Commit: part of the C-036 commit.
 
+### C-038 · chore · Deep fuzz split by test file, run-count guard, Math at 5M; D-40 approved · 2026-10-05
+Type: chore
+Decisions: D-42 (new, owner decided), D-43 (new, decided in principle, not built); D-40 approved
+by the owner, all five lines
+Files:
+- Changed: `.github/workflows/deep.yml`: the `check` job also lists `test/**/*.t.sol` into a JSON
+  matrix (`files`) and runs the guard's self-check; the `deep` job runs once per file
+  (`fail-fast: false`, 360 minutes each), `forge test --profile deep --match-path <file>`, its
+  output kept in `deep.log`, then the guard. D-31's skip logic unchanged (D-42).
+- New: `.github/scripts/deep-runs-guard.sh`: fails a shard with no forge summary, with a failure,
+  or with any fuzz test under 5,000,000 runs; invariant lines skipped (O-036).
+- New: `.github/scripts/deep-runs-guard.test.sh`: 9 cases, all `ok`: all at 5M; one capped at
+  100,000; above the minimum; an invariant line; unit tests only; no summary; a failed test; a
+  multi-suite summary; a failed fuzz with few runs.
+- Changed: `contracts/test/unit/Math.t.sol`: each of the 11 properties gains
+  `forge-config: deep.fuzz.runs = 5000000` under its `default.fuzz.runs = 100000` (O-036). No
+  assertion changed; G1 still runs them at 100,000.
+- Changed: `INSTRUCTION.md` P1.13: the suppressions allowed to survive the grep are D-30's two and
+  D-40's four permanent lines; D-34's line and D-40's `totalLent` pair must be gone.
+- Changed: `DECISION.md` O-026: also covers D-40's `reentrancy-events` and `incorrect-equality`
+  probes.
+- Changed (local, not pushed): `docs/decisions.md` D-40 marked approved with the owner's
+  conditions; D-42, D-43.
+Proof (`docs/gate-logs/P1.7/deep-split/`), real forge output under the `deep` profile on a
+scratch copy, through the guard:
+- A: `testFuzz_remapForgeAddress_neverAForgeAddress` uncapped: `runs: 5000000`, guard exit 0.
+- B: the same test with `deep.fuzz.runs = 100000`: `runs: 100000`, guard exit 1, naming it.
+  Cap removed; scratch file restored byte-identical.
+- C: `testFuzz_ceilDiv_revertsCleanlyNeverPanics` as committed before this change:
+  `runs: 100000`, guard exit 1 (the O-036 defect).
+- D: the same with the `deep` override line: `runs: 5000000`, guard exit 0.
+Gate for this change (`chore-gate.log`): `forge fmt --check` exit 0; `forge build --deny warnings`
+exit 0; `forge test` 339 passed, 0 failed, 0 skipped; snapshot check 305 passed; G13 grep finds
+nothing. `src/` unchanged, so G2 and G9 stand from C-037.
+Pending: the first Deep fuzz run under the split, on P1.7's code, is the CI proof; its per-shard
+times are recorded against the D-42 estimates.
+Open items: O-036 closed when that run shows every Math property at 5,000,000; raised O-037.
+Commit: ci: deep fuzz one shard per test file with a 5M run-count guard; Math properties at 5M under deep
+
 ---
 
 ## Open items
@@ -1400,7 +1439,7 @@ Commit: part of the C-036 commit.
 | O-023 | The Phase-0 skip step in `ci.yml` and `deep.yml` no longer runs now that `src/IndicoLedger.sol` exists; delete it | engineer | P1.13 |
 | O-024 | Backend admin screen (AD-04, AD-02): before approving a wallet as user or merchant, warn that its role becomes permanent (D-22); a mistaken approval can only be fixed by the person using a different wallet | backend | Level 4 |
 | O-025 | Participant matrix (IT 2.2): 9 of 13 action columns (`signTerms`, `setUserApproved`, `pause`, `registerAsset`, `adminIssueCredit`, `adminDebitCredit`, `spend`, `deposit`, `withdraw`), 81 of 117 cells. Each later portion adds its own column at its gate; all 13 columns, 117 cells, by P1.13 | engineer | P1.13 |
-| O-026 | On any Forge upgrade (D-14), re-run the D-30 probe (`docs/lint-probes/missing-events-access-control`, `forge build --deny warnings`); if the mapping rows are no longer flagged, delete every `missing-events-access-control` suppression in the same commit as the upgrade | engineer | next Forge upgrade |
+| O-026 | On any Forge upgrade (D-14), re-run the D-30 probe (`docs/lint-probes/missing-events-access-control`, `forge build --deny warnings`); if the mapping rows are no longer flagged, delete every `missing-events-access-control` suppression in the same commit as the upgrade. Same for D-40's `reentrancy-events` probe (`docs/lint-probes/reentrancy-events/`): if `Withdrawn` or `Deposited` no longer fires, delete that line. On a Slither upgrade, the D-40 `incorrect-equality` probe likewise | engineer | next Forge upgrade |
 | O-027 | `_mint` computes `room = CREDIT_CAP - credit[account]`, which underflows (panic) if the account already holds more than the cap. Only a merchant can (via `spend`, D-27), and P1.4 mints only to users, so it is unreachable now. P1.5 decides whether `adminIssueCredit` may credit a merchant (O-011); if it can, P1.5 writes the failing test first (mint to a merchant above the cap must revert `CreditCapExceeded(amount, 0)`, never panic) and fixes `_mint` | engineer | Closed by D-33 (C-026) |
 | O-028 | Delete the `slither-disable-next-line uninitialized-state` above `lockedCredit` (D-34) as part of the gate; it covers every read site (`adminDebitCredit`, and `spend` in P1.6) | engineer | P1.8 |
 | O-029 | `src/lib/Math.sol` carries `slither-disable-next-line unused-return` (C-006 triage). The P1.13 grep now covers Slither, so it fails close-out unless it gets its own decision allowing it to survive, or is removed | engineer, owner | before P1.13 |
@@ -1411,3 +1450,4 @@ Commit: part of the C-036 commit.
 | O-034 | Pool-state matrix (IT 2.4, 24 cells) moved from P1.7: it needs `requestLoan`, `repay` and a real default | engineer | P1.11 |
 | O-035 | Merchant guide and terms: while the pool is paused no merchant can deposit or withdraw, for as long as the pause lasts, and nothing can rescue the funds (D-41, CS §10); with the client's written pause policy (decisions, open non-blocking 2) | owner, client | before the first merchant deposits |
 | O-036 | The 11 `Math.t.sol` properties pinned by `forge-config: default.fuzz.runs = 100000` also run 100,000 times under `deep` (run 37169050467), so `LedgerMath` has never had 5,000,000 runs. Fix: a `deep` inline line per test, or move the pin; reopens P0.1 | engineer, owner | with the Deep fuzz split |
+| O-037 | Build D-43 (state-diff assertions instead of the full re-read snapshot) as its own change with the full gate: every G9 mutation from P1.1 to P1.7 still caught plus one new unexpected-slot mutation, gas per run before and after on the three heaviest fuzz tests, new Deep estimate per shard. After P1.7 merges, before P1.8 | engineer | before P1.8 |
