@@ -333,7 +333,7 @@ contract IndicoLedger is AccessControlDefaultAdminRules, Pausable, ReentrancyGua
         shares[msg.sender] -= burned;
         totalShares -= burned;
         poolUsdc -= assets;
-        // Emitted before the transfer; the lint flags it in any order (D-40).
+        // Emitted before the transfer; flagged even with no external call on the path (D-40).
         // forge-lint: disable-next-line(reentrancy-events)
         emit IIndicoLedger.Withdrawn(msg.sender, assets, burned);
         usdc.safeTransfer(msg.sender, assets);

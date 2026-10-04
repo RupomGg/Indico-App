@@ -146,7 +146,9 @@ contract PauseTest is StateSnapshot, Matrix {
 
     // ------------------------------------------------------------------ pause matrix, IT 2.3
 
-    /// @dev Rows: function. Columns: starting state (unpaused, paused). Each cell runs from a
+    /// @dev Rows: function. Columns: starting state (unpaused, paused, paused then unpaused);
+    ///      the third column expects exactly what the first does, so every function, the pool
+    ///      ones included (D-41), works again after an unpause. Each cell runs from a
     ///      clean deployment. Expected: 0 succeeds, 1 EnforcedPause, 2 ExpectedPause.
     ///
     /// | Function            | unpaused      | paused                      |
@@ -169,7 +171,7 @@ contract PauseTest is StateSnapshot, Matrix {
     /// fails for the pause alone. The pool rows follow contract-spec 6: every 6.5 function is
     /// `whenNotPaused`, and none is stated otherwise (D-39).
     function test_pauseMatrix_everyCell() public {
-        _crossProduct(_dims(12, 2), _pauseCell);
+        _crossProduct(_dims(12, 3), _pauseCell);
     }
 
     function _pauseCell(uint256[] memory c) internal {
@@ -195,8 +197,11 @@ contract PauseTest is StateSnapshot, Matrix {
             vm.prank(merchantA);
             ledger.deposit(2e6);
         }
-        bool startPaused = c[1] == 1;
-        if (startPaused) _pause();
+        if (c[1] >= 1) _pause();
+        if (c[1] == 2) {
+            vm.prank(guardian);
+            ledger.unpause();
+        }
 
         uint8[2][12] memory expected = [
             [uint8(0), 1],
@@ -212,7 +217,7 @@ contract PauseTest is StateSnapshot, Matrix {
             [uint8(0), 1],
             [uint8(0), 1]
         ];
-        uint8 e = expected[c[0]][c[1]];
+        uint8 e = expected[c[0]][c[1] == 2 ? 0 : c[1]];
         bytes32 h = keccak256("matrix-terms");
         address target = makeAddr("matrixTarget");
 

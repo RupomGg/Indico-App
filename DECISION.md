@@ -1321,6 +1321,54 @@ Files: none changed. Completes the line C-034 left pending.
   progress. `p1.7` merges to `main` only once it is green (INSTRUCTION 1.1, branch rule).
 Commit: docs: record P1.7 CI gate result
 
+### C-036 · Deep fuzz green on P1.6; P1.7 pause decision; D-40 evidence · 2026-10-04
+Type: chore
+Decisions: D-41 (new, owner decided); D-40 evidence corrected before approval
+Files:
+- Deep fuzz pass, `docs/gate-logs/P1.6/deep-ci.log`: run 37169050467 on `1a9c993`, dispatched by
+  hand, check job `run=true`, **266 passed, 0 failed, 0 skipped**, 15,706.83 s (4h22m, 73% of the
+  job's `timeout-minutes: 360`). It covers P1.5 (`76af755`), the P0.1 reopen (`300ec28`) and P1.6:
+  all three are done (INSTRUCTION 1.2). `p1.7` may merge under the branch rule.
+- Found in that log: the 9 `Math.t.sol` properties ran **100,000** times, not 5,000,000. Their
+  inline `forge-config: default.fuzz.runs = 100000` applies to the `deep` profile too, so
+  `LedgerMath` has never been Deep-fuzzed at 5M since P0.1. The two `mulDivUp` properties added in
+  C-034 carry the same line. Raised O-036.
+- Changed: `contracts/test/unit/Pause.t.sol`: pause matrix 12 x 3, adding "paused then
+  unpaused", expected to equal "unpaused" in every row: the three pool functions revert
+  `EnforcedPause` while paused and work again after the unpause (D-41).
+- Changed: `contracts/src/IndicoLedger.sol`: the D-40 comment on `Withdrawn` now says what the
+  probe showed (flagged with no external call on the path). Comment only.
+- Changed (local, not pushed): `docs/decisions.md` D-41; D-40 rows for `Withdrawn` and
+  `incorrect-equality` corrected with the new probes; `docs/lint-probes/reentrancy-events/`
+  (`RESULT.md` rewritten, `ProbeEvents.sol`, `IndicoLedger.stripped.sol`) and
+  `docs/lint-probes/slither-incorrect-equality/`.
+- Correction to C-034: it said the `reentrancy-events` rule "flags an event in any function that
+  also makes an external call, whatever the order". Wrong as a general statement: a minimal
+  contract emitting before a call is not flagged. On `Withdrawn` it fires even with no external
+  call on the path at all, so it is a false positive there; the trigger was not isolated.
+Gate: rerun in full on `p1.7` after these changes, in the entry that follows.
+Open items: raised O-035, O-036.
+Commit: test: pool functions work again after unpause (D-41); record Deep fuzz green on P1.6
+
+### C-037 · P1.7 · Gate rerun after C-036 · 2026-10-04
+Type: chore
+Files: none beyond C-036.
+- `contracts/.gas-snapshot`: `PauseTest:test_pauseMatrix_everyCell` 29,343,310 to 44,979,359
+  (+53.3%, 36 cells instead of 24, the new column pausing and unpausing first);
+  `ConstructorTest:test_decimalsReverts_reverts` 127,898 to 127,886 (-12). Nothing else.
+Gate (logs in `docs/gate-logs/P1.7/`, Forge 1.8.3, rerun in full):
+- G1 pass: 339 passed, 0 failed, 0 skipped, exit 0.
+- G2 pass: src lines 145/145, branches 49/49.
+- G3 pass, G4 pass: exit 0 each.
+- G5 pass: seeds 1 and 2, 339 passed each.
+- G6 pass: three runs, 339 passed each.
+- G7 pass: `ci` profile, 339 passed.
+- G8 pass: `IndicoLedger` 8,771 B runtime; snapshot check 305 passed.
+- G9 pass: M1 to M19 rerun, all caught, sources byte-identical, backups removed.
+- G13 pass.
+- G10 pending: owner pushes `p1.7`.
+Commit: part of the C-036 commit.
+
 ---
 
 ## Open items
@@ -1361,3 +1409,5 @@ Commit: docs: record P1.7 CI gate result
 | O-032 | Merchant guide (merchants use the block explorer): step 0, in bold at the top, says never to send USDC to the ledger address with `transfer`; only `approve` on the USDC contract, then `deposit`. A direct transfer is counted nowhere and cannot be recovered (D-38) | owner | before the first merchant deposits |
 | O-033 | `Pool.t.sol` simulates a loan's pool side by writing `poolUsdc`/`totalLent` (`_simulateLend`, `_simulateRepay`, `_simulateDefault`). Rerun those cases on real loans: beyond-liquidity withdraws (P1.8), short-of-cash `withdrawAll` then repay (P1.9), loss split, rounding pump and total wipeout (P1.11); then delete the helpers | engineer | P1.8, P1.9, P1.11 |
 | O-034 | Pool-state matrix (IT 2.4, 24 cells) moved from P1.7: it needs `requestLoan`, `repay` and a real default | engineer | P1.11 |
+| O-035 | Merchant guide and terms: while the pool is paused no merchant can deposit or withdraw, for as long as the pause lasts, and nothing can rescue the funds (D-41, CS §10); with the client's written pause policy (decisions, open non-blocking 2) | owner, client | before the first merchant deposits |
+| O-036 | The 11 `Math.t.sol` properties pinned by `forge-config: default.fuzz.runs = 100000` also run 100,000 times under `deep` (run 37169050467), so `LedgerMath` has never had 5,000,000 runs. Fix: a `deep` inline line per test, or move the pin; reopens P0.1 | engineer, owner | with the Deep fuzz split |
