@@ -1175,6 +1175,17 @@ Mutations (G9), each on `IndicoLedger.sol`, restored byte-identical by SHA-256 a
 Open items: O-025 now 63 of 117 cells. None raised.
 Commit: feat: spend with no fee, merchant must be approved and have signed, receipt with time (P1.6)
 
+### C-033 · P1.6 · CI gate line G10 · 2026-10-04
+Type: chore
+Files: none changed. Completes the line C-032 left pending.
+- G10 pass, `G10.log`: CI run 37166966600 on `1a9c993` green. Steps 1 to 3 and 5 to 7 pass,
+  step 7 with the IR guard (C-030); step 4 and the Phase-0 skip step skipped as designed.
+- Deep fuzz on P1.6's code: pending, the next nightly, which also covers P1.5 (`76af755`) and the
+  P0.1 reopen (`300ec28`). `contracts/` and `deep.yml` changed since the last green run
+  (`d397496`), so the check job must choose the full run. P1.5, the P0.1 reopen and P1.6 are not
+  done until it is green.
+Commit: docs: record P1.6 CI gate result
+
 ---
 
 ## Open items
