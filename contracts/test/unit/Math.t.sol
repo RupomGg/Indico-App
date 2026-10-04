@@ -14,6 +14,10 @@ contract MathHarness {
     function mulDivDown(uint256 x, uint256 y, uint256 d) external pure returns (uint256) {
         return LedgerMath.mulDivDown(x, y, d);
     }
+
+    function mulDivUp(uint256 x, uint256 y, uint256 d) external pure returns (uint256) {
+        return LedgerMath.mulDivUp(x, y, d);
+    }
 }
 
 /*
@@ -51,6 +55,23 @@ mulDivDown(x, y, d), partition table.
 | res   | exactly the limit           | (u256max, 1, 1), (u256max, u256max, u256max) | u256max |
 | res   | limit plus one              | (u256max, 2, 1), (u256max, u256max, u256max - 1) | revert MathOverflow |
 | res   | product just below d        | (d - 1, 1, d)                  | 0                     |
+| d     | zero                        | (x, y, 0), including (0, 0, 0) | revert DivisionByZero |
+| d     | one                         | (x, y, 1)                      | x * y                 |
+
+mulDivUp(x, y, d), partition table (D-39: shares burned by `withdraw` round up).
+
+| Param | Class                       | Input                          | Expected              |
+|-------|-----------------------------|--------------------------------|-----------------------|
+| x,y   | zero                        | (0, 5, 3), (5, 0, 3)           | 0, never rounded up   |
+| x,y   | one wei                     | (1, 1, 1), (1, 1, 2)           | 1, 1 (rounds up)      |
+| x,y   | exact                       | (6, 4, 3)                      | 8, not rounded up     |
+| x,y   | rounding boundary           | (5, 1, 2), (7, 3, 2)           | 3, 11                 |
+| x,y   | product just below d        | (999, 1, 1000)                 | 1                     |
+| x,y   | uint128 max                 | (u128max, u128max, u128max)    | u128max               |
+| x,y   | product > 2^256, fits       | (u256max, 4, 8)                | 2^255 (inexact)       |
+| res   | exactly the limit, exact    | (u256max, 1, 1), (u256max, u256max, u256max) | u256max |
+| res   | floor is the limit, inexact | (2^256 - 2, 2^255 + 1, 2^255)  | revert MathOverflow   |
+| res   | floor over the limit        | (u256max, 2, 1)                | revert MathOverflow   |
 | d     | zero                        | (x, y, 0), including (0, 0, 0) | revert DivisionByZero |
 | d     | one                         | (x, y, 1)                      | x * y                 |
 */
@@ -237,6 +258,65 @@ contract MathTest is Test {
         assertEq(h.mulDivDown(123, 456, 1), 123 * 456);
     }
 
+    // --------------------------------------------------------------- mulDivUp, rows
+
+    function test_mulDivUp_zeroFactor_notRoundedUp() public view {
+        assertEq(h.mulDivUp(0, 5, 3), 0);
+        assertEq(h.mulDivUp(5, 0, 3), 0);
+    }
+
+    function test_mulDivUp_oneWei() public view {
+        assertEq(h.mulDivUp(1, 1, 1), 1);
+        assertEq(h.mulDivUp(1, 1, 2), 1);
+    }
+
+    function test_mulDivUp_exact_notRoundedUp() public view {
+        assertEq(h.mulDivUp(6, 4, 3), 8);
+    }
+
+    function test_mulDivUp_roundsUp() public view {
+        assertEq(h.mulDivUp(5, 1, 2), 3);
+        assertEq(h.mulDivUp(7, 3, 2), 11);
+        assertEq(h.mulDivUp(999, 1, 1000), 1);
+    }
+
+    function test_mulDivUp_uint128Max() public view {
+        assertEq(h.mulDivUp(U128, U128, U128), U128);
+    }
+
+    function test_mulDivUp_productOver256Bits_inexact() public view {
+        assertEq(h.mulDivUp(U256, 4, 8), 2 ** 255);
+    }
+
+    function test_mulDivUp_resultExactlyMax() public view {
+        assertEq(h.mulDivUp(U256, 1, 1), U256);
+        assertEq(h.mulDivUp(U256, U256, U256), U256);
+    }
+
+    /// @dev The floor is exactly 2^256 - 1 with a remainder, so the rounded-up result does not
+    ///      fit: a named revert, never the `+ 1` overflowing.
+    function test_mulDivUp_floorIsMaxWithRemainder_reverts() public {
+        assertEq(h.mulDivDown(2 ** 256 - 2, 2 ** 255 + 1, 2 ** 255), U256);
+        vm.expectRevert(LedgerMath.MathOverflow.selector);
+        h.mulDivUp(2 ** 256 - 2, 2 ** 255 + 1, 2 ** 255);
+    }
+
+    function test_mulDivUp_floorOverflow_reverts() public {
+        vm.expectRevert(LedgerMath.MathOverflow.selector);
+        h.mulDivUp(U256, 2, 1);
+    }
+
+    function test_mulDivUp_divisorZero_reverts() public {
+        vm.expectRevert(LedgerMath.DivisionByZero.selector);
+        h.mulDivUp(1, 1, 0);
+        vm.expectRevert(LedgerMath.DivisionByZero.selector);
+        h.mulDivUp(0, 0, 0);
+    }
+
+    function test_mulDivUp_divisorOne() public view {
+        assertEq(h.mulDivUp(123, 456, 1), 123 * 456);
+    }
+
     // ------------------------------------------ properties (input-testing 3.2), 100k runs
 
     /// forge-config: default.fuzz.runs = 100000
@@ -334,6 +414,40 @@ contract MathTest is Test {
                 // Overflow is only legitimate when the true quotient exceeds 2^256 - 1,
                 // which needs x * y >= d * 2^256, so both factors must exceed d / 2^128.
                 assertTrue(x > U128 || y > U128, "overflow claimed for a fitting product");
+            }
+        }
+    }
+
+    /// @dev Up is down, plus one exactly when there is a remainder (plain arithmetic reference).
+    /// forge-config: default.fuzz.runs = 100000
+    function testFuzz_mulDivUp_isDownPlusRemainder(uint128 x, uint128 y, uint256 d) public view {
+        d = bound(d, 1, U256);
+        uint256 p = uint256(x) * y;
+        assertEq(h.mulDivUp(x, y, d), p / d + (p % d == 0 ? 0 : 1));
+    }
+
+    /// @dev Over the whole domain: returns up = down or down + 1, or reverts with one of the two
+    ///      named errors for exactly the right reason. Never a panic.
+    /// forge-config: default.fuzz.runs = 100000
+    function testFuzz_mulDivUp_revertsCleanlyNeverPanics(uint256 x, uint256 y, uint256 d)
+        public
+        view
+    {
+        try h.mulDivUp(x, y, d) returns (uint256 r) {
+            uint256 down = h.mulDivDown(x, y, d);
+            assertEq(r, down + (mulmod(x, y, d) == 0 ? 0 : 1));
+        } catch (bytes memory err) {
+            if (d == 0) {
+                assertEq(err, abi.encodeWithSelector(LedgerMath.DivisionByZero.selector));
+            } else {
+                assertEq(err, abi.encodeWithSelector(LedgerMath.MathOverflow.selector));
+                // Legitimate only if the floor overflows, or is exactly 2^256 - 1 with a remainder.
+                try h.mulDivDown(x, y, d) returns (uint256 down) {
+                    assertEq(down, U256, "overflow claimed below the limit");
+                    assertTrue(mulmod(x, y, d) != 0, "overflow claimed for an exact max");
+                } catch (bytes memory e2) {
+                    assertEq(e2, abi.encodeWithSelector(LedgerMath.MathOverflow.selector));
+                }
             }
         }
     }

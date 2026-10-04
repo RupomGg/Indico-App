@@ -5,8 +5,8 @@ import {Math as OZMath} from "@openzeppelin/contracts/utils/math/Math.sol";
 
 /// @title LedgerMath
 /// @notice Integer maths with explicit rounding. Rounding always favours the pool:
-///         collateral rounds up (`ceilDiv`), payouts and share conversions round down
-///         (`mulDivDown`).
+///         collateral and shares burned round up (`ceilDiv`, `mulDivUp`), payouts and shares
+///         minted round down (`mulDivDown`).
 /// @dev Every failure is a named revert, never a panic.
 library LedgerMath {
     error DivisionByZero();
@@ -31,5 +31,15 @@ library LedgerMath {
         (uint256 high,) = OZMath.mul512(x, y);
         if (high >= d) revert MathOverflow();
         return OZMath.mulDiv(x, y, d);
+    }
+
+    /// @notice `x * y / d`, rounded up, with a full 512-bit intermediate product.
+    /// @dev Reverts `MathOverflow` when the rounded-up result does not fit in 256 bits,
+    ///      including a floor of exactly 2^256 - 1 with a remainder.
+    function mulDivUp(uint256 x, uint256 y, uint256 d) internal pure returns (uint256) {
+        uint256 r = mulDivDown(x, y, d);
+        if (mulmod(x, y, d) == 0) return r;
+        if (r == type(uint256).max) revert MathOverflow();
+        return r + 1;
     }
 }

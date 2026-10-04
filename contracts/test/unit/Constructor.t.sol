@@ -295,7 +295,11 @@ contract ConstructorTest is StateSnapshot {
     // ------------------------------------------------------------------ no role moves USDC
 
     /// @dev Every caller tries every state-changing function that exists in this portion.
-    ///      Extend `_calls` as each portion adds functions.
+    ///      Extend `_calls` as each portion adds functions. From P1.7 a merchant may move its
+    ///      own USDC in and out of the pool, so the rule checked is the one contract-spec 3
+    ///      states: no caller moves anyone else's USDC, any USDC that moves goes between the
+    ///      caller and the ledger and is booked in `poolUsdc`, and the 500,000 USDC sent to the
+    ///      ledger outside the pool never leaves it.
     function test_noCallerCanMoveUsdc_throughAnyFunction() public {
         usdc.mint(address(ledger), 500_000e6);
         address[] memory callers = _everyone();
@@ -303,11 +307,20 @@ contract ConstructorTest is StateSnapshot {
             bytes[] memory calls = _calls(callers[i]);
             for (uint256 j; j < calls.length; ++j) {
                 Snapshot memory s = _snapshot();
+                uint256 callerBefore = usdc.balanceOf(callers[i]);
                 vm.prank(callers[i]);
                 (bool ok,) = address(ledger).call(calls[j]);
                 ok;
-                assertEq(_snapshot().usdc, s.usdc, "an actor's USDC moved");
-                assertEq(usdc.balanceOf(address(ledger)), s.ledgerUsdc, "ledger USDC moved");
+                Snapshot memory t = _snapshot();
+                for (uint256 k; k < t.who.length; ++k) {
+                    if (t.who[k] != callers[i]) {
+                        assertEq(t.usdc[k], s.usdc[k], "other's USDC moved");
+                    }
+                }
+                int256 out = int256(callerBefore) - int256(usdc.balanceOf(callers[i]));
+                assertEq(int256(t.ledgerUsdc) - int256(s.ledgerUsdc), out, "USDC not to the ledger");
+                assertEq(int256(t.poolUsdc) - int256(s.poolUsdc), out, "USDC moved off the books");
+                assertGe(t.ledgerUsdc - t.poolUsdc, 500_000e6, "unbooked USDC left the ledger");
             }
         }
     }
@@ -315,7 +328,7 @@ contract ConstructorTest is StateSnapshot {
     function _calls(address caller) internal view returns (bytes[] memory c) {
         bytes32 adminRole = ledger.ADMIN_ROLE();
         bytes32 guardianRole = ledger.GUARDIAN_ROLE();
-        c = new bytes[](20);
+        c = new bytes[](23);
         c[0] = abi.encodeCall(IIndicoLedger.pause, ());
         c[1] = abi.encodeCall(IIndicoLedger.unpause, ());
         c[2] = abi.encodeCall(IAccessControl.grantRole, (adminRole, caller));
@@ -336,6 +349,9 @@ contract ConstructorTest is StateSnapshot {
         c[17] = abi.encodeCall(IIndicoLedger.adminIssueCredit, (caller, 1e6, "sweep"));
         c[18] = abi.encodeCall(IIndicoLedger.adminDebitCredit, (caller, 1e6, "sweep"));
         c[19] = abi.encodeCall(IIndicoLedger.spend, (caller, 1e6));
+        c[20] = abi.encodeCall(IIndicoLedger.deposit, (1e6));
+        c[21] = abi.encodeCall(IIndicoLedger.withdraw, (1e6));
+        c[22] = abi.encodeCall(IIndicoLedger.withdrawAll, ());
     }
 
     function _everyone() internal returns (address[] memory w) {

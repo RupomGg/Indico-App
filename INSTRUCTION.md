@@ -24,6 +24,10 @@ build session with:
 - A corner case that cannot be tested yet (because the function it needs belongs to a later
   portion) is written into that later portion's list, with a note in DECISION.md. It is moved,
   never dropped.
+- **Branch rule.** While the previous portion's Deep fuzz run (§1.2) is pending, the next portion
+  may be written on a branch. It merges to `main` only after that run is green. If the run goes
+  red, the fix goes to `main` first, the branch is rebased on it, and the branch's whole gate runs
+  again. Only one branch is open at a time. The gate report states the pending run's result.
 
 ### 1.2 Tests first, then code
 **Every session starts by checking the latest Deep fuzz run** (`gh run list --workflow deep.yml
@@ -247,8 +251,8 @@ pause matrix (IT §2.3) and the participant matrix (IT §2.2) with its own funct
   `Spent` and `MerchantReceipt` exact; paused. **Moved to P1.8:** locked credit cannot be spent.
 - Manual check: none beyond the gate.
 
-**P1.7 Pool: `deposit`, `withdraw`** · **stops for owner decision before code**
-- Spec refs: CS §5, §6.5; PRD §3.4; D-06.
+**P1.7 Pool: `deposit`, `withdraw`, `withdrawAll`** · mitigation decided: D-38, D-39
+- Spec refs: CS §5, §6.5; PRD §3.4; D-06, D-38, D-39.
 - Before code: the engineer proposes the first-deposit inflation-attack mitigation (virtual offset
   or seeded burned deposit), the owner approves, it is logged as a new D-##.
 - Corner cases: the inflation attack written as a test (1 wei deposit, large direct donation,
@@ -256,8 +260,14 @@ pause matrix (IT §2.3) and the participant matrix (IT §2.2) with its own funct
   depositors split a later loss within one wei; withdraw more shares than held →
   `InsufficientShares(requested, held)`; withdraw beyond liquidity → `InsufficientLiquidity`;
   zero shares; revoked merchant can still withdraw but cannot deposit; fee-on-transfer token
-  credits the amount actually received; blacklisted merchant → full rollback; pool-state matrix
-  (IT §2.4, 24 cells).
+  credits the amount actually received; blacklisted merchant → full rollback; a merchant's direct
+  `transfer` to the ledger changes no share, `poolUsdc` or price and shows as the surplus
+  `usdc.balanceOf(ledger) - poolUsdc` (D-38); `usdc.balanceOf(ledger) >= poolUsdc` after every
+  pool test; `withdrawAll` short of cash pays the rest after the cash returns, the two payments the
+  full claim minus at most 2 wei; deposit, withdraw and withdrawAll in the pause matrix. Loans do
+  not exist yet, so a loan's pool side is simulated by writing `poolUsdc`/`totalLent` (O-033).
+  **Moved to P1.11:** pool-state matrix (IT §2.4, 24 cells), which needs all four actions and a
+  real default.
 - Manual check: none beyond the gate. The owner reads this portion's report line by line.
 
 **P1.8 `requestLoan`**
@@ -269,7 +279,10 @@ pause matrix (IT §2.3) and the participant matrix (IT §2.2) with its own funct
   **Carried in:** `spend` and `adminDebitCredit` can never reach locked collateral (for
   `adminDebitCredit`: lock everything, then a debit of 1 reverts
   `InsufficientAvailableCredit(1, 0)`, and a debit of exactly the unlocked part succeeds; D-32,
-  moved from P1.5); revocation leaves balances and loans untouched.
+  moved from P1.5); revocation leaves balances and loans untouched. From P1.7 (O-033):
+  `withdraw` and `withdrawAll` beyond liquidity with a real loan out; `requestLoan` lowers
+  `poolUsdc` by the principal; delete the D-40 Slither suppression and the D-18 lint suppression
+  on `totalLent` (O-018).
 - Manual check: none beyond the gate.
 
 **P1.9 `repay`**
@@ -279,6 +292,9 @@ pause matrix (IT §2.3) and the participant matrix (IT §2.2) with its own funct
   allowance short → full rollback; fee-on-transfer token delivering less than principal must
   revert; repaying the middle of three loans leaves the others untouched; borrow then repay
   returns pool USDC to exactly its starting value; `LoanRepaid` and `CollateralReleased` exact.
+  **Carried in from P1.7 (O-033):** `repay` raises `poolUsdc` by exactly the principal;
+  `withdrawAll` short of cash, then the loan is repaid, then a second `withdrawAll` pays the rest
+  (the two payments the full claim minus at most 2 wei).
 - Manual check: none beyond the gate.
 
 **P1.10 `extend`**
@@ -296,6 +312,10 @@ pause matrix (IT §2.3) and the participant matrix (IT §2.2) with its own funct
   succeeds from any address; twice; after repay; credit burns from the user, `poolCredit` rises,
   `totalLent` falls, no USDC moves; every depositor's share price drops together; revoked user's
   loan can still be liquidated. Then the full 180-cell loan matrix (IT §2.1).
+  **Carried in from P1.7 (O-033, O-034):** `liquidate` leaves `poolUsdc` unchanged; two equal
+  depositors split a real default within one wei; the rounding-pump attack after a real default
+  is unprofitable (D-38); a deposit after every loan defaulted does not divide by zero; the
+  pool-state matrix (IT §2.4, 24 cells).
 - Manual check: none beyond the gate.
 
 **P1.12 Views**

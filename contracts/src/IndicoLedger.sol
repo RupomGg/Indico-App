@@ -2,12 +2,15 @@
 pragma solidity 0.8.26;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {
     AccessControlDefaultAdminRules
 } from "@openzeppelin/contracts/access/extensions/AccessControlDefaultAdminRules.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {IIndicoLedger} from "./interfaces/IIndicoLedger.sol";
+import {LedgerMath} from "./lib/Math.sol";
 import {
     ADMIN_TRANSFER_DELAY,
     USDC_DECIMALS,
@@ -15,14 +18,18 @@ import {
     ROLE_USER,
     ROLE_MERCHANT,
     CREDIT_CAP,
-    MAX_ASSET_TYPE
+    MAX_ASSET_TYPE,
+    VIRTUAL_SHARES,
+    VIRTUAL_ASSETS
 } from "./lib/Constants.sol";
 
 /// @title IndicoLedger
 /// @notice Credit, spending, the USDC pool and every loan, in one contract deployed once.
 /// @dev docs/contract-spec.md. Built portion by portion; functions not yet implemented are
 ///      absent, so calls to them revert. Inherits `IIndicoLedger` once every function exists.
-contract IndicoLedger is AccessControlDefaultAdminRules, Pausable {
+contract IndicoLedger is AccessControlDefaultAdminRules, Pausable, ReentrancyGuard {
+    using SafeERC20 for IERC20;
+
     bytes32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
     bytes32 public constant GUARDIAN_ROLE = keccak256("GUARDIAN_ROLE");
 
@@ -64,10 +71,14 @@ contract IndicoLedger is AccessControlDefaultAdminRules, Pausable {
     mapping(bytes32 => bool) public assetRegistered;
 
     mapping(address => uint256) public shares;
-    // forge-lint: disable-next-line(uninitialized-state)
     uint256 public totalShares;
+    // Read by the pool from P1.7, first written by requestLoan in P1.8, 0 until then (D-40).
+    // slither-disable-start uninitialized-state
     // forge-lint: disable-next-line(uninitialized-state)
     uint256 public totalLent;
+    // slither-disable-end uninitialized-state
+    /// @dev The pool's own count of the USDC it holds, never `usdc.balanceOf` (D-38).
+    uint256 public poolUsdc;
 
     // forge-lint: disable-next-line(uninitialized-state)
     uint256 public nextLoanId;
@@ -142,6 +153,8 @@ contract IndicoLedger is AccessControlDefaultAdminRules, Pausable {
     /// @dev Not `whenNotPaused` (D-24). Repeats are allowed and emit (D-20).
     function setMerchantApproved(address m, bool approved) external onlyRole(ADMIN_ROLE) {
         _admit(m, approved, ROLE_MERCHANT);
+        // Linter cannot match an event to a mapping write; MerchantApprovalSet follows (D-30).
+        // forge-lint: disable-next-line(missing-events-access-control)
         approvedMerchant[m] = approved;
         emit IIndicoLedger.MerchantApprovalSet(m, approved);
     }
@@ -257,6 +270,87 @@ contract IndicoLedger is AccessControlDefaultAdminRules, Pausable {
         credit[merchant] += amount;
         emit IIndicoLedger.Spent(msg.sender, merchant, amount);
         emit IIndicoLedger.MerchantReceipt(merchant, msg.sender, amount, block.timestamp);
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // Pool, contract-spec 6.5. The pool counts its own USDC in `poolUsdc`, never
+    // `usdc.balanceOf`, and prices shares with a virtual offset (D-38).
+    // ---------------------------------------------------------------------------------------
+
+    /// @notice Deposit `amount` USDC; shares are minted on what actually arrived.
+    /// @dev The caller must `approve` the ledger on the USDC contract first. The received amount
+    ///      is the change in balance, so a fee-on-transfer token is credited what it delivered;
+    ///      `nonReentrant` keeps anything else from landing in between.
+    function deposit(uint256 amount) external nonReentrant whenNotPaused {
+        if (!approvedMerchant[msg.sender]) revert IIndicoLedger.NotApprovedMerchant();
+        if (!termsSigned[msg.sender]) revert IIndicoLedger.TermsNotSigned();
+        if (amount == 0) revert IIndicoLedger.ZeroAmount();
+
+        uint256 balanceBefore = usdc.balanceOf(address(this));
+        usdc.safeTransferFrom(msg.sender, address(this), amount);
+        uint256 received = usdc.balanceOf(address(this)) - balanceBefore;
+        uint256 minted = _toShares(received, false);
+        // Zero is exactly the case refused; nothing is gained by hitting it (D-40).
+        // slither-disable-next-line incorrect-equality
+        if (minted == 0) revert IIndicoLedger.ZeroShares();
+
+        shares[msg.sender] += minted;
+        totalShares += minted;
+        poolUsdc += received;
+        // After the transfer by necessity: it reports what arrived. nonReentrant (D-40).
+        // forge-lint: disable-next-line(reentrancy-events)
+        emit IIndicoLedger.Deposited(msg.sender, received, minted);
+    }
+
+    /// @notice Withdraw exactly `assets` USDC, burning the shares they are worth, rounded up
+    ///         (D-39). No approval check: a revoked merchant's money is still theirs.
+    function withdraw(uint256 assets) external nonReentrant whenNotPaused {
+        if (assets == 0) revert IIndicoLedger.ZeroAmount();
+        uint256 needed = _toShares(assets, true);
+        uint256 held = shares[msg.sender];
+        if (needed > held) revert IIndicoLedger.InsufficientShares(needed, held);
+        uint256 cash = poolUsdc;
+        if (assets > cash) revert IIndicoLedger.InsufficientLiquidity(assets, cash);
+        _payOut(assets, needed);
+    }
+
+    /// @notice Withdraw everything the caller's shares are worth, or all the pool's cash if
+    ///         that is less (D-39). A whole claim burns every share, so no dust is left.
+    function withdrawAll() external nonReentrant whenNotPaused {
+        uint256 held = shares[msg.sender];
+        uint256 owed = _toAssets(held);
+        // Zero is exactly the case refused; nothing is gained by hitting it (D-40).
+        // slither-disable-next-line incorrect-equality
+        if (owed == 0) revert IIndicoLedger.ZeroAmount();
+        uint256 cash = poolUsdc;
+        if (cash == 0) revert IIndicoLedger.InsufficientLiquidity(owed, 0);
+        if (owed <= cash) _payOut(owed, held);
+        else _payOut(cash, _toShares(cash, true));
+    }
+
+    /// @dev Effects, then the transfer last.
+    function _payOut(uint256 assets, uint256 burned) private {
+        shares[msg.sender] -= burned;
+        totalShares -= burned;
+        poolUsdc -= assets;
+        // Emitted before the transfer; the lint flags it in any order (D-40).
+        // forge-lint: disable-next-line(reentrancy-events)
+        emit IIndicoLedger.Withdrawn(msg.sender, assets, burned);
+        usdc.safeTransfer(msg.sender, assets);
+    }
+
+    /// @dev `assets` in shares at the current price, rounded down to mint, up to burn (D-38).
+    function _toShares(uint256 assets, bool roundUp) private view returns (uint256) {
+        uint256 s = totalShares + VIRTUAL_SHARES;
+        uint256 a = poolUsdc + totalLent + VIRTUAL_ASSETS;
+        return roundUp ? LedgerMath.mulDivUp(assets, s, a) : LedgerMath.mulDivDown(assets, s, a);
+    }
+
+    /// @dev `shareAmount` in USDC at the current price, rounded down (D-38).
+    function _toAssets(uint256 shareAmount) private view returns (uint256) {
+        return LedgerMath.mulDivDown(
+            shareAmount, poolUsdc + totalLent + VIRTUAL_ASSETS, totalShares + VIRTUAL_SHARES
+        );
     }
 
     /// @dev The only way credit enters circulation. Refuses a mint that would push one account

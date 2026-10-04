@@ -129,8 +129,10 @@ interface IIndicoLedger {
     error UsdcDecimalsUnreadable(address token);
     /// @notice Constructor: `decimals()` returned `decimals`, not 6. 1 credit = 1 USDC needs 6.
     error UsdcWrongDecimals(uint256 decimals);
-    /// @notice `withdraw` asked to burn more shares than the caller holds.
-    error InsufficientShares(uint256 requested, uint256 held);
+    /// @notice `withdraw` needs `needed` shares for the amount asked; the caller holds `held`.
+    error InsufficientShares(uint256 needed, uint256 held);
+    /// @notice `deposit` of an amount worth less than one share; nothing would be minted (D-38).
+    error ZeroShares();
     /// @notice Raised by `lib/Math.sol`; same selector as `LedgerMath.DivisionByZero`.
     error DivisionByZero();
     /// @notice Raised by `lib/Math.sol`; same selector as `LedgerMath.MathOverflow`.
@@ -214,13 +216,26 @@ interface IIndicoLedger {
     // ---------------------------------------------------------------------------------------
 
     /// @notice Deposit USDC into the pool. Shares are minted on the amount actually received.
-    /// @dev Approved merchant, terms signed, `amount > 0`. Emits `Deposited`.
+    /// @dev `whenNotPaused`, `nonReentrant`. Reverts, in order, `NotApprovedMerchant`,
+    ///      `TermsNotSigned`, `ZeroAmount`, then `ZeroShares` if what arrived is worth less than
+    ///      one share. Shares = `mulDivDown(received, totalShares + 1e6, poolUsdc + totalLent + 1)`
+    ///      (D-38). The caller must first `approve` the ledger on the USDC contract. USDC sent
+    ///      straight to the ledger instead is never counted and cannot be recovered (D-38).
+    ///      Emits `Deposited`.
     function deposit(uint256 amount) external;
 
-    /// @notice Burn `sharesToBurn` and receive their proportional slice of pool USDC.
-    /// @dev Reverts `InsufficientLiquidity` if the slice exceeds `poolAvailable()`.
-    ///      Allowed for a revoked merchant. Emits `Withdrawn`.
-    function withdraw(uint256 sharesToBurn) external;
+    /// @notice Withdraw `assets` USDC, burning the shares they are worth, rounded up (D-39).
+    /// @dev `whenNotPaused`, `nonReentrant`, allowed for a revoked merchant. Reverts, in order,
+    ///      `ZeroAmount`, `InsufficientShares(needed, held)`, `InsufficientLiquidity(assets,
+    ///      poolUsdc)`. Emits `Withdrawn`.
+    function withdraw(uint256 assets) external;
+
+    /// @notice Withdraw everything the caller's shares are worth, or all the pool's cash if
+    ///         that is less (D-39). If the whole claim is paid, every share is burned.
+    /// @dev `whenNotPaused`, `nonReentrant`, allowed for a revoked merchant. Reverts
+    ///      `ZeroAmount` if the shares are worth nothing, `InsufficientLiquidity(owed, 0)` if the
+    ///      pool holds no cash. Emits `Withdrawn`.
+    function withdrawAll() external;
 
     // ---------------------------------------------------------------------------------------
     // Loans (spec 6.6)
@@ -279,6 +294,10 @@ interface IIndicoLedger {
     function totalShares() external view returns (uint256);
     /// @notice USDC currently out on Active loans.
     function totalLent() external view returns (uint256);
+    /// @notice USDC the pool holds on its own books: deposits and repayments in, withdrawals
+    ///         and loans out. Never `usdc.balanceOf`, so a direct transfer counts for nothing
+    ///         (D-38).
+    function poolUsdc() external view returns (uint256);
 
     function nextLoanId() external view returns (uint256);
     function loans(uint256 loanId)
@@ -299,9 +318,9 @@ interface IIndicoLedger {
     function maxBorrow(address user) external view returns (uint256);
     /// @notice `ceilDiv(principal * BPS, LTV_BPS)`, rounds up in the pool's favour.
     function collateralFor(uint256 principal) external view returns (uint256);
-    /// @notice USDC held plus USDC lent out.
+    /// @notice `poolUsdc + totalLent` (D-38).
     function poolTotalAssets() external view returns (uint256);
-    /// @notice USDC held by the contract, available to lend or withdraw.
+    /// @notice `poolUsdc`, available to lend or withdraw (D-38).
     function poolAvailable() external view returns (uint256);
     function sharesToAssets(uint256 shareAmount) external view returns (uint256);
     function assetsToShares(uint256 assets) external view returns (uint256);

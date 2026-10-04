@@ -160,11 +160,16 @@ contract PauseTest is StateSnapshot, Matrix {
     /// | adminIssueCredit    | succeeds      | EnforcedPause               |
     /// | adminDebitCredit    | succeeds      | EnforcedPause               |
     /// | spend               | succeeds      | EnforcedPause               |
-    /// The last four rows onboard alice (terms set, approved, signed) before pausing; the debit
-    /// and spend rows issue her credit first, and the spend row approves and signs merchantA, so
-    /// each paused cell fails for the pause alone.
+    /// | deposit             | succeeds      | EnforcedPause               |
+    /// | withdraw            | succeeds      | EnforcedPause               |
+    /// | withdrawAll         | succeeds      | EnforcedPause               |
+    /// Rows from registerAsset on onboard alice (terms set, approved, signed) before pausing; the
+    /// debit and spend rows issue her credit first. The spend and pool rows approve and sign
+    /// merchantA, and the two withdraw rows have merchantA deposit 2e6 first, so each paused cell
+    /// fails for the pause alone. The pool rows follow contract-spec 6: every 6.5 function is
+    /// `whenNotPaused`, and none is stated otherwise (D-39).
     function test_pauseMatrix_everyCell() public {
-        _crossProduct(_dims(9, 2), _pauseCell);
+        _crossProduct(_dims(12, 2), _pauseCell);
     }
 
     function _pauseCell(uint256[] memory c) internal {
@@ -180,21 +185,28 @@ contract PauseTest is StateSnapshot, Matrix {
             vm.prank(admin);
             ledger.adminIssueCredit(alice, 2e6, "matrix");
         }
-        if (c[0] == 8) {
+        if (c[0] >= 8) {
             vm.prank(admin);
             ledger.setMerchantApproved(merchantA, true);
             vm.prank(merchantA);
             ledger.signTerms(keccak256("matrix-terms-v1"));
         }
+        if (c[0] >= 10) {
+            vm.prank(merchantA);
+            ledger.deposit(2e6);
+        }
         bool startPaused = c[1] == 1;
         if (startPaused) _pause();
 
-        uint8[2][9] memory expected = [
+        uint8[2][12] memory expected = [
             [uint8(0), 1],
             [uint8(2), 0],
             [uint8(0), 0],
             [uint8(0), 0],
             [uint8(0), 0],
+            [uint8(0), 1],
+            [uint8(0), 1],
+            [uint8(0), 1],
             [uint8(0), 1],
             [uint8(0), 1],
             [uint8(0), 1],
@@ -248,14 +260,36 @@ contract PauseTest is StateSnapshot, Matrix {
                 s.credit[2] -= 1e6;
                 s.totalCredit -= 1e6;
             }
-        } else {
+        } else if (c[0] == 8) {
             vm.prank(alice);
             ledger.spend(merchantA, 1e6);
             if (e == 0) {
                 s.credit[2] -= 1e6; // alice is actors[2]
                 s.credit[4] += 1e6; // merchantA is actors[4]
             }
+        } else if (c[0] == 9) {
+            vm.prank(merchantA);
+            ledger.deposit(1e6);
+            if (e == 0) _poolMoved(s, -1e6, 1e12);
+        } else if (c[0] == 10) {
+            vm.prank(merchantA);
+            ledger.withdraw(1e6);
+            if (e == 0) _poolMoved(s, 1e6, -1e12);
+        } else {
+            vm.prank(merchantA);
+            ledger.withdrawAll();
+            if (e == 0) _poolMoved(s, 2e6, -2e12);
         }
         _assertUnchanged(s);
+    }
+
+    /// @dev merchantA (actors[4]) received `usdcIn` USDC (negative: paid in) and its shares
+    ///      changed by `sharesIn`; the pool's books move the other way.
+    function _poolMoved(Snapshot memory s, int256 usdcIn, int256 sharesIn) internal pure {
+        s.usdc[4] = uint256(int256(s.usdc[4]) + usdcIn);
+        s.shares[4] = uint256(int256(s.shares[4]) + sharesIn);
+        s.totalShares = uint256(int256(s.totalShares) + sharesIn);
+        s.poolUsdc = uint256(int256(s.poolUsdc) - usdcIn);
+        s.ledgerUsdc = uint256(int256(s.ledgerUsdc) - usdcIn);
     }
 }

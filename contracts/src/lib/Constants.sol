@@ -24,3 +24,7 @@ uint64 constant TERM = 90 days;
 /// @dev `extend` is allowed only in the last `EXTENSION_WINDOW` before the due date, so
 ///      extensions are at least `TERM - EXTENSION_WINDOW` (60 days) apart.
 uint64 constant EXTENSION_WINDOW = 30 days;
+/// @dev Virtual shares and assets in every share conversion (D-38): no division by zero, and a
+///      price raised by rounding costs the attacker about 10^6 times what a victim loses.
+uint256 constant VIRTUAL_SHARES = 1e6;
+uint256 constant VIRTUAL_ASSETS = 1;

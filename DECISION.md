@@ -1186,6 +1186,130 @@ Files: none changed. Completes the line C-032 left pending.
   done until it is green.
 Commit: docs: record P1.6 CI gate result
 
+### C-034 · P1.7 · Pool: deposit, withdraw, withdrawAll · 2026-10-04
+Type: feature
+Decisions: D-38, D-39 (owner approved), D-40 (proposed, for approval at this gate); D-06, D-30
+applied
+Session start (INSTRUCTION 1.2): latest finished Deep fuzz run 37105728701 green. The owner had
+Deep fuzz dispatched on `main` instead of waiting for the night: run 37169050467 on `1a9c993`
+(P1.6, covering P1.5, the P0.1 reopen and P1.6), check job `run=true`, deep job in progress when
+this gate finished. P1.7 is built on branch `p1.7` under the new branch rule (INSTRUCTION 1.1) and
+merges only after that run is green.
+Files:
+- Changed: `contracts/src/IndicoLedger.sol`:
+  - Inherits OpenZeppelin `ReentrancyGuard`; `SafeERC20` for every USDC call.
+  - New state `poolUsdc` (D-38), added to the D-17 layout.
+  - `deposit(amount)`: `nonReentrant`, `whenNotPaused`; reverts in order `NotApprovedMerchant`,
+    `TermsNotSigned`, `ZeroAmount`; `safeTransferFrom`, then shares on the change in balance,
+    `ZeroShares` if none; `poolUsdc += received`; emits `Deposited(m, received, shares)`.
+  - `withdraw(assets)` (D-39): reverts in order `ZeroAmount`, `InsufficientShares(needed, held)`,
+    `InsufficientLiquidity(assets, poolUsdc)`; burns shares rounded up; no approval check, so a
+    revoked merchant withdraws.
+  - `withdrawAll()` (D-39): pays `min(claim, poolUsdc)`; a whole claim burns every share; short of
+    cash it burns only the rounded-up shares for the cash; `ZeroAmount` if worth 0,
+    `InsufficientLiquidity(owed, 0)` with no cash.
+  - Private `_toShares(assets, roundUp)`, `_toAssets(shares)`: `S + 1e6` and
+    `poolUsdc + totalLent + 1` (D-38), never `balanceOf`; `_payOut`: effects, event, transfer.
+  - Lint: removed the D-18 suppression on `totalShares`, now written (O-017). Added the D-30 line
+    above `approvedMerchant[m] = approved;`, first triggered by `deposit` gating on
+    `approvedMerchant[msg.sender]`, as predicted in C-032. Added D-40: `reentrancy-events` on
+    `Deposited` and `Withdrawn`, Slither `incorrect-equality` on `minted == 0` and `owed == 0`, and
+    Slither `uninitialized-state` around `totalLent` until P1.8.
+- Changed: `contracts/src/lib/Math.sol`: `mulDivUp`, rounding up with named reverts, including a
+  floor of exactly 2^256 - 1 with a remainder. `ceilDiv` and `mulDivDown` unchanged.
+- Changed: `contracts/src/lib/Constants.sol`: `VIRTUAL_SHARES = 1e6`, `VIRTUAL_ASSETS = 1`.
+- Changed: `contracts/src/interfaces/IIndicoLedger.sol`: `withdraw(uint256 assets)`, new
+  `withdrawAll()`, view `poolUsdc()`, error `ZeroShares()`, `InsufficientShares(needed, held)`;
+  pool comments with the check order and the direct-transfer warning. Depends on it: the backend
+  error map and calldata builders (P1.13).
+- New: `contracts/test/unit/Pool.t.sol`: partition tables for deposit, withdraw and withdrawAll,
+  54 tests: exact effects and events, emits nothing else, one wei, offset shares, after a loss,
+  after a total wipeout (no division by zero), fee-on-transfer, 100% fee (`ZeroShares`),
+  balance, allowance, `uint256` max, token returns false, blacklisted, re-entry 3 x 3, every
+  caller class, check orders, revoked merchant withdraws, burn rounds up, short of cash then the
+  rest, share price unchanged, two equal depositors split a loss within one wei, two merchants in
+  either order, `test_merchantDirectTransfer_isStuck_noShareNoPoolUsdcNoPriceChange`, a fuzz over
+  direct transfers in four pool states, the classic inflation attack (victim exact), and the
+  rounding pump after a loss (attacker never profits, victim loss <= 1 wei + attacker loss / 1e6).
+  Books (`usdc.balanceOf(ledger) >= poolUsdc`) asserted after every test that moves USDC. A loan's
+  pool side is simulated by writing storage (O-033).
+- Changed: `contracts/test/helpers/Fixture.sol`: pool model with its own copy of the offset
+  (`_modelSharesFor`, `_modelSharesToBurn`, `_modelClaim`), `_deposit`, and `_simulateLend`,
+  `_simulateRepay`, `_simulateDefault` (stdstore on `poolUsdc`/`totalLent`, USDC to and from a
+  sink address).
+- Changed: `contracts/test/helpers/StateSnapshot.sol`: records `poolUsdc`.
+- Changed: `contracts/test/unit/Math.t.sol`: `mulDivUp` partition table, 11 rows and 2 fuzz
+  properties (down plus remainder; named reverts for exactly the right reason over the domain).
+- Changed: `contracts/test/unit/ParticipantMatrix.t.sol`: `deposit` and `withdraw` columns (O-025),
+  9 of 13, 81 of 117 cells: only Merchant deposits; Merchant and MerchantRevoked withdraw; the rest
+  `NotApprovedMerchant` / `InsufficientShares(1e12, 0)`.
+- Changed: `contracts/test/unit/Pause.t.sol`: pause matrix 12 x 2 with `deposit`, `withdraw`,
+  `withdrawAll`, each `EnforcedPause` while paused: contract-spec 6 makes every 6.5 function
+  `whenNotPaused` and states no exception.
+- Changed: `contracts/test/unit/Constructor.t.sol`: the no-USDC sweep gains the three pool
+  functions (23 calls). Its assertion changes, because a merchant may now move its own USDC: no
+  caller moves anyone else's USDC, any movement is between the caller and the ledger and booked in
+  `poolUsdc`, and the 500,000 USDC sent to the ledger outside the pool never leaves. Stricter on the
+  books than before, not looser: the old check could not tell booked from unbooked USDC.
+- Changed: `INSTRUCTION.md`: branch rule (1.1); P1.7 scope; carried-in items for P1.8, P1.9 and
+  P1.11 (O-033, O-034).
+- Changed: `contracts/.gas-snapshot`: 65 new lines (Pool 54, Math 11); 204 changed; none removed;
+  `HelpersTest` unchanged. Over 10%, the three harnesses that grew: pause matrix 19,779,603 to
+  29,343,310 (+48.4%, 24 cells instead of 18), participant matrix 75,247,520 to 98,793,820
+  (+31.3%, 81 cells instead of 63), no-USDC sweep 189,389,846 to 226,433,923 (+19.6%, 23 calls
+  instead of 20). `MathTest` lines rose up to 5.5%: its harness has one more function.
+- Changed (local, not pushed): `docs/decisions.md` D-38 to D-40; `docs/contract-spec.md` 4, 5,
+  6.5, 8, 9 (I1, I10, new I14); `docs/lint-probes/reentrancy-events/`.
+Test fixed during the gate (INSTRUCTION 1.3): the first G5 to G7 runs failed
+`testFuzz_withdrawAll_shortOfCash_twoPaymentsWithinTwoWei` with `ZeroAmount()` at args
+`[7, 6, 16395, 18]`: claim 6, cash 5; the first `withdrawAll` paid 5 and its rounded-up burn left
+shares worth 0.99999 wei, so the second correctly reverted `ZeroAmount` (total 5, within the
+2-wei bound). The test wrongly called the second unconditionally; it now expects `ZeroAmount`
+when the rest is worth under 1 wei. Bound assertions unchanged. Also removed six inline
+`forge-config: default.fuzz.runs = 10000` lines from `Pool.t.sol`, which would have capped those
+fuzz tests below the `ci` and `deep` profiles. The whole gate then ran again; results below.
+Size: `IndicoLedger` runtime 6,974 B to 8,771 B (+1,797 B), margin 15,805 B.
+Slither, CI step 7 body under `bash -eo pipefail`: exit 0, no IR error, 6 findings
+(`low-level-calls`, `naming-convention`, `constable-states`), `slither.log`. Without D-40, 9
+findings including `uninitialized-state` (high) and `incorrect-equality` (medium).
+Gate (logs in `docs/gate-logs/P1.7/`, Forge 1.8.3; red phase in `red.log`):
+- G1 pass, `G1.log`: 339 passed, 0 failed, 0 skipped, exit 0.
+- G2 pass, `G2.log`: src lines 145/145, branches 49/49.
+- G3 pass, `G3.log`: exit 0.
+- G4 pass, `G4.log`: `forge build --deny warnings` exit 0.
+- G5 pass, `G5.log`: seeds 1 and 2, 339 passed each.
+- G6 pass, `G6.log`: three runs, 339 passed each.
+- G7 pass, `G7.log`: `ci` profile, 339 passed.
+- G8 pass, `G8.log`: `IndicoLedger` 8,771 B runtime; snapshot check 305 passed.
+- G9 pass, `G9.log`: see Mutations.
+- G13 pass, `G13.log`.
+- G10 pending: owner pushes `p1.7`. Merge to `main` waits for Deep fuzz run 37169050467.
+- G11: none beyond the gate; the owner reads this report line by line.
+- G12: this entry.
+Mutations (G9), on `IndicoLedger.sol` and `Math.sol`, restored byte-identical by SHA-256 after each:
+- M1 virtual offset removed: `DivisionByZero()` in the pause matrix. Caught.
+- M2 burn rounds down (`mulDivUp` to `mulDivDown`): withdraw fuzz `kept more than the rest`. Caught.
+- M3 assets from `usdc.balanceOf`: pause matrix shares `999999 != 1e12`. Caught.
+- M4 `withdrawAll` leaves dust shares: `dust shares left: 190654 != 0`. Caught.
+- M5 shares on the amount asked: `Deposited param mismatch at shares`. Caught.
+- M6 deposit merchant check removed: `TermsNotSigned() != NotApprovedMerchant()`. Caught.
+- M7 deposit terms check removed: `did not revert`. Caught.
+- M8 `ZeroShares` removed: the 100% fee test `did not revert`. Caught.
+- M9 withdraw share check removed: `InsufficientLiquidity != InsufficientShares`. Caught.
+- M10 withdraw liquidity check removed: panic `0x11` instead of the named error. Caught.
+- M11 exactly the claim rejected: `InsufficientShares(1e12, 1e12)`. Caught.
+- M12 `nonReentrant` off `withdraw`: the re-entry loop gets the wrong revert. Caught.
+- M13 `withdrawAll` while paused: pause matrix. Caught.
+- M14 withdraw refuses a revoked merchant: participant matrix. Caught.
+- M15 short of cash burns every share: `burned everything on a partial payment`. Caught.
+- M16 no-cash check removed: `did not revert`. Caught.
+- M17 `Deposited` reports the amount asked: `param mismatch at assets`. Caught.
+- M18 `mulDivUp` never rounds up: `17452 != 17453`. Caught.
+- M19 `mulDivUp` max check removed: panic `0x11` instead of `MathOverflow`. Caught.
+Open items: closed O-017; O-018 now covers both `totalLent` suppressions; O-025 now 81 of 117;
+raised O-032, O-033, O-034.
+Commit: feat: share pool with internal USDC accounting and virtual offset, withdraw by amount and withdrawAll (P1.7)
+
 ---
 
 ## Open items
@@ -1208,18 +1332,21 @@ Commit: docs: record P1.6 CI gate result
 | O-014 | `IndicoLedger` must inherit `IIndicoLedger`, so the compiler proves the implementation matches the interface the backend builds against | engineer | P1.13 at the latest |
 | O-015 | Delete the `uninitialized-state` suppression on `termsHash` (D-18) as part of the gate | engineer | Closed by C-017 |
 | O-016 | Delete the `uninitialized-state` suppression on `totalCredit` (D-18) as part of the gate | engineer | Closed by C-024 |
-| O-017 | Delete the `uninitialized-state` suppression on `totalShares` (D-18) as part of the gate | engineer | P1.7 |
-| O-018 | Delete the `uninitialized-state` suppression on `totalLent` (D-18) as part of the gate | engineer | P1.8 |
+| O-017 | Delete the `uninitialized-state` suppression on `totalShares` (D-18) as part of the gate | engineer | Closed by C-034 |
+| O-018 | Delete both suppressions on `totalLent` as part of the gate: the D-18 lint line and the D-40 Slither `uninitialized-state` start/end pair (read by the pool from P1.7) | engineer | P1.8 |
 | O-019 | Delete the `uninitialized-state` suppression on `nextLoanId` (D-18) as part of the gate | engineer | P1.8 |
 | O-020 | Delete the `uninitialized-state` suppression on `poolCredit` (D-18) as part of the gate | engineer | P1.11 |
 | O-021 | Test for the `Fixture._default` clock fix (C-012): after `_default`, `block.timestamp` is back to its value before the call | engineer | P1.11 |
 | O-022 | Participant matrix (IT 2.2): the `pause` column, nine participants, moved from P1.1 because building them needs approvals and `signTerms` | engineer | Closed by C-019 |
 | O-023 | The Phase-0 skip step in `ci.yml` and `deep.yml` no longer runs now that `src/IndicoLedger.sol` exists; delete it | engineer | P1.13 |
 | O-024 | Backend admin screen (AD-04, AD-02): before approving a wallet as user or merchant, warn that its role becomes permanent (D-22); a mistaken approval can only be fixed by the person using a different wallet | backend | Level 4 |
-| O-025 | Participant matrix (IT 2.2): 7 of 13 action columns (`signTerms`, `setUserApproved`, `pause`, `registerAsset`, `adminIssueCredit`, `adminDebitCredit`, `spend`), 63 of 117 cells. Each later portion adds its own column at its gate; all 13 columns, 117 cells, by P1.13 | engineer | P1.13 |
+| O-025 | Participant matrix (IT 2.2): 9 of 13 action columns (`signTerms`, `setUserApproved`, `pause`, `registerAsset`, `adminIssueCredit`, `adminDebitCredit`, `spend`, `deposit`, `withdraw`), 81 of 117 cells. Each later portion adds its own column at its gate; all 13 columns, 117 cells, by P1.13 | engineer | P1.13 |
 | O-026 | On any Forge upgrade (D-14), re-run the D-30 probe (`docs/lint-probes/missing-events-access-control`, `forge build --deny warnings`); if the mapping rows are no longer flagged, delete every `missing-events-access-control` suppression in the same commit as the upgrade | engineer | next Forge upgrade |
 | O-027 | `_mint` computes `room = CREDIT_CAP - credit[account]`, which underflows (panic) if the account already holds more than the cap. Only a merchant can (via `spend`, D-27), and P1.4 mints only to users, so it is unreachable now. P1.5 decides whether `adminIssueCredit` may credit a merchant (O-011); if it can, P1.5 writes the failing test first (mint to a merchant above the cap must revert `CreditCapExceeded(amount, 0)`, never panic) and fixes `_mint` | engineer | Closed by D-33 (C-026) |
 | O-028 | Delete the `slither-disable-next-line uninitialized-state` above `lockedCredit` (D-34) as part of the gate; it covers every read site (`adminDebitCredit`, and `spend` in P1.6) | engineer | P1.8 |
 | O-029 | `src/lib/Math.sol` carries `slither-disable-next-line unused-return` (C-006 triage). The P1.13 grep now covers Slither, so it fails close-out unless it gets its own decision allowing it to survive, or is removed | engineer, owner | before P1.13 |
 | O-030 | Slither has logged `ERROR:ContractSolcParsing: Impossible to generate IR for Math.mulDivDown (src/lib/Math.sol#27-34): 'NoneType' object has no attribute 'parameters'` since P1.3, locally and on CI (run 37108382319); P1.1 and P1.2 runs did not. Detectors still run on everything else and the exit code ignores it, so CI stays green, but `mulDivDown` is not being analysed. Find the trigger and fix or triage in writing | engineer | Closed by C-030 |
 | O-031 | Backend (AD-04, AD-08, U-13): the admin merchant screen shows each merchant's on-chain terms signature (`termsSigned`, `signedTermsHash`); a user paying a merchant who has not signed gets a readable "merchant not ready" instead of `MerchantTermsNotSigned` (D-36, D-37) | backend | Level 4 |
+| O-032 | Merchant guide (merchants use the block explorer): step 0, in bold at the top, says never to send USDC to the ledger address with `transfer`; only `approve` on the USDC contract, then `deposit`. A direct transfer is counted nowhere and cannot be recovered (D-38) | owner | before the first merchant deposits |
+| O-033 | `Pool.t.sol` simulates a loan's pool side by writing `poolUsdc`/`totalLent` (`_simulateLend`, `_simulateRepay`, `_simulateDefault`). Rerun those cases on real loans: beyond-liquidity withdraws (P1.8), short-of-cash `withdrawAll` then repay (P1.9), loss split, rounding pump and total wipeout (P1.11); then delete the helpers | engineer | P1.8, P1.9, P1.11 |
+| O-034 | Pool-state matrix (IT 2.4, 24 cells) moved from P1.7: it needs `requestLoan`, `repay` and a real default | engineer | P1.11 |

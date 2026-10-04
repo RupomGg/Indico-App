@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.26;
 
-import {Test} from "forge-std/Test.sol";
+import {Test, StdStorage, stdStorage} from "forge-std/Test.sol";
 import {IndicoLedger} from "../../src/IndicoLedger.sol";
 import {IIndicoLedger} from "../../src/interfaces/IIndicoLedger.sol";
 import {LedgerMath} from "../../src/lib/Math.sol";
@@ -70,6 +70,8 @@ abstract contract FixtureBase is Test {
 ///         and `bob` approved users who signed; `merchantA` and `merchantB` approved merchants
 ///         who signed. No credit, empty pool.
 abstract contract Fixture is FixtureBase {
+    using stdStorage for StdStorage;
+
     bytes32 internal constant TERMS = keccak256("indico-terms-v1");
 
     function setUp() public virtual override {
@@ -128,6 +130,74 @@ abstract contract Fixture is FixtureBase {
     function _revokeMerchant(address m) internal {
         vm.prank(admin);
         ledger.setMerchantApproved(m, false);
+    }
+
+    // ------------------------------------------------------------------ pool model (D-38)
+
+    /// @dev The offset written out again here, so a change to the ledger's constant is caught.
+    uint256 internal constant MODEL_VIRTUAL_SHARES = 1e6;
+    uint256 internal constant MODEL_VIRTUAL_ASSETS = 1;
+
+    function _modelShares() internal view returns (uint256) {
+        return ledger.totalShares() + MODEL_VIRTUAL_SHARES;
+    }
+
+    function _modelAssets() internal view returns (uint256) {
+        return ledger.poolUsdc() + ledger.totalLent() + MODEL_VIRTUAL_ASSETS;
+    }
+
+    /// @dev Shares `deposit(received)` mints now, rounded down.
+    function _modelSharesFor(uint256 received) internal view returns (uint256) {
+        return LedgerMath.mulDivDown(received, _modelShares(), _modelAssets());
+    }
+
+    /// @dev Shares `withdraw(assets)` burns now, rounded up.
+    function _modelSharesToBurn(uint256 assets) internal view returns (uint256) {
+        return LedgerMath.mulDivUp(assets, _modelShares(), _modelAssets());
+    }
+
+    /// @dev What `m`'s shares are worth now, rounded down, ignoring the pool's cash.
+    function _modelClaim(address m) internal view returns (uint256) {
+        return LedgerMath.mulDivDown(ledger.shares(m), _modelAssets(), _modelShares());
+    }
+
+    /// @dev `a` deposits `amount`.
+    function _deposit(address a, uint256 amount) internal {
+        vm.prank(a);
+        ledger.deposit(amount);
+    }
+
+    // ------------------------------------------------ simulated loans (until P1.8 to P1.11)
+
+    /// @dev Where simulated loan principal goes and comes back from.
+    address internal constant LOAN_SINK = address(0x10A115);
+
+    /// @notice The pool side of `requestLoan(amount)`: `poolUsdc` down, `totalLent` up, the USDC
+    ///         leaves the ledger. Storage written directly because `requestLoan` is P1.8; the
+    ///         tests that use this rerun on real loans in P1.8, P1.9 and P1.11 (O-033).
+    function _simulateLend(uint256 amount) internal {
+        _writeUint("poolUsdc()", ledger.poolUsdc() - amount);
+        _writeUint("totalLent()", ledger.totalLent() + amount);
+        vm.prank(address(ledger));
+        usdc.transfer(LOAN_SINK, amount);
+    }
+
+    /// @notice The pool side of `repay`: the USDC comes back, `totalLent` down, `poolUsdc` up.
+    function _simulateRepay(uint256 amount) internal {
+        vm.prank(LOAN_SINK);
+        usdc.transfer(address(ledger), amount);
+        _writeUint("totalLent()", ledger.totalLent() - amount);
+        _writeUint("poolUsdc()", ledger.poolUsdc() + amount);
+    }
+
+    /// @notice The pool side of `liquidate`: `totalLent` down, no USDC moves, so every share
+    ///         is worth less.
+    function _simulateDefault(uint256 amount) internal {
+        _writeUint("totalLent()", ledger.totalLent() - amount);
+    }
+
+    function _writeUint(string memory getter, uint256 value) private {
+        stdstore.target(address(ledger)).sig(getter).checked_write(value);
     }
 
     /// @dev Collateral computed independently of the ledger's own view.

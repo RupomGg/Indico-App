@@ -22,6 +22,7 @@ abstract contract StateSnapshot is FixtureBase {
         bool[] termsSigned;
         bytes32[] signedTermsHash;
         uint256 totalLent;
+        uint256 poolUsdc;
         uint256 totalCredit;
         uint256 totalShares;
         uint256 poolCredit;
@@ -58,6 +59,7 @@ abstract contract StateSnapshot is FixtureBase {
             s.signedTermsHash[i] = ledger.signedTermsHash(a);
         }
         s.totalLent = ledger.totalLent();
+        s.poolUsdc = ledger.poolUsdc();
         s.totalCredit = ledger.totalCredit();
         s.totalShares = ledger.totalShares();
         s.poolCredit = ledger.poolCredit();
@@ -81,6 +83,7 @@ abstract contract StateSnapshot is FixtureBase {
         assertEq(s.termsSigned, before.termsSigned, "termsSigned");
         assertEq(s.signedTermsHash, before.signedTermsHash, "signedTermsHash");
         assertEq(s.totalLent, before.totalLent, "totalLent");
+        assertEq(s.poolUsdc, before.poolUsdc, "poolUsdc");
         assertEq(s.totalCredit, before.totalCredit, "totalCredit");
         assertEq(s.totalShares, before.totalShares, "totalShares");
         assertEq(s.poolCredit, before.poolCredit, "poolCredit");
