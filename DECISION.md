@@ -1408,6 +1408,36 @@ times are recorded against the D-42 estimates.
 Open items: O-036 closed when that run shows every Math property at 5,000,000; raised O-037.
 Commit: ci: deep fuzz one shard per test file with a 5M run-count guard; Math properties at 5M under deep
 
+### C-039 · chore · Deep fuzz "last green" matched by commit on any branch; cancelled counts as red · 2026-10-05
+Type: chore
+Decisions: D-31 amended (owner's request)
+Context: the owner's push of `cc5d15e` and `bda482b` went to `main`, not `p1.7`, so P1.7 merged
+before its own Deep run. Also found: the scheduled run 37186138489 on `23072b6` (P1.7's code, the
+old single-job workflow) was **cancelled at 6h00m** with no test failing, as D-42 predicted.
+- G10 for `23072b6`: CI run 37181776408 green. G10 for `cc5d15e`: run 37206681236 green.
+- G10 for `bda482b` (C-038, the Deep split): CI run 37228930106 green; only the designed skips.
+Files:
+- New: `.github/scripts/deep-last-green.sh`: from "<sha> <deep job conclusions>" lines, newest
+  first, prints the first sha whose deep jobs all ran and all passed; skips runs whose deep job was
+  skipped, partly failed or cancelled, or that have no deep job.
+- Changed: `.github/workflows/deep.yml` (`check` job): "last green" from successful runs on any
+  branch (30 newest), each with its deep job conclusions, through `deep-last-green.sh`; the last
+  completed run is still looked up on `main`.
+- Changed: `.github/scripts/deep-should-run.sh`: a `cancelled` last run stays red like a
+  `failure` when nothing changed since it; header comment updated.
+- Changed: `.github/scripts/deep-should-run.test.sh`: 8 new cases, 19 in all, all `ok`:
+  cancelled and unchanged stays red; cancelled then contracts changed runs; `main` fast-forwarded
+  to a green branch run's commit skips; and five for `deep-last-green.sh` (newest full green wins;
+  a skip is passed over; a split run counts only if every shard passed; a run with no deep job is
+  passed over; nothing green gives empty).
+- Changed (local, not pushed): `docs/decisions.md` D-31 amendment.
+Checks: YAML parses; the backslash lines in `deep.yml` are the jq `\(...)` interpolations, shown
+and intact (two line continuations written by a script had collapsed and were rewritten by hand;
+a `printf` escape that had become a real newline was replaced by `echo`); the query run live
+against the repository returns `1a9c993`, run 37169050467, the last full green run.
+Open items: none.
+Commit: ci: deep fuzz counts a full green run on any branch by commit; a cancelled run stays red
+
 ---
 
 ## Open items
