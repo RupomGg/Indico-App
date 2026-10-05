@@ -1473,6 +1473,72 @@ Files: none changed.
 Open items: closed O-036.
 Commit: docs: record P1.7 Deep fuzz green under the split; O-036 closed
 
+### C-041 · D-43 · Revert and fuzz tests prove "nothing else changed" with the state diff · 2026-10-05
+Type: chore (tests only; `src/` unchanged)
+Decisions: D-43 (built; owner decided in principle, measurements and scope recorded before code)
+Why: the full re-read `StateSnapshot` was about 95% of a revert fuzz run's gas (432,554 +
+458,752 around a 50,503-gas call), which drove Deep fuzz to about 620 billed minutes and
+`Pool.t.sol` to 75% of its 360-minute limit (C-040).
+Files:
+- Changed: `contracts/test/helpers/StateSnapshot.sol`: `_revertsUnchanged(who, data, err)` (low-level
+  call, exact revert bytes, then `_assertNoChange`), `_startDiff`, `_stopDiff` (net changed slots on
+  every account, writes in reverted frames dropped, plus ETH moved or accounts created),
+  `_assertNoChange`, `_assertWrites(expected)` (exact set of net changed slots with values),
+  `Write`, `_key`, `_w`. The value snapshot stays for non-fuzz success tests.
+- Changed: `contracts/test/helpers/Fixture.sol`: storage slot constants (from `forge inspect
+  storageLayout`) moved here; the loan simulation writes them with `vm.store` instead of searching
+  with `stdstore` (537,328 gas a call before).
+- New: `contracts/test/helpers/StateDiff.t.sol`: 11 tests: every slot constant checked against its
+  getter; `_assertNoChange` passes after a revert (including a write made before the revert) and
+  fails after a write or an ETH move; `_assertWrites` passes on the exact set and fails on a
+  missing, extra or wrong-valued write; a slot restored within the call and a write in a reverted
+  inner call are not net changes. Each failing case checked to fail for its own reason.
+- Changed: revert helpers in `AdminCredit`, `RegisterAsset`, `SignTerms`, `Spend`, `Pool` and
+  `Pause` (`_assertDenied`) use `_revertsUnchanged`; the fuzz success paths in `AdminCredit`,
+  `RegisterAsset`, `SignTerms`, `Spend`, `Membership` and `Pool` assert their exact net writes;
+  `AdminCreditTest` builds its revoked user once in `setUp` instead of on every fuzz run.
+- Changed: `INSTRUCTION.md` 1.4: a revert test proves nothing changed with `_revertsUnchanged` (or,
+  non-fuzz, `_assertUnchanged`); every fuzz success path asserts its exact net writes.
+- Changed: `contracts/.gas-snapshot`: 11 new `StateDiffTest` lines; 160 changed; none removed.
+  107 over 10%, all from this change: revert tests 40% to 95% lower (for example
+  `AdminCreditTest:test_nonAdmins_revert_bothFunctions` 13,113,438 to 625,962); two AdminCredit
+  success tests about 12% higher, because `setUp` now adds one actor to every value snapshot.
+- Changed (local, not pushed): `docs/decisions.md` D-43 (measurements, the Forge finding, scope).
+Found while building, and why `_revertsUnchanged` uses a low-level call: under `vm.expectRevert`,
+Forge 1.8.3's state diff reports the reverted frame as not reverted. Shown on `registerAsset`
+(marks the hash, then the mint reverts on the cap): with `expectRevert` the write is reported as
+surviving although `assetRegistered` is still false; with a low-level call it is reported as
+reverted. A false alarm, never a false pass, but the helper avoids it.
+Strictness proof (`docs/gate-logs/D-43/`):
+- Every earlier G9 mutation rerun against the new tests: P0.1 reopen 5/5, P1.1 10/10, P1.2 10/10,
+  P1.3 10/10, P1.4 12/12, P1.5 11/11, P1.6 12/12, P1.7 19/19: **89 of 89 caught**, sources
+  restored byte-identical after each. Three (P1.4 M1, M2; P1.5 M7) were not applied on the first
+  pass, because their old pattern now also matches `spend` and `requestLoan`; rerun with patterns
+  scoped to their function (`G9-redo.log`), all three caught.
+- New mutation the old check missed: `spend` also writes `assetRegistered[merchant]`, a slot the
+  snapshot never read. Old tests: 308 passed, missed (`stray-slot-old.log`). New tests: caught,
+  `unexpected write` in `testFuzz_spend_withinAvailable_conserves` (`stray-slot-new.log`).
+Gas per fuzz run, same seed (`gas-compare.txt`), the three heaviest: rounding pump 2,424,273 to
+2,006,590 (-17%; its 40-step loop of real calls is the remaining cost); admin-credit sequence
+1,438,664 to 1,131,598 (-21%); direct transfer 1,345,800 to 312,461 (-77%). Revert fuzz tests
+-80% to -94%; success fuzz tests +24% to +30% (the exact-write check).
+New Deep estimate per shard (`deep-estimate.md`, run 37231202052 scaled by the gas ratio):
+`Pool.t.sol` 268.5 to about 164 minutes (75% to 46%); `AdminCredit` 100 to about 56; every other
+shard under 20. All shards about 620 to about 294 billed minutes.
+Gate (logs in `docs/gate-logs/D-43/`, Forge 1.8.3):
+- G1 pass: 350 passed, 0 failed, 0 skipped, exit 0.
+- G2 pass: src lines 145/145, branches 49/49 (`src/` unchanged).
+- G3 pass, G4 pass: exit 0 each.
+- G5 pass: seeds 1 and 2, 350 passed each.
+- G6 pass: three runs, 350 passed each.
+- G7 pass: `ci` profile, 350 passed.
+- G8 pass: `IndicoLedger` 8,771 B runtime, unchanged; snapshot check 316 passed.
+- G9 pass: the strictness proof above.
+- G13 pass.
+- G10 pending: owner pushes. Slither: `src/` unchanged since C-040, same result.
+Open items: closed O-037.
+Commit: test: prove "nothing else changed" with the state diff instead of re-reading state (D-43)
+
 ---
 
 ## Open items
@@ -1515,4 +1581,4 @@ Commit: docs: record P1.7 Deep fuzz green under the split; O-036 closed
 | O-034 | Pool-state matrix (IT 2.4, 24 cells) moved from P1.7: it needs `requestLoan`, `repay` and a real default | engineer | P1.11 |
 | O-035 | Merchant guide and terms: while the pool is paused no merchant can deposit or withdraw, for as long as the pause lasts, and nothing can rescue the funds (D-41, CS §10); with the client's written pause policy (decisions, open non-blocking 2) | owner, client | before the first merchant deposits |
 | O-036 | The 11 `Math.t.sol` properties pinned by `forge-config: default.fuzz.runs = 100000` also run 100,000 times under `deep` (run 37169050467), so `LedgerMath` has never had 5,000,000 runs. Fix: a `deep` inline line per test, or move the pin; reopens P0.1 | engineer, owner | Closed by C-040 |
-| O-037 | Build D-43 (state-diff assertions instead of the full re-read snapshot) as its own change with the full gate: every G9 mutation from P1.1 to P1.7 still caught plus one new unexpected-slot mutation, gas per run before and after on the three heaviest fuzz tests, new Deep estimate per shard. After P1.7 merges, before P1.8 | engineer | before P1.8 |
+| O-037 | Build D-43 (state-diff assertions instead of the full re-read snapshot) as its own change with the full gate: every G9 mutation from P1.1 to P1.7 still caught plus one new unexpected-slot mutation, gas per run before and after on the three heaviest fuzz tests, new Deep estimate per shard. After P1.7 merges, before P1.8 | engineer | Closed by C-041 |

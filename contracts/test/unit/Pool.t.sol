@@ -87,12 +87,7 @@ contract PoolTest is Actors {
     }
 
     function _expectRevertUnchanged(address who, bytes memory call, bytes memory err) internal {
-        Snapshot memory s = _snapshot();
-        vm.prank(who);
-        (bool ok, bytes memory ret) = address(ledger).call(call);
-        assertFalse(ok, "did not revert");
-        assertEq(ret, err, "wrong revert");
-        _assertUnchanged(s);
+        _revertsUnchanged(who, call, err);
     }
 
     function _depositCall(uint256 amount) internal pure returns (bytes memory) {
@@ -838,12 +833,14 @@ contract PoolTest is Actors {
         if (state == 3) _simulateDefault(DEP / 4);
 
         uint256 claim = _modelClaim(merchantA);
-        Snapshot memory s = _snapshot();
+        uint256 held = usdc.balanceOf(address(ledger));
+        _startDiff();
         vm.prank(alice);
         usdc.transfer(address(ledger), amount);
-        s.usdc[_index(alice)] -= amount;
-        s.ledgerUsdc += amount;
-        _assertUnchanged(s);
+        Write[] memory w = new Write[](2); // the two USDC balances, nothing in the ledger
+        w[0] = _w(address(usdc), _key(alice, SLOT_USDC_BALANCES), FUND - amount);
+        w[1] = _w(address(usdc), _key(address(ledger), SLOT_USDC_BALANCES), held + amount);
+        _assertWrites(w);
         assertEq(_modelClaim(merchantA), claim);
         _assertBooks();
     }

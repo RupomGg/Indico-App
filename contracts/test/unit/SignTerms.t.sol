@@ -48,10 +48,7 @@ contract SignTermsTest is StateSnapshot {
     }
 
     function _expectRevertUnchanged(address who, bytes32 h, bytes memory err) internal {
-        Snapshot memory s = _snapshot();
-        vm.expectRevert(err);
-        _signAs(who, h);
-        _assertUnchanged(s);
+        _revertsUnchanged(who, abi.encodeCall(IIndicoLedger.signTerms, (h)), err);
     }
 
     // ------------------------------------------------------------------ not set
@@ -155,10 +152,16 @@ contract SignTermsTest is StateSnapshot {
     function testFuzz_anyCaller_signsOnce_thenAlreadySigned(address who) public {
         who = _remapForgeAddress(who); // remapped, never discarded (INSTRUCTION 1.2)
         _setHash(H1);
+        _startDiff();
         _signAs(who, H1);
+        Write[] memory w = new Write[](2);
+        w[0] = _w(address(ledger), _key(who, SLOT_TERMS_SIGNED), 1);
+        w[1] = _w(address(ledger), _key(who, SLOT_SIGNED_TERMS_HASH), uint256(H1));
+        _assertWrites(w);
         assertEq(ledger.signedTermsHash(who), H1);
-        vm.expectRevert(IIndicoLedger.AlreadySigned.selector);
-        _signAs(who, H1);
+        _expectRevertUnchanged(
+            who, H1, abi.encodeWithSelector(IIndicoLedger.AlreadySigned.selector)
+        );
     }
 
     // ------------------------------------------------------------------ versions, D-25

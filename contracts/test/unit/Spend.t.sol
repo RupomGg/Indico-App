@@ -49,10 +49,7 @@ contract SpendTest is Actors {
     function _expectRevertUnchanged(address from, address to, uint256 amount, bytes memory err)
         internal
     {
-        Snapshot memory s = _snapshot();
-        vm.expectRevert(err);
-        _spend(from, to, amount);
-        _assertUnchanged(s);
+        _revertsUnchanged(from, abi.encodeCall(IIndicoLedger.spend, (to, amount)), err);
     }
 
     function _index(address a) internal view returns (uint256) {
@@ -125,7 +122,12 @@ contract SpendTest is Actors {
     function testFuzz_spend_withinAvailable_conserves(uint256 amount) public {
         amount = bound(amount, 1, BAL);
         uint256 total = ledger.totalCredit();
+        _startDiff();
         _spend(alice, merchantA, amount);
+        Write[] memory w = new Write[](2);
+        w[0] = _w(address(ledger), _key(alice, SLOT_CREDIT), BAL - amount);
+        w[1] = _w(address(ledger), _key(merchantA, SLOT_CREDIT), amount);
+        _assertWrites(w);
         assertEq(ledger.credit(alice), BAL - amount);
         assertEq(ledger.credit(merchantA), amount);
         assertEq(ledger.totalCredit(), total);

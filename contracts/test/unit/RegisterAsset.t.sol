@@ -51,10 +51,7 @@ contract RegisterAssetTest is Actors {
     function _expectRevertUnchanged(address who, bytes32 h, uint8 t, uint256 v, bytes memory err)
         internal
     {
-        Snapshot memory s = _snapshot();
-        vm.expectRevert(err);
-        _register(who, h, t, v);
-        _assertUnchanged(s);
+        _revertsUnchanged(who, abi.encodeCall(IIndicoLedger.registerAsset, (h, t, v)), err);
     }
 
     function _index(address a) internal view returns (uint256) {
@@ -120,7 +117,13 @@ contract RegisterAssetTest is Actors {
     function testFuzz_register_anyValueWithinCap_mintsExactly(uint256 v, bytes32 h) public {
         v = bound(v, 1, CREDIT_CAP);
         if (h == bytes32(0)) h = DOC; // remapped, never discarded (INSTRUCTION 1.2)
+        _startDiff();
         _register(alice, h, 1, v);
+        Write[] memory w = new Write[](3);
+        w[0] = _w(address(ledger), _key(alice, SLOT_CREDIT), v);
+        w[1] = _w(address(ledger), bytes32(SLOT_TOTAL_CREDIT), v);
+        w[2] = _w(address(ledger), _key(h, SLOT_ASSET_REGISTERED), 1);
+        _assertWrites(w);
         assertEq(ledger.credit(alice), v);
         assertEq(ledger.totalCredit(), v);
         assertTrue(ledger.assetRegistered(h));

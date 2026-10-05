@@ -70,7 +70,10 @@ portion is only done when **all** of these hold:
 - Every corner case in its §4 list has a test, and each test asserts a *specific* outcome: exact
   custom error with exact arguments, exact balances, exact events. "Does not revert" is not an
   assertion.
-- Every revert test also asserts that **nothing changed** (`StateSnapshot._assertUnchanged`).
+- Every revert test also asserts that **nothing changed**: `StateSnapshot._revertsUnchanged`
+  (state diff, D-43; a low-level call, never `vm.expectRevert`, whose frames Forge's diff
+  mislabels) or, in a non-fuzz test, `_assertUnchanged`. Every fuzz test's success path asserts
+  the exact set of net writes (`_assertWrites`).
 - Failure paths are tested as seriously as happy paths: bad input, zero and max values, wrong
   caller, wrong state, paused, time boundaries, misbehaving token.
 - The deliberate-bug check (§2, G9) shows the tests catch real mistakes.

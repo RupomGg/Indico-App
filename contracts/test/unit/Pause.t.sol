@@ -129,12 +129,13 @@ contract PauseTest is StateSnapshot, Matrix {
     }
 
     function _assertDenied(address who, bool isPause) internal {
-        Snapshot memory s = _snapshot();
-        vm.expectRevert(_accessError(who));
-        vm.prank(who);
-        if (isPause) ledger.pause();
-        else ledger.unpause();
-        _assertUnchanged(s);
+        _revertsUnchanged(
+            who,
+            isPause
+                ? abi.encodeCall(IIndicoLedger.pause, ())
+                : abi.encodeCall(IIndicoLedger.unpause, ()),
+            _accessError(who)
+        );
     }
 
     function _nonGuardians() internal returns (address[] memory w) {

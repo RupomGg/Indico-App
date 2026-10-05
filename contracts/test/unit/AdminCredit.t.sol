@@ -48,6 +48,14 @@ contract AdminCreditTest is Actors {
     }
 
     /// @dev Calls issue (`isIssue`) or debit as `caller`, expecting `err`, state unchanged.
+    /// @dev Built once here, not on every fuzz run of the sequence test (D-43).
+    address internal revokedUser;
+
+    function setUp() public override {
+        super.setUp();
+        revokedUser = _participant(Participant.ApprovedThenRevoked);
+    }
+
     function _expectRevertUnchanged(
         address caller,
         bool isIssue,
@@ -55,12 +63,13 @@ contract AdminCreditTest is Actors {
         uint256 a,
         bytes memory err
     ) internal {
-        Snapshot memory s = _snapshot();
-        vm.expectRevert(err);
-        vm.prank(caller);
-        if (isIssue) ledger.adminIssueCredit(u, a, MEMO);
-        else ledger.adminDebitCredit(u, a, MEMO);
-        _assertUnchanged(s);
+        _revertsUnchanged(
+            caller,
+            isIssue
+                ? abi.encodeCall(IIndicoLedger.adminIssueCredit, (u, a, MEMO))
+                : abi.encodeCall(IIndicoLedger.adminDebitCredit, (u, a, MEMO)),
+            err
+        );
     }
 
     function _index(address a) internal view returns (uint256) {
@@ -235,7 +244,12 @@ contract AdminCreditTest is Actors {
         b = bound(b, 1, CREDIT_CAP);
         a = bound(a, 1, b);
         _issue(alice, b, MEMO);
+        _startDiff();
         _debit(alice, a, MEMO);
+        Write[] memory w = new Write[](2);
+        w[0] = _w(address(ledger), _key(alice, SLOT_CREDIT), b - a);
+        w[1] = _w(address(ledger), bytes32(SLOT_TOTAL_CREDIT), b - a);
+        _assertWrites(w);
         assertEq(ledger.credit(alice), b - a);
         assertEq(ledger.totalCredit(), b - a);
     }
@@ -388,8 +402,7 @@ contract AdminCreditTest is Actors {
     /// @dev Any sequence of issues and debits, valid or not: afterwards totalCredit equals the
     ///      sum of every balance and no user is above CREDIT_CAP.
     function testFuzz_anySequence_totalIsSum_usersWithinCap(uint256 seed) public {
-        address revoked = _participant(Participant.ApprovedThenRevoked);
-        address[3] memory users = [alice, bob, revoked];
+        address[3] memory users = [alice, bob, revokedUser];
         for (uint256 step; step < 24; ++step) {
             uint256 r = uint256(keccak256(abi.encode(seed, step)));
             address u = users[r % 3];

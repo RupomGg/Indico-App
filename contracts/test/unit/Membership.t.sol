@@ -144,8 +144,12 @@ contract MembershipTest is StateSnapshot {
 
     function testFuzz_setTermsHash_anyNonZero_stored(bytes32 h) public {
         if (h == bytes32(0)) h = keccak256("remapped-zero"); // remapped, never discarded
+        _startDiff();
         vm.prank(admin);
         ledger.setTermsHash(h);
+        Write[] memory w = new Write[](1);
+        w[0] = _w(address(ledger), bytes32(SLOT_TERMS_HASH), uint256(h));
+        _assertWrites(w);
         assertEq(ledger.termsHash(), h);
     }
 
@@ -364,12 +368,23 @@ contract MembershipTest is StateSnapshot {
         if (a == address(0) || a == address(ledger) || a == address(usdc)) {
             a = makeAddr("remapped");
         }
-        _set(admin, userFirst, a, true);
         uint8 role = userFirst ? ROLE_USER : ROLE_MERCHANT;
+        _startDiff();
+        _set(admin, userFirst, a, true);
+        Write[] memory w = new Write[](2);
+        uint256 flag = userFirst ? SLOT_APPROVED_USER : SLOT_APPROVED_MERCHANT;
+        w[0] = _w(address(ledger), _key(a, flag), 1);
+        w[1] = _w(address(ledger), _key(a, SLOT_PARTICIPANT_ROLE), role);
+        _assertWrites(w);
         assertEq(ledger.participantRole(a), role);
         _set(admin, userFirst, a, false);
-        vm.expectRevert(abi.encodeWithSelector(IIndicoLedger.ParticipantRoleConflict.selector, a));
-        _set(admin, !userFirst, a, true);
+        _revertsUnchanged(
+            admin,
+            userFirst
+                ? abi.encodeCall(IIndicoLedger.setMerchantApproved, (a, true))
+                : abi.encodeCall(IIndicoLedger.setUserApproved, (a, true)),
+            abi.encodeWithSelector(IIndicoLedger.ParticipantRoleConflict.selector, a)
+        );
         assertEq(ledger.participantRole(a), role);
     }
 

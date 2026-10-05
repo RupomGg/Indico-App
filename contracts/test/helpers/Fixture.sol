@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.26;
 
-import {Test, StdStorage, stdStorage} from "forge-std/Test.sol";
+import {Test} from "forge-std/Test.sol";
 import {IndicoLedger} from "../../src/IndicoLedger.sol";
 import {IIndicoLedger} from "../../src/interfaces/IIndicoLedger.sol";
 import {LedgerMath} from "../../src/lib/Math.sol";
@@ -13,6 +13,27 @@ import {MockUSDC} from "./MockUSDC.sol";
 ///         nothing but the constructor, so it works from the first portion that has a ledger.
 abstract contract FixtureBase is Test {
     uint256 internal constant FUND = 1_000_000e6;
+
+    // Storage slots, from `forge inspect IndicoLedger storageLayout` and `MockUSDC`. Checked
+    // against the getters by `StateDiffTest.test_slotConstants_matchGetters`.
+    uint256 internal constant SLOT_PAUSED = 3;
+    uint256 internal constant SLOT_TERMS_HASH = 4;
+    uint256 internal constant SLOT_APPROVED_USER = 5;
+    uint256 internal constant SLOT_APPROVED_MERCHANT = 6;
+    uint256 internal constant SLOT_TERMS_SIGNED = 7;
+    uint256 internal constant SLOT_SIGNED_TERMS_HASH = 8;
+    uint256 internal constant SLOT_PARTICIPANT_ROLE = 9;
+    uint256 internal constant SLOT_CREDIT = 10;
+    uint256 internal constant SLOT_LOCKED_CREDIT = 11;
+    uint256 internal constant SLOT_TOTAL_CREDIT = 12;
+    uint256 internal constant SLOT_POOL_CREDIT = 13;
+    uint256 internal constant SLOT_ASSET_REGISTERED = 14;
+    uint256 internal constant SLOT_SHARES = 15;
+    uint256 internal constant SLOT_TOTAL_SHARES = 16;
+    uint256 internal constant SLOT_TOTAL_LENT = 17;
+    uint256 internal constant SLOT_POOL_USDC = 18;
+    uint256 internal constant SLOT_NEXT_LOAN_ID = 19;
+    uint256 internal constant SLOT_USDC_BALANCES = 0;
 
     MockUSDC internal usdc;
     IIndicoLedger internal ledger;
@@ -70,8 +91,6 @@ abstract contract FixtureBase is Test {
 ///         and `bob` approved users who signed; `merchantA` and `merchantB` approved merchants
 ///         who signed. No credit, empty pool.
 abstract contract Fixture is FixtureBase {
-    using stdStorage for StdStorage;
-
     bytes32 internal constant TERMS = keccak256("indico-terms-v1");
 
     function setUp() public virtual override {
@@ -173,11 +192,11 @@ abstract contract Fixture is FixtureBase {
     address internal constant LOAN_SINK = address(0x10A115);
 
     /// @notice The pool side of `requestLoan(amount)`: `poolUsdc` down, `totalLent` up, the USDC
-    ///         leaves the ledger. Storage written directly because `requestLoan` is P1.8; the
+    ///         leaves the ledger. Storage written directly (`vm.store`, D-43) because `requestLoan` is P1.8; the
     ///         tests that use this rerun on real loans in P1.8, P1.9 and P1.11 (O-033).
     function _simulateLend(uint256 amount) internal {
-        _writeUint("poolUsdc()", ledger.poolUsdc() - amount);
-        _writeUint("totalLent()", ledger.totalLent() + amount);
+        _writeUint(SLOT_POOL_USDC, ledger.poolUsdc() - amount);
+        _writeUint(SLOT_TOTAL_LENT, ledger.totalLent() + amount);
         vm.prank(address(ledger));
         usdc.transfer(LOAN_SINK, amount);
     }
@@ -186,18 +205,20 @@ abstract contract Fixture is FixtureBase {
     function _simulateRepay(uint256 amount) internal {
         vm.prank(LOAN_SINK);
         usdc.transfer(address(ledger), amount);
-        _writeUint("totalLent()", ledger.totalLent() - amount);
-        _writeUint("poolUsdc()", ledger.poolUsdc() + amount);
+        _writeUint(SLOT_TOTAL_LENT, ledger.totalLent() - amount);
+        _writeUint(SLOT_POOL_USDC, ledger.poolUsdc() + amount);
     }
 
     /// @notice The pool side of `liquidate`: `totalLent` down, no USDC moves, so every share
     ///         is worth less.
     function _simulateDefault(uint256 amount) internal {
-        _writeUint("totalLent()", ledger.totalLent() - amount);
+        _writeUint(SLOT_TOTAL_LENT, ledger.totalLent() - amount);
     }
 
-    function _writeUint(string memory getter, uint256 value) private {
-        stdstore.target(address(ledger)).sig(getter).checked_write(value);
+    /// @dev Slots from the storage layout, checked against the getters by
+    ///      `StateDiffTest.test_slotConstants_matchGetters` (D-43).
+    function _writeUint(uint256 slot, uint256 value) private {
+        vm.store(address(ledger), bytes32(slot), bytes32(value));
     }
 
     /// @dev Collateral computed independently of the ledger's own view.
