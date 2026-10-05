@@ -1438,6 +1438,41 @@ against the repository returns `1a9c993`, run 37169050467, the last full green r
 Open items: none.
 Commit: ci: deep fuzz counts a full green run on any branch by commit; a cancelled run stays red
 
+### C-040 · P1.7 done · First split Deep fuzz run green; O-036 closed · 2026-10-05
+Type: chore
+Files: none changed.
+- G10 for `b39b4f3` (C-039): CI run 37229897755 green.
+- Deep fuzz pass, `docs/gate-logs/P1.7/deep-ci/`: run 37231202052 on `b39b4f3`, dispatched on
+  `main`, the first run under D-42. `check` green (its guard self-check included); **14 of 14
+  shards green, 339 tests passed, 0 failed, 0 skipped**. P1.7 is done (INSTRUCTION 1.2).
+- Guard (O-036): every shard printed `ok`; **all 34 fuzz tests ran 5,000,000 times**, including
+  all 11 `Math.t.sol` properties (`fuzz-runs.txt`). O-036 closed.
+- Shard times against the D-42 estimates (job wall time; the suite time forge printed is in
+  brackets):
+
+  | Shard | Estimate | Actual | % of 360 |
+  |---|---|---|---|
+  | `Pool.t.sol` | 208 | 268.5 (16,079 s) | 75% |
+  | `AdminCredit.t.sol` | 87 | 100.0 (5,977 s) | 28% |
+  | `SignTerms.t.sol` | 89 | 65.2 (3,885 s) | 18% |
+  | `RegisterAsset.t.sol` | 83 | 57.1 (3,400 s) | 16% |
+  | `Spend.t.sol` | 80 | 56.5 (3,358 s) | 16% |
+  | `Pause.t.sol` | 85 | 45.5 (2,700 s) | 13% |
+  | `Math.t.sol` | 27 | 10.7 (618 s) | 3% |
+  | the other 7 | under 20 each | under 6 each | under 2% |
+
+  About 620 billed minutes in all (estimate 740).
+- Why `Pool.t.sol` ran over its estimate: forge printed the same CPU time as wall time for every
+  shard (for example 16,078.94 s and 16,078.94 s CPU), so within one file the fuzz tests ran one
+  after another, not on both cores. The estimate assumed two. A shard's time is therefore the sum
+  of its fuzz tests, and `Pool.t.sol` is at 75%, close to D-42's 80% split line; the tests O-033
+  adds to it in P1.8 to P1.11 would cross it. D-43 (O-037, next) is the planned fix; if it does not
+  bring the shard well under, `Pool.t.sol` is split by test name per D-42.
+- The next nightly should find this run as the last full green (C-039) and skip; recorded when it
+  happens.
+Open items: closed O-036.
+Commit: docs: record P1.7 Deep fuzz green under the split; O-036 closed
+
 ---
 
 ## Open items
@@ -1479,5 +1514,5 @@ Commit: ci: deep fuzz counts a full green run on any branch by commit; a cancell
 | O-033 | `Pool.t.sol` simulates a loan's pool side by writing `poolUsdc`/`totalLent` (`_simulateLend`, `_simulateRepay`, `_simulateDefault`). Rerun those cases on real loans: beyond-liquidity withdraws (P1.8), short-of-cash `withdrawAll` then repay (P1.9), loss split, rounding pump and total wipeout (P1.11); then delete the helpers | engineer | P1.8, P1.9, P1.11 |
 | O-034 | Pool-state matrix (IT 2.4, 24 cells) moved from P1.7: it needs `requestLoan`, `repay` and a real default | engineer | P1.11 |
 | O-035 | Merchant guide and terms: while the pool is paused no merchant can deposit or withdraw, for as long as the pause lasts, and nothing can rescue the funds (D-41, CS §10); with the client's written pause policy (decisions, open non-blocking 2) | owner, client | before the first merchant deposits |
-| O-036 | The 11 `Math.t.sol` properties pinned by `forge-config: default.fuzz.runs = 100000` also run 100,000 times under `deep` (run 37169050467), so `LedgerMath` has never had 5,000,000 runs. Fix: a `deep` inline line per test, or move the pin; reopens P0.1 | engineer, owner | with the Deep fuzz split |
+| O-036 | The 11 `Math.t.sol` properties pinned by `forge-config: default.fuzz.runs = 100000` also run 100,000 times under `deep` (run 37169050467), so `LedgerMath` has never had 5,000,000 runs. Fix: a `deep` inline line per test, or move the pin; reopens P0.1 | engineer, owner | Closed by C-040 |
 | O-037 | Build D-43 (state-diff assertions instead of the full re-read snapshot) as its own change with the full gate: every G9 mutation from P1.1 to P1.7 still caught plus one new unexpected-slot mutation, gas per run before and after on the three heaviest fuzz tests, new Deep estimate per shard. After P1.7 merges, before P1.8 | engineer | before P1.8 |
