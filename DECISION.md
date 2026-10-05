@@ -1617,6 +1617,41 @@ Open items: closed O-018, O-019, O-028; O-025 now 90 of 117; O-033 P1.8 part don
 remain).
 Commit: feat: requestLoan with 1.25x collateral rounded up, ids from 1, USDC sent last (P1.8)
 
+### C-043 · D-43 Deep fuzz green; P1.8 CI; P1.8 may merge · 2026-10-05
+Type: chore
+Files: none changed.
+- G10 for `1e63f3d` (D-43): CI run 37280156591 green. G10 for `bc1d493` (P1.8, branch `p1.8`): CI
+  run 37283697382 green.
+- Deep fuzz pass, `docs/gate-logs/D-43/deep-ci/`: run 37281472022 on `1e63f3d`, dispatched by
+  hand on `main`: `check` green, **15 of 15 shards green, 350 tests passed, 0 failed, 0 skipped**.
+  The guard printed `ok` on every shard; **all 34 fuzz tests ran 5,000,000 times**, including all
+  11 `Math.t.sol` properties (`fuzz-runs.txt`). D-43 is done; `p1.8` may merge (branch rule).
+- The scheduled nightly 37280242427 had already started a full run on the same commit at 07:53,
+  twelve minutes before the dispatch, and also passed. The dispatch duplicated it, about 470 billed
+  minutes wasted. From now on the run list is checked before any manual dispatch.
+- Shard times (job wall minutes) against the D-43 estimate and the run before D-43 (C-040):
+
+  | Shard | Before | Estimate | Actual | % of 360 |
+  |---|---|---|---|---|
+  | `Pool.t.sol` | 268.5 | 164 | 153.3 | 43% |
+  | `AdminCredit.t.sol` | 100.0 | 56 | 62.4 | 17% |
+  | `RegisterAsset.t.sol` | 57.1 | 18 | 63.4 | 18% |
+  | `SignTerms.t.sol` | 65.2 | 17 | 59.2 | 16% |
+  | `Membership.t.sol` | 5.4 | 7 | 52.3 | 15% |
+  | `Spend.t.sol` | 56.5 | 12 | 50.2 | 14% |
+  | `Pause.t.sol` | 45.5 | 3 | 13.6 | 4% |
+  | `Math.t.sol` | 10.7 | 11 | 6.5 | 2% |
+  | the other 7 | under 6 each | | under 5 each | under 2% |
+
+  About 470 billed minutes in all, against about 620 before and the 294 estimated.
+- Why the estimate missed: it scaled each shard's time by its gas, but the state-diff cheatcodes
+  (`vm.startStateDiffRecording`, `vm.stopAndReturnStateDiff`) cost wall time without costing gas.
+  Revert-heavy shards therefore gained less than their gas fell, and `Membership.t.sol`, whose two
+  fuzz success paths now record a diff (one of them twice), got slower. Future estimates use
+  measured shard times, not gas. The goal that mattered holds: `Pool.t.sol` is at 43%, far from
+  D-42's 80% split line, and no shard is above 45%.
+Commit: docs: record D-43 Deep fuzz green; P1.8 CI green
+
 ---
 
 ## Open items
