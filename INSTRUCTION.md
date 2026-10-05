@@ -336,8 +336,9 @@ pause matrix (IT §2.3) and the participant matrix (IT §2.2) with its own funct
   re-entry targets) as one loop; Slither on `src/` clean or triaged in writing;
   `grep -rnE "forge-lint: disable|slither-disable" src/` returns nothing (any suppression still
   there fails the gate unless it has its own written decision that says it may survive: so far
-  D-30's two linter lines and D-40's `Deposited`, `Withdrawn` and two `incorrect-equality`
-  lines; D-34's `lockedCredit` line and D-40's `totalLent` pair must be gone; see D-18, O-029).
+  D-30's two linter lines, D-40's `Deposited`, `Withdrawn` and two `incorrect-equality` lines,
+  and D-46's `LoanOpened` and `CollateralLocked` lines (D-47); D-34's and D-40's `totalLent`
+  lines are gone since P1.8; see D-18, O-029).
 - Handover produced: ABI JSON, TypeScript client package (viem), custom-error decoder map, gas
   table per function.
 - Manual check: owner tags `interface-v1.0.0` and sends the handover to the backend. From here the

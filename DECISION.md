@@ -1539,6 +1539,84 @@ Gate (logs in `docs/gate-logs/D-43/`, Forge 1.8.3):
 Open items: closed O-037.
 Commit: test: prove "nothing else changed" with the state diff instead of re-reading state (D-43)
 
+### C-042 · P1.8 · requestLoan · 2026-10-05
+Type: feature
+Decisions: D-44, D-45, D-46 (owner approved), D-47 (owner decided: Option X); D-05, D-27, D-32,
+D-34, D-40 applied
+Session context: built on branch `p1.8` from `1e63f3d` (D-43, C-041) under the branch rule; D-43's
+Deep fuzz run 37281472022 on `1e63f3d` is in progress, and `p1.8` merges only once it is green.
+Correction to C-041: its commit line contains double quotes, which Windows PowerShell 5.1 split
+when passing them to git, so that commit failed; it went in as `1e63f3d` "test: prove nothing
+else changed with the state diff instead of re-reading state (D-43)".
+Files:
+- Changed: `contracts/src/IndicoLedger.sol`:
+  - `requestLoan(principal)`: `nonReentrant`, `whenNotPaused`; reverts in order (D-45)
+    `NotApprovedUser`, `TermsNotSigned`, `ZeroAmount`, `InsufficientAvailableCredit(collateral,
+    available)`, `InsufficientLiquidity(principal, poolUsdc)`; collateral
+    `LedgerMath.mulDivUp(principal, BPS, LTV_BPS)` (never a panic; above `uint128` it exceeds any
+    user's credit, D-27); `loanId = ++nextLoanId` (D-44); stores the loan (due `now + TERM`,
+    `SafeCast` for the three narrowed fields), `lockedCredit += collateral`, `totalLent +=
+    principal`, `poolUsdc -= principal`; emits `LoanOpened` and `CollateralLocked`, then
+    `usdc.safeTransfer` last (checks-effects-interactions).
+  - Suppressions deleted, now that the state is written: D-34's Slither line on `lockedCredit`
+    (O-028), D-40's Slither pair and D-18's lint line on `totalLent` (O-018), D-18's lint line on
+    `nextLoanId` (O-019). Added D-46's two `reentrancy-events` lines on the events.
+- Changed: `contracts/src/interfaces/IIndicoLedger.sol`: the `requestLoan` comment (order, ids,
+  events, USDC last).
+- New: `contracts/test/unit/RequestLoan.t.sol`: partition table, 32 tests: exact loan, events and
+  only those two, exact net writes (state diff, D-43); one wei locks 2; collateral exactly
+  available and one wei short; `maxBorrow` opens, one more reverts; above `uint128` and `uint256`
+  max named; exactly the pool cash and one more; three loans lock exactly the sum, ids 1 to 3;
+  many loans to the limit then one more wei; carried in from P1.5 and P1.6: locked credit can be
+  neither spent nor debited (`InsufficientAvailableCredit(1, 0)`), a debit or spend of exactly the
+  unlocked part succeeds; revoked user cannot borrow and revocation leaves the loan untouched;
+  every caller class, paused, blacklisted borrower, re-entry, five check-order tests; fuzz: opens
+  if and only if within credit and cash (exact writes on success, nothing on failure); collateral
+  always 1.25x rounded up within one wei.
+- Changed: `contracts/test/unit/ParticipantMatrix.t.sol`: `requestLoan` column (O-025), 10 of 13,
+  90 of 117 cells: only ApprovedAndSigned borrows; ApprovedNotSigned `TermsNotSigned`; the rest
+  `NotApprovedUser`.
+- Changed: `contracts/test/unit/Pause.t.sol`: pause matrix 13 x 3 with `requestLoan`.
+- Changed: `contracts/test/unit/Constructor.t.sol`: the no-USDC sweep gains `requestLoan` (24
+  calls).
+- Changed: `contracts/test/unit/Pool.t.sol`: three tests on real loans (O-033, P1.8 part): a loan
+  lowers `poolUsdc` by the principal and leaves the price alone; `withdraw` above the cash and
+  `withdrawAll` with everything lent revert `InsufficientLiquidity`.
+- Changed: `contracts/test/helpers/Fixture.sol` (`SLOT_LOANS = 20`) and `StateDiff.t.sol` (the
+  `loans` slots checked against the getter).
+- Changed: `contracts/.gas-snapshot`: 33 new lines (RequestLoan 30, Pool 3); 219 changed; none
+  removed. Over 10%: participant matrix 98,793,820 to 112,520,116 (+13.9%, 90 cells instead of
+  81) and pause matrix 44,982,177 to 51,083,135 (+13.6%, 39 cells instead of 36); all others at
+  most +4.8%.
+- Changed (local, not pushed): `docs/decisions.md` D-44 to D-47;
+  `docs/lint-probes/reentrancy-events/RESULT-requestLoan.md`, `docs/lint-probes/slither-reentrancy/`.
+Size: `IndicoLedger` runtime 8,771 B to 9,632 B (+861 B), margin 14,944 B.
+Slither, CI step 7 body: exit 0, no IR error, 4 findings (`low-level-calls`, `naming-convention`,
+`constable-states` now on `poolCredit` only); with D-34 and D-40's `totalLent` lines gone, no
+`uninitialized-state` finding remains.
+Gate (logs in `docs/gate-logs/P1.8/`, Forge 1.8.3; red phase `red.log`: 32 of 32 failing on the
+missing function):
+- G1 pass: 385 passed, 0 failed, 0 skipped, exit 0.
+- G2 pass: src lines 164/164, branches 54/54.
+- G3 pass, G4 pass (with D-46's two lines): exit 0 each.
+- G5 pass: seeds 1 and 2, 385 passed each.
+- G6 pass: three runs, 385 passed each.
+- G7 pass: `ci` profile, 385 passed.
+- G8 pass: `IndicoLedger` 9,632 B; snapshot check 349 passed.
+- G9 pass, `G9.log`: 18 of 18 caught (run on a scratch copy with the same source and tests).
+- G13 pass.
+- G10 pending: owner pushes `p1.8`.
+Mutations (G9), each restored byte-identical by SHA-256:
+- M1 approval removed; M2 terms removed; M3 zero accepted; M4 collateral rounds down; M5 equal lock
+  (the reading D-05 rejected); M6 exactly-available rejected; M7 available ignores locked credit;
+  M8 liquidity check removed; M9 liquidity before credit; M10 collateral not locked; M11 `totalLent`
+  not raised; M12 `poolUsdc` not lowered; M13 ids from 0; M14 due date a second short; M15 borrower
+  paid a wei less; M16 `nonReentrant` removed; M17 works while paused; M18 `CollateralLocked` loan
+  id 0. All caught.
+Open items: closed O-018, O-019, O-028; O-025 now 90 of 117; O-033 P1.8 part done (P1.9, P1.11
+remain).
+Commit: feat: requestLoan with 1.25x collateral rounded up, ids from 1, USDC sent last (P1.8)
+
 ---
 
 ## Open items
@@ -1562,17 +1640,17 @@ Commit: test: prove "nothing else changed" with the state diff instead of re-rea
 | O-015 | Delete the `uninitialized-state` suppression on `termsHash` (D-18) as part of the gate | engineer | Closed by C-017 |
 | O-016 | Delete the `uninitialized-state` suppression on `totalCredit` (D-18) as part of the gate | engineer | Closed by C-024 |
 | O-017 | Delete the `uninitialized-state` suppression on `totalShares` (D-18) as part of the gate | engineer | Closed by C-034 |
-| O-018 | Delete both suppressions on `totalLent` as part of the gate: the D-18 lint line and the D-40 Slither `uninitialized-state` start/end pair (read by the pool from P1.7) | engineer | P1.8 |
-| O-019 | Delete the `uninitialized-state` suppression on `nextLoanId` (D-18) as part of the gate | engineer | P1.8 |
+| O-018 | Delete both suppressions on `totalLent` as part of the gate: the D-18 lint line and the D-40 Slither `uninitialized-state` start/end pair (read by the pool from P1.7) | engineer | Closed by C-042 |
+| O-019 | Delete the `uninitialized-state` suppression on `nextLoanId` (D-18) as part of the gate | engineer | Closed by C-042 |
 | O-020 | Delete the `uninitialized-state` suppression on `poolCredit` (D-18) as part of the gate | engineer | P1.11 |
 | O-021 | Test for the `Fixture._default` clock fix (C-012): after `_default`, `block.timestamp` is back to its value before the call | engineer | P1.11 |
 | O-022 | Participant matrix (IT 2.2): the `pause` column, nine participants, moved from P1.1 because building them needs approvals and `signTerms` | engineer | Closed by C-019 |
 | O-023 | The Phase-0 skip step in `ci.yml` and `deep.yml` no longer runs now that `src/IndicoLedger.sol` exists; delete it | engineer | P1.13 |
 | O-024 | Backend admin screen (AD-04, AD-02): before approving a wallet as user or merchant, warn that its role becomes permanent (D-22); a mistaken approval can only be fixed by the person using a different wallet | backend | Level 4 |
-| O-025 | Participant matrix (IT 2.2): 9 of 13 action columns (`signTerms`, `setUserApproved`, `pause`, `registerAsset`, `adminIssueCredit`, `adminDebitCredit`, `spend`, `deposit`, `withdraw`), 81 of 117 cells. Each later portion adds its own column at its gate; all 13 columns, 117 cells, by P1.13 | engineer | P1.13 |
+| O-025 | Participant matrix (IT 2.2): 10 of 13 action columns (`signTerms`, `setUserApproved`, `pause`, `registerAsset`, `adminIssueCredit`, `adminDebitCredit`, `spend`, `deposit`, `withdraw`, `requestLoan`), 90 of 117 cells. Each later portion adds its own column at its gate; all 13 columns, 117 cells, by P1.13 | engineer | P1.13 |
 | O-026 | On any Forge upgrade (D-14), re-run the D-30 probe (`docs/lint-probes/missing-events-access-control`, `forge build --deny warnings`); if the mapping rows are no longer flagged, delete every `missing-events-access-control` suppression in the same commit as the upgrade. Same for D-40's `reentrancy-events` probe (`docs/lint-probes/reentrancy-events/`): if `Withdrawn` or `Deposited` no longer fires, delete that line. On a Slither upgrade, the D-40 `incorrect-equality` probe likewise | engineer | next Forge upgrade |
 | O-027 | `_mint` computes `room = CREDIT_CAP - credit[account]`, which underflows (panic) if the account already holds more than the cap. Only a merchant can (via `spend`, D-27), and P1.4 mints only to users, so it is unreachable now. P1.5 decides whether `adminIssueCredit` may credit a merchant (O-011); if it can, P1.5 writes the failing test first (mint to a merchant above the cap must revert `CreditCapExceeded(amount, 0)`, never panic) and fixes `_mint` | engineer | Closed by D-33 (C-026) |
-| O-028 | Delete the `slither-disable-next-line uninitialized-state` above `lockedCredit` (D-34) as part of the gate; it covers every read site (`adminDebitCredit`, and `spend` in P1.6) | engineer | P1.8 |
+| O-028 | Delete the `slither-disable-next-line uninitialized-state` above `lockedCredit` (D-34) as part of the gate; it covers every read site (`adminDebitCredit`, and `spend` in P1.6) | engineer | Closed by C-042 |
 | O-029 | `src/lib/Math.sol` carries `slither-disable-next-line unused-return` (C-006 triage). The P1.13 grep now covers Slither, so it fails close-out unless it gets its own decision allowing it to survive, or is removed | engineer, owner | before P1.13 |
 | O-030 | Slither has logged `ERROR:ContractSolcParsing: Impossible to generate IR for Math.mulDivDown (src/lib/Math.sol#27-34): 'NoneType' object has no attribute 'parameters'` since P1.3, locally and on CI (run 37108382319); P1.1 and P1.2 runs did not. Detectors still run on everything else and the exit code ignores it, so CI stays green, but `mulDivDown` is not being analysed. Find the trigger and fix or triage in writing | engineer | Closed by C-030 |
 | O-031 | Backend (AD-04, AD-08, U-13): the admin merchant screen shows each merchant's on-chain terms signature (`termsSigned`, `signedTermsHash`); a user paying a merchant who has not signed gets a readable "merchant not ready" instead of `MerchantTermsNotSigned` (D-36, D-37) | backend | Level 4 |

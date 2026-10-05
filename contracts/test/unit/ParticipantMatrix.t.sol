@@ -6,9 +6,9 @@ import {IIndicoLedger} from "../../src/interfaces/IIndicoLedger.sol";
 import {ROLE_NONE, ROLE_USER, ROLE_MERCHANT} from "../../src/lib/Constants.sol";
 import {Actors} from "../helpers/Actors.sol";
 
-/// @notice Participant state x action, docs/input-testing.md 2.2. Columns so far: 9 of 13
+/// @notice Participant state x action, docs/input-testing.md 2.2. Columns so far: 10 of 13
 ///         (`signTerms`, `setUserApproved`, `pause`, `registerAsset`, `adminIssueCredit`,
-///         `adminDebitCredit`, `spend`, `deposit`, `withdraw`); each later portion adds its own
+///         `adminDebitCredit`, `spend`, `deposit`, `withdraw`, `requestLoan`); each later portion adds its own
 ///         at its gate until all 13 x 9 = 117 cells exist (O-025). `deposit(1e6)`: only Merchant
 ///         deposits, everyone else NotApprovedMerchant. `withdraw(1e6)`: Merchant and
 ///         MerchantRevoked deposit 1e6 first (the revoked one before its revocation) and both
@@ -41,14 +41,14 @@ contract ParticipantMatrixTest is Actors {
     uint8 internal constant NOT_MERCHANT = 6;
     uint8 internal constant NO_SHARES = 7;
 
-    uint256 internal constant COLUMNS = 9;
+    uint256 internal constant COLUMNS = 10;
     uint256 internal constant ADMIN_CREDIT = 1e6;
     uint256 internal constant REGISTER_VALUE = 1_000e6;
 
     function _expected(uint256 p, uint256 action) internal pure returns (uint8) {
         // Rows in Participant order; columns signTerms, setUserApproved, pause, registerAsset,
-        // adminIssueCredit, adminDebitCredit, spend, deposit, withdraw.
-        uint8[9][9] memory t = [
+        // adminIssueCredit, adminDebitCredit, spend, deposit, withdraw, requestLoan.
+        uint8[10][9] memory t = [
             [
                 OK,
                 NOT_ADMIN,
@@ -58,7 +58,8 @@ contract ParticipantMatrixTest is Actors {
                 NOT_ADMIN,
                 NOT_USER,
                 NOT_MERCHANT,
-                NO_SHARES
+                NO_SHARES,
+                NOT_USER
             ],
             [
                 ALREADY_SIGNED,
@@ -69,7 +70,8 @@ contract ParticipantMatrixTest is Actors {
                 NOT_ADMIN,
                 NOT_USER,
                 NOT_MERCHANT,
-                NO_SHARES
+                NO_SHARES,
+                NOT_USER
             ],
             [
                 OK,
@@ -80,7 +82,8 @@ contract ParticipantMatrixTest is Actors {
                 NOT_ADMIN,
                 NOT_SIGNED,
                 NOT_MERCHANT,
-                NO_SHARES
+                NO_SHARES,
+                NOT_SIGNED
             ],
             [
                 ALREADY_SIGNED,
@@ -91,28 +94,7 @@ contract ParticipantMatrixTest is Actors {
                 NOT_ADMIN,
                 OK,
                 NOT_MERCHANT,
-                NO_SHARES
-            ],
-            [
-                ALREADY_SIGNED,
-                NOT_ADMIN,
-                NOT_GUARDIAN,
-                NOT_USER,
-                NOT_ADMIN,
-                NOT_ADMIN,
-                NOT_USER,
-                NOT_MERCHANT,
-                NO_SHARES
-            ],
-            [
-                ALREADY_SIGNED,
-                NOT_ADMIN,
-                NOT_GUARDIAN,
-                NOT_USER,
-                NOT_ADMIN,
-                NOT_ADMIN,
-                NOT_USER,
-                OK,
+                NO_SHARES,
                 OK
             ],
             [
@@ -124,10 +106,46 @@ contract ParticipantMatrixTest is Actors {
                 NOT_ADMIN,
                 NOT_USER,
                 NOT_MERCHANT,
-                OK
+                NO_SHARES,
+                NOT_USER
             ],
-            [OK, OK, NOT_GUARDIAN, NOT_USER, OK, OK, NOT_USER, NOT_MERCHANT, NO_SHARES],
-            [OK, NOT_ADMIN, OK, NOT_USER, NOT_ADMIN, NOT_ADMIN, NOT_USER, NOT_MERCHANT, NO_SHARES]
+            [
+                ALREADY_SIGNED,
+                NOT_ADMIN,
+                NOT_GUARDIAN,
+                NOT_USER,
+                NOT_ADMIN,
+                NOT_ADMIN,
+                NOT_USER,
+                OK,
+                OK,
+                NOT_USER
+            ],
+            [
+                ALREADY_SIGNED,
+                NOT_ADMIN,
+                NOT_GUARDIAN,
+                NOT_USER,
+                NOT_ADMIN,
+                NOT_ADMIN,
+                NOT_USER,
+                NOT_MERCHANT,
+                OK,
+                NOT_USER
+            ],
+            [OK, OK, NOT_GUARDIAN, NOT_USER, OK, OK, NOT_USER, NOT_MERCHANT, NO_SHARES, NOT_USER],
+            [
+                OK,
+                NOT_ADMIN,
+                OK,
+                NOT_USER,
+                NOT_ADMIN,
+                NOT_ADMIN,
+                NOT_USER,
+                NOT_MERCHANT,
+                NO_SHARES,
+                NOT_USER
+            ]
         ];
         return t[p][action];
     }
@@ -143,6 +161,10 @@ contract ParticipantMatrixTest is Actors {
         if (c[1] == 5) _mintCredit(bob, 2 * ADMIN_CREDIT); // something to debit
         if (c[1] == 6 && ledger.participantRole(who) == ROLE_USER) _mintCredit(who, ADMIN_CREDIT);
         if (c[1] == 8 && Participant(c[0]) == Participant.Merchant) _deposit(who, ADMIN_CREDIT);
+        if (c[1] == 9) {
+            _fundPool(ADMIN_CREDIT);
+            if (ledger.participantRole(who) == ROLE_USER) _mintCredit(who, 2 * ADMIN_CREDIT);
+        }
         if (c[1] == 8 && Participant(c[0]) == Participant.MerchantRevoked) {
             vm.prank(admin);
             ledger.setMerchantApproved(who, true);
@@ -188,7 +210,8 @@ contract ParticipantMatrixTest is Actors {
         else if (c[1] == 5) ledger.adminDebitCredit(bob, ADMIN_CREDIT, "matrix");
         else if (c[1] == 6) ledger.spend(merchantA, ADMIN_CREDIT);
         else if (c[1] == 7) ledger.deposit(ADMIN_CREDIT);
-        else ledger.withdraw(ADMIN_CREDIT);
+        else if (c[1] == 8) ledger.withdraw(ADMIN_CREDIT);
+        else ledger.requestLoan(ADMIN_CREDIT);
 
         if (e != OK) return _assertUnchanged(s);
 
@@ -215,10 +238,15 @@ contract ParticipantMatrixTest is Actors {
             assertEq(ledger.shares(who), ADMIN_CREDIT * 1e6, "shares");
             assertEq(ledger.poolUsdc(), ADMIN_CREDIT, "poolUsdc");
             assertEq(usdc.balanceOf(who), FUND - ADMIN_CREDIT, "paid in");
-        } else {
+        } else if (c[1] == 8) {
             assertEq(ledger.shares(who), 0, "shares");
             assertEq(ledger.poolUsdc(), 0, "poolUsdc");
             assertEq(usdc.balanceOf(who), FUND, "paid out");
+        } else {
+            assertEq(ledger.lockedCredit(who), ADMIN_CREDIT * 5 / 4, "locked");
+            assertEq(ledger.totalLent(), ADMIN_CREDIT, "lent");
+            assertEq(ledger.nextLoanId(), 1, "first id");
+            assertEq(usdc.balanceOf(who), FUND + ADMIN_CREDIT, "paid out");
         }
     }
 

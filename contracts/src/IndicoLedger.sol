@@ -3,6 +3,7 @@ pragma solidity 0.8.26;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {
     AccessControlDefaultAdminRules
@@ -20,7 +21,10 @@ import {
     CREDIT_CAP,
     MAX_ASSET_TYPE,
     VIRTUAL_SHARES,
-    VIRTUAL_ASSETS
+    VIRTUAL_ASSETS,
+    BPS,
+    LTV_BPS,
+    TERM
 } from "./lib/Constants.sol";
 
 /// @title IndicoLedger
@@ -61,8 +65,6 @@ contract IndicoLedger is AccessControlDefaultAdminRules, Pausable, ReentrancyGua
     mapping(address => uint8) public participantRole;
 
     mapping(address => uint256) public credit;
-    // Read before P1.8 first writes it (requestLoan), correctly 0 until then (D-34).
-    // slither-disable-next-line uninitialized-state
     mapping(address => uint256) public lockedCredit;
     uint256 public totalCredit;
     // forge-lint: disable-next-line(uninitialized-state)
@@ -72,15 +74,10 @@ contract IndicoLedger is AccessControlDefaultAdminRules, Pausable, ReentrancyGua
 
     mapping(address => uint256) public shares;
     uint256 public totalShares;
-    // Read by the pool from P1.7, first written by requestLoan in P1.8, 0 until then (D-40).
-    // slither-disable-start uninitialized-state
-    // forge-lint: disable-next-line(uninitialized-state)
     uint256 public totalLent;
-    // slither-disable-end uninitialized-state
     /// @dev The pool's own count of the USDC it holds, never `usdc.balanceOf` (D-38).
     uint256 public poolUsdc;
 
-    // forge-lint: disable-next-line(uninitialized-state)
     uint256 public nextLoanId;
     mapping(uint256 => Loan) public loans;
 
@@ -351,6 +348,54 @@ contract IndicoLedger is AccessControlDefaultAdminRules, Pausable, ReentrancyGua
         return LedgerMath.mulDivDown(
             shareAmount, poolUsdc + totalLent + VIRTUAL_ASSETS, totalShares + VIRTUAL_SHARES
         );
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // Loans, contract-spec 6.6
+    // ---------------------------------------------------------------------------------------
+
+    /// @notice Lock 1.25x `principal` of the caller's available credit and receive `principal`
+    ///         USDC from the pool at once. No approval step (L-07).
+    /// @dev Order (D-45): pause, approval, terms, zero, credit, liquidity. Collateral rounds up
+    ///      through `mulDivUp`, which never panics; above `uint128` it exceeds any user's credit
+    ///      (D-27), so the casts below cannot fail. Ids start at 1 (D-44). The due date is a loan
+    ///      deadline, the one use of `block.timestamp` in a condition later on (D-26).
+    function requestLoan(uint256 principal)
+        external
+        nonReentrant
+        whenNotPaused
+        returns (uint256 loanId)
+    {
+        if (!approvedUser[msg.sender]) revert IIndicoLedger.NotApprovedUser();
+        if (!termsSigned[msg.sender]) revert IIndicoLedger.TermsNotSigned();
+        if (principal == 0) revert IIndicoLedger.ZeroAmount();
+        uint256 collateral = LedgerMath.mulDivUp(principal, BPS, LTV_BPS);
+        uint256 avail = credit[msg.sender] - lockedCredit[msg.sender];
+        if (collateral > avail) {
+            revert IIndicoLedger.InsufficientAvailableCredit(collateral, avail);
+        }
+        uint256 cash = poolUsdc;
+        if (principal > cash) revert IIndicoLedger.InsufficientLiquidity(principal, cash);
+
+        loanId = ++nextLoanId;
+        uint64 dueDate = SafeCast.toUint64(block.timestamp + TERM);
+        loans[loanId] = Loan({
+            borrower: msg.sender,
+            dueDate: dueDate,
+            extensionCount: 0,
+            status: uint8(IIndicoLedger.LoanStatus.Active),
+            principal: SafeCast.toUint128(principal),
+            collateral: SafeCast.toUint128(collateral)
+        });
+        lockedCredit[msg.sender] += collateral;
+        totalLent += principal;
+        poolUsdc -= principal;
+        // Both emitted before the transfer; flagged anyway, like Withdrawn (D-40, D-46).
+        // forge-lint: disable-next-line(reentrancy-events)
+        emit IIndicoLedger.LoanOpened(loanId, msg.sender, principal, collateral, dueDate);
+        // forge-lint: disable-next-line(reentrancy-events)
+        emit IIndicoLedger.CollateralLocked(msg.sender, collateral, loanId);
+        usdc.safeTransfer(msg.sender, principal);
     }
 
     /// @dev The only way credit enters circulation. Refuses a mint that would push one account

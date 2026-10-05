@@ -55,6 +55,14 @@ contract StateDiffTest is Actors {
         assertEq(ledger.totalLent(), 1e6, "totalLent written");
         vm.store(l, _key(alice, SLOT_LOCKED_CREDIT), bytes32(uint256(9)));
         assertEq(ledger.lockedCredit(alice), 9, "lockedCredit");
+        bytes32 loan7 = keccak256(abi.encode(uint256(7), SLOT_LOANS));
+        vm.store(l, loan7, bytes32(uint256(uint160(alice)) | (uint256(123) << 160)));
+        vm.store(l, bytes32(uint256(loan7) + 1), bytes32(uint256(5) | (uint256(6) << 128)));
+        (address b, uint64 due,,, uint128 pr, uint128 col) = ledger.loans(7);
+        assertEq(b, alice, "loans.borrower");
+        assertEq(due, 123, "loans.dueDate");
+        assertEq(pr, 5, "loans.principal");
+        assertEq(col, 6, "loans.collateral");
         vm.store(l, bytes32(SLOT_POOL_CREDIT), bytes32(uint256(11)));
         assertEq(ledger.poolCredit(), 11, "poolCredit");
         vm.store(l, bytes32(SLOT_NEXT_LOAN_ID), bytes32(uint256(13)));

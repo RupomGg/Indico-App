@@ -920,4 +920,43 @@ contract PoolTest is Actors {
         assertLe(victimLoss, 1 + (before - afterPump) / 1e6, "victim lost more than the bound");
         _assertBooks();
     }
+
+    // ================================================================== on real loans (O-033, P1.8)
+
+    /// @dev A real loan lowers poolUsdc by the principal and leaves the share price alone.
+    function test_realLoan_lowersPoolUsdc_priceUnchanged() public {
+        _deposit(merchantA, DEP);
+        (uint256 a0, uint256 s0) = (_modelAssets(), _modelShares());
+        _mintCredit(alice, 750e6);
+        vm.prank(alice);
+        ledger.requestLoan(600e6);
+        assertEq(ledger.poolUsdc(), DEP - 600e6);
+        assertEq(ledger.totalLent(), 600e6);
+        assertEq(_modelAssets() * s0, a0 * _modelShares(), "a loan moved the price");
+        _assertBooks();
+    }
+
+    function test_realLoan_withdrawAboveCash_revertsInsufficientLiquidity() public {
+        _deposit(merchantA, DEP);
+        _mintCredit(alice, 750e6);
+        vm.prank(alice);
+        ledger.requestLoan(600e6);
+        _expectRevertUnchanged(
+            merchantA,
+            _withdrawCall(400e6 + 1),
+            abi.encodeWithSelector(IIndicoLedger.InsufficientLiquidity.selector, 400e6 + 1, 400e6)
+        );
+    }
+
+    function test_realLoan_everythingLent_withdrawAllRevertsNoCash() public {
+        _deposit(merchantA, DEP);
+        _mintCredit(alice, 1_250e6);
+        vm.prank(alice);
+        ledger.requestLoan(DEP);
+        _expectRevertUnchanged(
+            merchantA,
+            _withdrawAllCall(),
+            abi.encodeWithSelector(IIndicoLedger.InsufficientLiquidity.selector, DEP, 0)
+        );
+    }
 }

@@ -242,9 +242,11 @@ interface IIndicoLedger {
     // ---------------------------------------------------------------------------------------
 
     /// @notice Lock `collateralFor(principal)` credit and receive `principal` USDC at once.
-    /// @dev Approved user, terms signed, `principal > 0`,
-    ///      `collateralFor(principal) <= available(caller)`, `principal <= poolAvailable()`.
-    ///      Due date is `block.timestamp + TERM`. Emits `LoanOpened`.
+    /// @dev `whenNotPaused`, `nonReentrant`. Reverts, in order, `NotApprovedUser`,
+    ///      `TermsNotSigned`, `ZeroAmount`, `InsufficientAvailableCredit(collateral, available)`,
+    ///      `InsufficientLiquidity(principal, poolUsdc)`; `MathOverflow` for a principal near
+    ///      2^256 (D-45). Ids start at 1 (D-44). Due date is `block.timestamp + TERM`. Emits
+    ///      `LoanOpened` and `CollateralLocked`; the USDC moves last.
     /// @return loanId The id of the new loan.
     function requestLoan(uint256 principal) external returns (uint256 loanId);
 

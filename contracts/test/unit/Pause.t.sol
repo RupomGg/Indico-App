@@ -166,13 +166,14 @@ contract PauseTest is StateSnapshot, Matrix {
     /// | deposit             | succeeds      | EnforcedPause               |
     /// | withdraw            | succeeds      | EnforcedPause               |
     /// | withdrawAll         | succeeds      | EnforcedPause               |
+    /// | requestLoan         | succeeds      | EnforcedPause               |
     /// Rows from registerAsset on onboard alice (terms set, approved, signed) before pausing; the
     /// debit and spend rows issue her credit first. The spend and pool rows approve and sign
     /// merchantA, and the two withdraw rows have merchantA deposit 2e6 first, so each paused cell
     /// fails for the pause alone. The pool rows follow contract-spec 6: every 6.5 function is
     /// `whenNotPaused`, and none is stated otherwise (D-39).
     function test_pauseMatrix_everyCell() public {
-        _crossProduct(_dims(12, 3), _pauseCell);
+        _crossProduct(_dims(13, 3), _pauseCell);
     }
 
     function _pauseCell(uint256[] memory c) internal {
@@ -204,12 +205,13 @@ contract PauseTest is StateSnapshot, Matrix {
             ledger.unpause();
         }
 
-        uint8[2][12] memory expected = [
+        uint8[2][13] memory expected = [
             [uint8(0), 1],
             [uint8(2), 0],
             [uint8(0), 0],
             [uint8(0), 0],
             [uint8(0), 0],
+            [uint8(0), 1],
             [uint8(0), 1],
             [uint8(0), 1],
             [uint8(0), 1],
@@ -281,10 +283,26 @@ contract PauseTest is StateSnapshot, Matrix {
             vm.prank(merchantA);
             ledger.withdraw(1e6);
             if (e == 0) _poolMoved(s, 1e6, -1e12);
-        } else {
+        } else if (c[0] == 11) {
             vm.prank(merchantA);
             ledger.withdrawAll();
             if (e == 0) _poolMoved(s, 2e6, -2e12);
+        } else {
+            vm.prank(alice);
+            ledger.requestLoan(1e6);
+            if (e == 0) {
+                (address b,,,, uint128 p, uint128 k) = ledger.loans(1);
+                assertEq(b, alice);
+                assertEq(p, 1e6);
+                assertEq(k, 1.25e6);
+                s.usdc[2] += 1e6; // alice is actors[2]
+                s.lockedCredit[2] += 1.25e6;
+                s.ledgerUsdc -= 1e6;
+                s.poolUsdc -= 1e6;
+                s.totalLent += 1e6;
+                s.nextLoanId = 1;
+                s.loansHash = _snapshot().loansHash; // loan 1's fields asserted just above
+            }
         }
         _assertUnchanged(s);
     }

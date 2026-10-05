@@ -33,6 +33,7 @@ abstract contract FixtureBase is Test {
     uint256 internal constant SLOT_TOTAL_LENT = 17;
     uint256 internal constant SLOT_POOL_USDC = 18;
     uint256 internal constant SLOT_NEXT_LOAN_ID = 19;
+    uint256 internal constant SLOT_LOANS = 20;
     uint256 internal constant SLOT_USDC_BALANCES = 0;
 
     MockUSDC internal usdc;
