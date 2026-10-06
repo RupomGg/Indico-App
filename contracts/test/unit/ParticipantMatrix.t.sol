@@ -3,12 +3,12 @@ pragma solidity 0.8.26;
 
 import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
 import {IIndicoLedger} from "../../src/interfaces/IIndicoLedger.sol";
-import {ROLE_NONE, ROLE_USER, ROLE_MERCHANT} from "../../src/lib/Constants.sol";
+import {ROLE_NONE, ROLE_USER, ROLE_MERCHANT, TERM} from "../../src/lib/Constants.sol";
 import {Actors} from "../helpers/Actors.sol";
 
-/// @notice Participant state x action, docs/input-testing.md 2.2. Columns so far: 11 of 13
+/// @notice Participant state x action, docs/input-testing.md 2.2. Columns so far: 12 of 13
 ///         (`signTerms`, `setUserApproved`, `pause`, `registerAsset`, `adminIssueCredit`,
-///         `adminDebitCredit`, `spend`, `deposit`, `withdraw`, `requestLoan`, `repay`); each later portion adds its own
+///         `adminDebitCredit`, `spend`, `deposit`, `withdraw`, `requestLoan`, `repay`, `extend`); each later portion adds its own
 ///         at its gate until all 13 x 9 = 117 cells exist (O-025). `deposit(1e6)`: only Merchant
 ///         deposits, everyone else NotApprovedMerchant. `withdraw(1e6)`: Merchant and
 ///         MerchantRevoked deposit 1e6 first (the revoked one before its revocation) and both
@@ -19,7 +19,9 @@ import {Actors} from "../helpers/Actors.sol";
 ///         alone: only ApprovedAndSigned pays, ApprovedNotSigned gets TermsNotSigned, the rest
 ///         NotApprovedUser. `repay(1)`: ApprovedAndSigned borrows loan 1 itself and repays it;
 ///         ApprovedThenRevoked borrows before its revocation and still repays (nothing trapped);
-///         for everyone else alice holds loan 1, so they get NotBorrower.
+///         for everyone else alice holds loan 1, so they get NotBorrower. `extend(1)`: the same
+///         loans, called at the due date: ApprovedAndSigned extends; ApprovedThenRevoked gets
+///         NotApprovedUser (D-50); everyone else NotBorrower.
 ///
 /// | Participant           | signTerms(TERMS) | setUserApproved(t, true) | pause()       | registerAsset   |
 /// |-----------------------|------------------|--------------------------|---------------|-----------------|
@@ -44,14 +46,14 @@ contract ParticipantMatrixTest is Actors {
     uint8 internal constant NO_SHARES = 7;
     uint8 internal constant NOT_BORROWER = 8;
 
-    uint256 internal constant COLUMNS = 11;
+    uint256 internal constant COLUMNS = 12;
     uint256 internal constant ADMIN_CREDIT = 1e6;
     uint256 internal constant REGISTER_VALUE = 1_000e6;
 
     function _expected(uint256 p, uint256 action) internal pure returns (uint8) {
         // Rows in Participant order; columns signTerms, setUserApproved, pause, registerAsset,
-        // adminIssueCredit, adminDebitCredit, spend, deposit, withdraw, requestLoan, repay.
-        uint8[11][9] memory t = [
+        // adminIssueCredit, adminDebitCredit, spend, deposit, withdraw, requestLoan, repay, extend.
+        uint8[12][9] memory t = [
             [
                 OK,
                 NOT_ADMIN,
@@ -63,6 +65,7 @@ contract ParticipantMatrixTest is Actors {
                 NOT_MERCHANT,
                 NO_SHARES,
                 NOT_USER,
+                NOT_BORROWER,
                 NOT_BORROWER
             ],
             [
@@ -76,6 +79,7 @@ contract ParticipantMatrixTest is Actors {
                 NOT_MERCHANT,
                 NO_SHARES,
                 NOT_USER,
+                NOT_BORROWER,
                 NOT_BORROWER
             ],
             [
@@ -89,6 +93,7 @@ contract ParticipantMatrixTest is Actors {
                 NOT_MERCHANT,
                 NO_SHARES,
                 NOT_SIGNED,
+                NOT_BORROWER,
                 NOT_BORROWER
             ],
             [
@@ -101,6 +106,7 @@ contract ParticipantMatrixTest is Actors {
                 OK,
                 NOT_MERCHANT,
                 NO_SHARES,
+                OK,
                 OK,
                 OK
             ],
@@ -115,7 +121,8 @@ contract ParticipantMatrixTest is Actors {
                 NOT_MERCHANT,
                 NO_SHARES,
                 NOT_USER,
-                OK
+                OK,
+                NOT_USER
             ],
             [
                 ALREADY_SIGNED,
@@ -128,6 +135,7 @@ contract ParticipantMatrixTest is Actors {
                 OK,
                 OK,
                 NOT_USER,
+                NOT_BORROWER,
                 NOT_BORROWER
             ],
             [
@@ -141,6 +149,7 @@ contract ParticipantMatrixTest is Actors {
                 NOT_MERCHANT,
                 OK,
                 NOT_USER,
+                NOT_BORROWER,
                 NOT_BORROWER
             ],
             [
@@ -154,6 +163,7 @@ contract ParticipantMatrixTest is Actors {
                 NOT_MERCHANT,
                 NO_SHARES,
                 NOT_USER,
+                NOT_BORROWER,
                 NOT_BORROWER
             ],
             [
@@ -167,6 +177,7 @@ contract ParticipantMatrixTest is Actors {
                 NOT_MERCHANT,
                 NO_SHARES,
                 NOT_USER,
+                NOT_BORROWER,
                 NOT_BORROWER
             ]
         ];
@@ -188,7 +199,7 @@ contract ParticipantMatrixTest is Actors {
             _fundPool(ADMIN_CREDIT);
             if (ledger.participantRole(who) == ROLE_USER) _mintCredit(who, 2 * ADMIN_CREDIT);
         }
-        if (c[1] == 10) {
+        if (c[1] == 10 || c[1] == 11) {
             Participant pp = Participant(c[0]);
             if (pp == Participant.ApprovedAndSigned || pp == Participant.ApprovedThenRevoked) {
                 if (pp == Participant.ApprovedThenRevoked) {
@@ -200,6 +211,10 @@ contract ParticipantMatrixTest is Actors {
             } else {
                 _openLoan(alice, ADMIN_CREDIT);
             }
+        }
+        if (c[1] == 11) {
+            (, uint64 due,,,,) = ledger.loans(1);
+            vm.warp(due);
         }
         if (c[1] == 8 && Participant(c[0]) == Participant.MerchantRevoked) {
             vm.prank(admin);
@@ -249,7 +264,8 @@ contract ParticipantMatrixTest is Actors {
         else if (c[1] == 7) ledger.deposit(ADMIN_CREDIT);
         else if (c[1] == 8) ledger.withdraw(ADMIN_CREDIT);
         else if (c[1] == 9) ledger.requestLoan(ADMIN_CREDIT);
-        else ledger.repay(1);
+        else if (c[1] == 10) ledger.repay(1);
+        else ledger.extend(1);
 
         if (e != OK) return _assertUnchanged(s);
 
@@ -285,6 +301,11 @@ contract ParticipantMatrixTest is Actors {
             assertEq(ledger.totalLent(), ADMIN_CREDIT, "lent");
             assertEq(ledger.nextLoanId(), 1, "first id");
             assertEq(usdc.balanceOf(who), FUND + ADMIN_CREDIT, "paid out");
+        } else if (c[1] == 11) {
+            (, uint64 due, uint16 n,,,) = ledger.loans(1);
+            assertEq(due, block.timestamp + TERM, "extended from the due date");
+            assertEq(n, 1, "count");
+            assertEq(ledger.lockedCredit(who), ADMIN_CREDIT * 5 / 4, "still locked");
         } else {
             (,,, uint8 st,,) = ledger.loans(1);
             assertEq(st, uint8(IIndicoLedger.LoanStatus.Repaid), "repaid");

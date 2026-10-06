@@ -1775,6 +1775,107 @@ Files: none changed in this repository's content.
 - G10 for `6cf395c` (P1.9): CI run 37403284404 green.
 Commit: docs: record the force-push incident and the restore of main
 
+### C-047 · P1.10 · extend · 2026-10-06
+Type: feature
+Decisions: D-49, D-50, D-51, D-52 (owner decided), D-53 (proposed, for approval at this gate);
+D-13, D-26 applied
+Session context: built on branch `p1.10` from `005e62f` under the branch rule; P1.9's Deep fuzz
+run 37414986410 on `005e62f` (dispatched by the owner; the 02:00 UTC nightly did not start) is in
+progress, and `p1.10` merges only once it is green.
+Files:
+- Changed: `contracts/src/IndicoLedger.sol`: `extend(loanId)`, `whenNotPaused`, no USDC so no
+  `nonReentrant`; reverts in order (D-49) `LoanNotFound`, `LoanNotActive`, `NotBorrower`,
+  `NotApprovedUser` (a revoked borrower cannot extend, D-50), `ExtensionWindowNotOpen(dueDate -
+  EXTENSION_WINDOW)`, `ExtensionWindowClosed`; no terms check, any signed version is enough
+  (D-52). New due date `dueDate + TERM` (from the due date, never from now) and count, both
+  computed in `uint256` and narrowed with `SafeCast` (D-51); writes loan slot 0 only; emits
+  `LoanExtended(loanId, newDueDate, countAfter)`. Two `block-timestamp` lint suppressions on the
+  window comparisons (D-53, proposed); `EXTENSION_WINDOW` imported.
+- Changed: `contracts/src/interfaces/IIndicoLedger.sol`: the `extend` comment (order, D-50, D-52,
+  event).
+- New: `contracts/test/unit/Extend.t.sol`: partition table, 31 tests: at the window's opening
+  (due + TERM, never now + TERM) with the exact event, only that event, exactly one net write
+  (loan slot 0); at the due date; one second before the window, one after the due date, straight
+  after opening; twice in one block; a loop of 100 in one block, every later call refused with
+  the same error; 40 extensions warping into each window, count and due date exact; repay after
+  extending; ids 0, one past the end, `uint256` max; a repaid loan; six non-borrowers; D-50:
+  revoked cannot extend and can repay, revoke then re-approve extends again, revoked and past due
+  still repays; D-52: borrower on an old terms version and on the current one; paused; D-51:
+  count at 65,535 and a due date near 2^64 revert `SafeCastOverflowedUintDowncast`; four
+  check-order tests, including `NotBorrower` before `NotApprovedUser` and `NotApprovedUser`
+  before both window errors; fuzz: 1 to 10 extensions at fuzzed moments in each window (exact
+  due, count and writes), any moment outside the window (named error, nothing changed), any other
+  caller. A defaulted loan needs `liquidate`: in the P1.11 loan matrix.
+- Changed: `contracts/test/unit/ParticipantMatrix.t.sol`: `extend` column (O-025), 12 of 13, 108
+  of 117 cells: ApprovedAndSigned extends; ApprovedThenRevoked `NotApprovedUser` (D-50);
+  everyone else `NotBorrower`.
+- Changed: `contracts/test/unit/Pause.t.sol`: pause matrix 15 x 3 with `extend`.
+- Changed: `contracts/test/unit/Constructor.t.sol`: the no-USDC sweep gains `extend` (26 calls).
+- Changed: `INSTRUCTION.md` P1.13: D-53's two lines join the allowed list.
+- Changed: `contracts/.gas-snapshot`: 28 new `ExtendTest` lines; 240 changed; none removed. Over
+  10%: participant matrix 127,907,887 to 143,928,686 (+12.5%, 108 cells instead of 99) and pause
+  matrix 57,610,567 to 64,091,657 (+11.2%, 45 cells instead of 42); all others at most +4.4%.
+- Changed (local, not pushed): `docs/decisions.md` D-49 to D-53.
+Size: `IndicoLedger` runtime 10,304 B to 10,743 B (+439 B), margin 13,833 B.
+Slither, CI step 7 body on a scratch copy: exit 0, no IR error, 5 findings: P1.9's four plus
+`timestamp` (low) on the same two comparisons D-53 covers.
+Deep cost: the three new fuzz tests took 38 s for 50,000 runs each locally, so about 1 to 2 hours
+for the new shard at 5,000,000 runs, within D-42's limits.
+Gate (logs in `docs/gate-logs/P1.10/`, Forge 1.8.3; red phase `red.log`: 30 of 31 failing on the
+missing function; the one passing, a revoked borrower repaying after the due date, never calls
+`extend`):
+- G1 pass: 445 passed, 0 failed, 0 skipped, exit 0.
+- G2 pass: src lines 199/199, branches 64/64.
+- G3 pass, G4 pass (with D-53's two lines): exit 0 each.
+- G5 pass: seeds 1 and 2, 445 passed each.
+- G6 pass: three runs, 445 passed each.
+- G7 pass: `ci` profile, 445 passed.
+- G8 pass: `IndicoLedger` 10,743 B; snapshot check 403 passed.
+- G9 pass, `G9.log`: 16 of 16 caught (scratch copy, then byte-identical to the real source). The
+  first attempt never ran: the mutation list, written by a script, had its newline escapes turned
+  into real line breaks and failed to parse (INSTRUCTION 2, escape sequences); the source was
+  untouched. Rewritten with the lines joined in code and stored as JSON.
+- G13 pass.
+- G10 pending: owner pushes `p1.10`.
+Mutations (G9): M1 `LoanNotFound` removed; M2 status check removed; M3 borrower check removed; M4
+approval check removed (D-50); M5 approval before borrower; M6 window opening `<` to `<=`; M7 due
+date `>` to `>=`; M8 opening check removed; M9 closing check removed; M10 extended from now; M11
+count not incremented; M12 count by plain `uint16` add (panic, D-51); M13 due date not written;
+M14 event carries the old due date; M15 works while paused; M16 window opens a second early. All
+caught.
+Open items: O-025 now 108 of 117; O-038 also covers `extend` (a pause spanning a loan's whole
+window makes extending impossible).
+Commit: feat: extend by 90 days from the due date inside its window, approved borrowers only (P1.10)
+
+### C-048 · P1.9 done · Deep fuzz green on P1.9 · 2026-10-06
+Type: chore
+Files: none changed.
+- The scheduled 02:00 UTC Deep fuzz did not start on 2026-10-06 (no run in the list at 03:50 UTC).
+  The owner dispatched it by hand after the run list showed nothing for this code.
+- Deep fuzz pass: run 37414986410 on `005e62f` (P1.9's `6cf395c` plus C-046, docs only): `check`
+  green, **17 of 17 shards green**. Each shard ends with the D-42 guard, which fails the shard if
+  any fuzz test ran under 5,000,000 times, so every fuzz test, `Repay.t.sol`'s three included,
+  ran 5,000,000 times. P1.9 is done (INSTRUCTION 1.2); `p1.10` may merge (branch rule). The job
+  logs were not downloaded: the logs endpoint needs a signed-in client even on a public
+  repository, and the CLI is signed out since C-046.
+- Shard times (job wall minutes), against C-044:
+
+  | Shard | C-044 | Actual |
+  |---|---|---|
+  | `Repay.t.sol` | new | 69.8 |
+  | `Pool.t.sol` | 84.1 | 61.4 |
+  | `AdminCredit.t.sol` | 33.3 | 43.5 |
+  | `Membership.t.sol` | 29.4 | 37.6 |
+  | `RequestLoan.t.sol` | 21.9 | 36.0 |
+  | `RegisterAsset.t.sol` | 17.8 | 34.6 |
+  | `Spend.t.sol` | 30.3 | 30.4 |
+  | `SignTerms.t.sol` | 30.1 | 30.1 |
+  | the other 9 | under 6 each | under 7 each |
+
+  The longest shard is 70 minutes, 19% of its 360-minute limit. Times vary by up to about 2x
+  between runs of the same code on the shared runners; estimates keep a margin for that.
+Commit: docs: record P1.9 Deep fuzz green
+
 ---
 
 ## Open items
@@ -1805,7 +1906,7 @@ Commit: docs: record the force-push incident and the restore of main
 | O-022 | Participant matrix (IT 2.2): the `pause` column, nine participants, moved from P1.1 because building them needs approvals and `signTerms` | engineer | Closed by C-019 |
 | O-023 | The Phase-0 skip step in `ci.yml` and `deep.yml` no longer runs now that `src/IndicoLedger.sol` exists; delete it | engineer | P1.13 |
 | O-024 | Backend admin screen (AD-04, AD-02): before approving a wallet as user or merchant, warn that its role becomes permanent (D-22); a mistaken approval can only be fixed by the person using a different wallet | backend | Level 4 |
-| O-025 | Participant matrix (IT 2.2): 11 of 13 action columns (`signTerms`, `setUserApproved`, `pause`, `registerAsset`, `adminIssueCredit`, `adminDebitCredit`, `spend`, `deposit`, `withdraw`, `requestLoan`, `repay`), 99 of 117 cells. Each later portion adds its own column at its gate; all 13 columns, 117 cells, by P1.13 | engineer | P1.13 |
+| O-025 | Participant matrix (IT 2.2): 12 of 13 action columns (`signTerms`, `setUserApproved`, `pause`, `registerAsset`, `adminIssueCredit`, `adminDebitCredit`, `spend`, `deposit`, `withdraw`, `requestLoan`, `repay`, `extend`), 108 of 117 cells. Each later portion adds its own column at its gate; all 13 columns, 117 cells, by P1.13 | engineer | P1.13 |
 | O-026 | On any Forge upgrade (D-14), re-run the D-30 probe (`docs/lint-probes/missing-events-access-control`, `forge build --deny warnings`); if the mapping rows are no longer flagged, delete every `missing-events-access-control` suppression in the same commit as the upgrade. Same for D-40's `reentrancy-events` probe (`docs/lint-probes/reentrancy-events/`): if `Withdrawn` or `Deposited` no longer fires, delete that line. On a Slither upgrade, the D-40 `incorrect-equality` probe likewise | engineer | next Forge upgrade |
 | O-027 | `_mint` computes `room = CREDIT_CAP - credit[account]`, which underflows (panic) if the account already holds more than the cap. Only a merchant can (via `spend`, D-27), and P1.4 mints only to users, so it is unreachable now. P1.5 decides whether `adminIssueCredit` may credit a merchant (O-011); if it can, P1.5 writes the failing test first (mint to a merchant above the cap must revert `CreditCapExceeded(amount, 0)`, never panic) and fixes `_mint` | engineer | Closed by D-33 (C-026) |
 | O-028 | Delete the `slither-disable-next-line uninitialized-state` above `lockedCredit` (D-34) as part of the gate; it covers every read site (`adminDebitCredit`, and `spend` in P1.6) | engineer | Closed by C-042 |
@@ -1818,4 +1919,4 @@ Commit: docs: record the force-push incident and the restore of main
 | O-035 | Merchant guide and terms: while the pool is paused no merchant can deposit or withdraw, for as long as the pause lasts, and nothing can rescue the funds (D-41, CS §10); with the client's written pause policy (decisions, open non-blocking 2) | owner, client | before the first merchant deposits |
 | O-036 | The 11 `Math.t.sol` properties pinned by `forge-config: default.fuzz.runs = 100000` also run 100,000 times under `deep` (run 37169050467), so `LedgerMath` has never had 5,000,000 runs. Fix: a `deep` inline line per test, or move the pin; reopens P0.1 | engineer, owner | Closed by C-040 |
 | O-037 | Build D-43 (state-diff assertions instead of the full re-read snapshot) as its own change with the full gate: every G9 mutation from P1.1 to P1.7 still caught plus one new unexpected-slot mutation, gas per run before and after on the three heaviest fuzz tests, new Deep estimate per shard. After P1.7 merges, before P1.8 | engineer | Closed by C-041 |
-| O-038 | `repay` is `whenNotPaused` (contract-spec 6), so a pause that lasts past a loan's due date stops the borrower repaying, and at the unpause anyone may liquidate it. Owner decides before P1.11: accept and say so in the terms and pause policy, exempt `repay` from the pause, or handle it in `liquidate` (D-48) | owner | P1.11 |
+| O-038 | `repay` is `whenNotPaused` (contract-spec 6), so a pause that lasts past a loan's due date stops the borrower repaying, and at the unpause anyone may liquidate it. The same pause can span a loan's whole extension window, so `extend` is impossible too (C-047). Owner decides before P1.11: accept and say so in the terms and pause policy, exempt `repay` from the pause, or handle it in `liquidate` (D-48) | owner | P1.11 |

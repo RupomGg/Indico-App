@@ -262,9 +262,11 @@ interface IIndicoLedger {
     function repay(uint256 loanId) external;
 
     /// @notice Push the due date out by `TERM`, from the existing due date. Unlimited, free.
-    /// @dev Borrower only, Active, `dueDate - EXTENSION_WINDOW <= block.timestamp <= dueDate`.
-    ///      Reverts `ExtensionWindowNotOpen(opensAt)` before the window and
-    ///      `ExtensionWindowClosed` after the due date. Emits `LoanExtended`.
+    /// @dev `whenNotPaused`. Reverts, in order (D-49), `LoanNotFound`, `LoanNotActive`,
+    ///      `NotBorrower`, `NotApprovedUser` (a revoked borrower cannot extend, D-50; repaying
+    ///      still works), `ExtensionWindowNotOpen(dueDate - EXTENSION_WINDOW)` before the window,
+    ///      `ExtensionWindowClosed` after the due date. Any signed terms version is enough
+    ///      (D-52). Emits `LoanExtended(loanId, newDueDate, countAfter)`.
     function extend(uint256 loanId) external;
 
     /// @notice Default an Active loan past its due date. Permissionless. No USDC moves.

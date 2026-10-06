@@ -24,7 +24,8 @@ import {
     VIRTUAL_ASSETS,
     BPS,
     LTV_BPS,
-    TERM
+    TERM,
+    EXTENSION_WINDOW
 } from "./lib/Constants.sol";
 
 /// @title IndicoLedger
@@ -422,6 +423,32 @@ contract IndicoLedger is AccessControlDefaultAdminRules, Pausable, ReentrancyGua
         uint256 received = usdc.balanceOf(address(this)) - balanceBefore;
         // Less than the principal is a partial repayment (R-02, D-48); the revert undoes it all.
         if (received < principal) revert IIndicoLedger.RepaymentShort(principal, received);
+    }
+
+    /// @notice Push a loan's due date out by `TERM` from its current due date, inside the last
+    ///         `EXTENSION_WINDOW` before it; borrower only, and only while approved (6.6, D-50).
+    function extend(uint256 loanId) external whenNotPaused {
+        Loan storage loan = loans[loanId];
+        if (loan.borrower == address(0)) revert IIndicoLedger.LoanNotFound();
+        if (loan.status != uint8(IIndicoLedger.LoanStatus.Active)) {
+            revert IIndicoLedger.LoanNotActive();
+        }
+        if (loan.borrower != msg.sender) revert IIndicoLedger.NotBorrower();
+        if (!approvedUser[msg.sender]) revert IIndicoLedger.NotApprovedUser();
+
+        uint64 dueDate = loan.dueDate;
+        uint64 opensAt = dueDate - EXTENSION_WINDOW;
+        // A loan deadline, the one condition allowed to read the time (D-26, D-53).
+        // forge-lint: disable-next-line(block-timestamp)
+        if (block.timestamp < opensAt) revert IIndicoLedger.ExtensionWindowNotOpen(opensAt);
+        // forge-lint: disable-next-line(block-timestamp)
+        if (block.timestamp > dueDate) revert IIndicoLedger.ExtensionWindowClosed();
+
+        uint64 newDueDate = SafeCast.toUint64(uint256(dueDate) + TERM);
+        uint16 count = SafeCast.toUint16(uint256(loan.extensionCount) + 1);
+        loan.dueDate = newDueDate;
+        loan.extensionCount = count;
+        emit IIndicoLedger.LoanExtended(loanId, newDueDate, count);
     }
 
     /// @dev The only way credit enters circulation. Refuses a mint that would push one account
