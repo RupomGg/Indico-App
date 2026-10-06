@@ -1876,6 +1876,26 @@ Files: none changed.
   between runs of the same code on the shared runners; estimates keep a margin for that.
 Commit: docs: record P1.9 Deep fuzz green
 
+### C-049 · P1.10 done · CI and Deep fuzz green on P1.10 · 2026-10-06
+Type: chore
+Files: none changed.
+- D-53 approved by the owner: both lines, permanent, on the P1.13 allowed list; `liquidate`'s
+  due-date check (P1.11) falls under it.
+- G10: CI run 37480450830 on `ff7a6a1` (branch `p1.10`) green; after the owner's `--ff-only`
+  merge, CI run 37490090252 on `ff7a6a1` (`main`) green, `docs/gate-logs/P1.10/G10-main.log`.
+  Every step passed, Slither included; only the designed skips.
+- Deep fuzz pass: run 37490235276 on `ff7a6a1`, dispatched by the owner, its commit checked
+  against `main` when it appeared: `check` green, **18 of 18 shards green**; each shard's D-42
+  guard passed, so every fuzz test, `Extend.t.sol`'s three included, ran 5,000,000 times. P1.10
+  is done (INSTRUCTION 1.2).
+- `Extend.t.sol` took 29.9 minutes, inside the 1 to 2 hours estimated in C-047. Longest shard
+  `Repay.t.sol`, 68.9 minutes (19% of 360).
+- Reading run results: with the CLI signed out since C-046, run and job status are read from
+  GitHub's public REST API without a token (the repository is public; 60 requests an hour).
+  Job logs need a signed-in client, so per-test run counts are not downloaded; the shard guard
+  covers them.
+Commit: docs: record P1.10 CI and Deep fuzz green
+
 ---
 
 ## Open items
