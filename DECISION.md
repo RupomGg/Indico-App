@@ -1652,6 +1652,107 @@ Files: none changed.
   D-42's 80% split line, and no shard is above 45%.
 Commit: docs: record D-43 Deep fuzz green; P1.8 CI green
 
+### C-044 · P1.8 done · Deep fuzz green on P1.8; repository public · 2026-10-06
+Type: chore
+Files: none changed.
+- `p1.8` merged to `main` by fast-forward; `2573a15` (the `.gitignore` line moved out of the
+  repository) on top.
+- CI runs 37301601202 (`p1.8`) and 37301622247 (`main`) on `ad2d81d` failed in seconds with no
+  step run: the account's Actions minutes were used up. Not a code failure. The owner made the
+  repository public, which has no minutes limit. G10 for `2573a15` (same code plus `.gitignore`): CI run
+  37302230961 green, `docs/gate-logs/P1.8/G10-main.log`.
+- Deep fuzz pass, `docs/gate-logs/P1.8/deep-ci/`: run 37303144897 on `2573a15`, dispatched on
+  `main` after checking the run list (no run existed for this code): `check` green, **16 of 16
+  shards green, 385 tests passed, 0 failed, 0 skipped**. The guard printed `ok` on every shard;
+  **all 36 fuzz tests ran 5,000,000 times**, the two `RequestLoan.t.sol` properties included
+  (`fuzz-runs.txt`). P1.8 is done (INSTRUCTION 1.2).
+- Shard times (job wall minutes) against the previous run (C-043):
+
+  | Shard | C-043 | Actual | % of 360 |
+  |---|---|---|---|
+  | `Pool.t.sol` | 153.3 | 84.1 | 23% |
+  | `AdminCredit.t.sol` | 62.4 | 33.3 | 9% |
+  | `Spend.t.sol` | 50.2 | 30.3 | 8% |
+  | `SignTerms.t.sol` | 59.2 | 30.1 | 8% |
+  | `Membership.t.sol` | 52.3 | 29.4 | 8% |
+  | `RequestLoan.t.sol` | new | 21.9 | 6% |
+  | `RegisterAsset.t.sol` | 63.4 | 17.8 | 5% |
+  | `Math.t.sol` | 6.5 | 5.8 | 2% |
+  | the other 8 | under 5 each | under 6 each | under 2% |
+
+  The whole run took 84 minutes. Every shard ran about 1.8 times faster than on the private
+  repository: GitHub's standard runner for a public repository has 4 cores instead of 2. The same
+  tests, seeds and run counts; only the hardware changed. Estimates from here use these times.
+Commit: docs: record P1.8 Deep fuzz green and the switch to a public repository
+
+### C-045 · P1.9 · repay · 2026-10-06
+Type: feature
+Decisions: D-48 (proposed, for approval at this gate); D-09, D-38, D-43, D-47 applied
+Session start (INSTRUCTION 1.2): Deep fuzz run 37303144897 on P1.8's code green (C-044), so P1.9
+was built straight on `main`, with no branch.
+Files:
+- Changed: `contracts/src/IndicoLedger.sol`: `repay(loanId)`, `nonReentrant`, `whenNotPaused`;
+  reverts in order (D-48) `LoanNotFound` (no borrower stored), `LoanNotActive`, `NotBorrower`; no
+  approval or terms check, so a revoked borrower repays; after the due date allowed until
+  liquidated (D-09). Effects: status Repaid (principal, collateral, due date kept as a record),
+  `lockedCredit -= collateral`, `totalLent -= principal`, `poolUsdc += principal`; emits
+  `LoanRepaid` and `CollateralReleased`; then `safeTransferFrom(msg.sender, ...)` and the
+  balance-delta check, `RepaymentShort(principal, received)` below the principal. No lint or
+  Slither suppression: `reentrancy-events` did not fire, and pulling from `msg.sender` instead of
+  the stored borrower cleared Slither's `arbitrary-send-erc20` (high), found during the gate.
+- Changed: `contracts/src/interfaces/IIndicoLedger.sol`: error
+  `RepaymentShort(uint256 principal, uint256 received)`; the `repay` comment (order, revoked
+  borrower, approval, events, USDC last).
+- New: `contracts/test/unit/Repay.t.sol`: partition table, 27 tests: exact repayment with both
+  events, only those two, exact net writes (state diff); repay then borrow the same principal
+  again; at the due date, one second after, 1000 days after; three loans, repay the middle, the
+  other two byte-identical and available credit up by exactly its collateral; id 0, one past the
+  end, `uint256` max (`LoanNotFound`); repaid twice (`LoanNotActive`); six non-borrowers
+  (`NotBorrower`); revoked borrower repays; paused; allowance short, balance short, token returns
+  false, blacklisted (full rollback); fee on transfer (`RepaymentShort(800e6, 792e6)`); re-entry;
+  three check-order tests; fuzz: any principal gives exactly the repayment's writes and restores
+  `lockedCredit`, `totalLent` and `poolUsdc`, then borrows again; any other caller
+  `NotBorrower`; any unissued id `LoanNotFound`. A defaulted loan needs `liquidate`: in the
+  P1.11 loan matrix.
+- Changed: `contracts/test/unit/Pool.t.sol`: two tests on real loans (O-033, P1.9 part): a
+  repayment raises `poolUsdc` by exactly the principal and leaves the price alone;
+  `withdrawAll` short of cash, the loan repaid, a second `withdrawAll` pays the rest exactly.
+- Changed: `contracts/test/unit/ParticipantMatrix.t.sol`: `repay` column (O-025), 11 of 13, 99 of
+  117 cells: ApprovedAndSigned repays its own loan; ApprovedThenRevoked borrowed before the
+  revocation and repays (nothing trapped, TS 2.2); everyone else `NotBorrower` on alice's loan.
+- Changed: `contracts/test/unit/Pause.t.sol`: pause matrix 14 x 3 with `repay`.
+- Changed: `contracts/test/unit/Constructor.t.sol`: the no-USDC sweep gains `repay` (25 calls).
+- Changed: `INSTRUCTION.md` P1.11: before code, the owner decides O-038.
+- Changed: `contracts/.gas-snapshot`: 26 new lines (Repay 24, Pool 2); 268 changed; none
+  removed. Over 10%: participant matrix 112,520,116 to 127,907,910 (+13.7%, 99 cells instead of
+  90) and pause matrix 51,083,135 to 57,610,611 (+12.8%, 42 cells instead of 39); all others at
+  most +4.7%.
+- Changed (local, not pushed): `docs/decisions.md` D-48.
+Size: `IndicoLedger` runtime 9,632 B to 10,304 B (+672 B), margin 14,272 B.
+Slither, CI step 7 body (on a scratch copy, since Slither runs `forge clean`): exit 0, no IR
+error, 4 findings, the same as P1.8 (`slither.log`).
+Gate (logs in `docs/gate-logs/P1.9/`, Forge 1.8.3; red phase `red.log`: 27 of 27 failing on the
+missing function). The first gate run was stopped after the Slither fix and rerun in full:
+- G1 pass: 414 passed, 0 failed, 0 skipped, exit 0.
+- G2 pass: src lines 183/183, branches 58/58.
+- G3 pass, G4 pass: exit 0 each.
+- G5 pass: seeds 1 and 2, 414 passed each.
+- G6 pass: three runs, 414 passed each.
+- G7 pass: `ci` profile, 414 passed.
+- G8 pass: `IndicoLedger` 10,304 B; snapshot check 375 passed.
+- G9 pass, `G9.log`: 16 of 16 caught (on a scratch copy of `contracts/` with the same source and
+  tests, then confirmed byte-identical to the real source by SHA-256).
+- G13 pass (grep finds nothing).
+- G10 pending: owner pushes.
+Mutations (G9): M1 `LoanNotFound` removed; M2 status check removed (repaid twice panics on
+underflow instead of the named error); M3 borrower check removed; M4 status not set; M5 collateral
+not released; M6 `totalLent` not lowered; M7 `poolUsdc` not raised; M8 short-delivery check
+removed; M9 `<` to `<=`; M10 a wei less pulled; M11 `nonReentrant` removed; M12 works while
+paused; M13 `CollateralReleased` loan id 0; M14 `LoanRepaid` principal 0; M15 borrower checked
+before status; M16 a revoked borrower refused. All caught.
+Open items: O-025 now 99 of 117; O-033 P1.9 part done (P1.11 remains); raised O-038.
+Commit: feat: repay the exact principal, revoked borrowers included, short delivery reverts (P1.9)
+
 ---
 
 ## Open items
@@ -1682,7 +1783,7 @@ Commit: docs: record D-43 Deep fuzz green; P1.8 CI green
 | O-022 | Participant matrix (IT 2.2): the `pause` column, nine participants, moved from P1.1 because building them needs approvals and `signTerms` | engineer | Closed by C-019 |
 | O-023 | The Phase-0 skip step in `ci.yml` and `deep.yml` no longer runs now that `src/IndicoLedger.sol` exists; delete it | engineer | P1.13 |
 | O-024 | Backend admin screen (AD-04, AD-02): before approving a wallet as user or merchant, warn that its role becomes permanent (D-22); a mistaken approval can only be fixed by the person using a different wallet | backend | Level 4 |
-| O-025 | Participant matrix (IT 2.2): 10 of 13 action columns (`signTerms`, `setUserApproved`, `pause`, `registerAsset`, `adminIssueCredit`, `adminDebitCredit`, `spend`, `deposit`, `withdraw`, `requestLoan`), 90 of 117 cells. Each later portion adds its own column at its gate; all 13 columns, 117 cells, by P1.13 | engineer | P1.13 |
+| O-025 | Participant matrix (IT 2.2): 11 of 13 action columns (`signTerms`, `setUserApproved`, `pause`, `registerAsset`, `adminIssueCredit`, `adminDebitCredit`, `spend`, `deposit`, `withdraw`, `requestLoan`, `repay`), 99 of 117 cells. Each later portion adds its own column at its gate; all 13 columns, 117 cells, by P1.13 | engineer | P1.13 |
 | O-026 | On any Forge upgrade (D-14), re-run the D-30 probe (`docs/lint-probes/missing-events-access-control`, `forge build --deny warnings`); if the mapping rows are no longer flagged, delete every `missing-events-access-control` suppression in the same commit as the upgrade. Same for D-40's `reentrancy-events` probe (`docs/lint-probes/reentrancy-events/`): if `Withdrawn` or `Deposited` no longer fires, delete that line. On a Slither upgrade, the D-40 `incorrect-equality` probe likewise | engineer | next Forge upgrade |
 | O-027 | `_mint` computes `room = CREDIT_CAP - credit[account]`, which underflows (panic) if the account already holds more than the cap. Only a merchant can (via `spend`, D-27), and P1.4 mints only to users, so it is unreachable now. P1.5 decides whether `adminIssueCredit` may credit a merchant (O-011); if it can, P1.5 writes the failing test first (mint to a merchant above the cap must revert `CreditCapExceeded(amount, 0)`, never panic) and fixes `_mint` | engineer | Closed by D-33 (C-026) |
 | O-028 | Delete the `slither-disable-next-line uninitialized-state` above `lockedCredit` (D-34) as part of the gate; it covers every read site (`adminDebitCredit`, and `spend` in P1.6) | engineer | Closed by C-042 |
@@ -1690,8 +1791,9 @@ Commit: docs: record D-43 Deep fuzz green; P1.8 CI green
 | O-030 | Slither has logged `ERROR:ContractSolcParsing: Impossible to generate IR for Math.mulDivDown (src/lib/Math.sol#27-34): 'NoneType' object has no attribute 'parameters'` since P1.3, locally and on CI (run 37108382319); P1.1 and P1.2 runs did not. Detectors still run on everything else and the exit code ignores it, so CI stays green, but `mulDivDown` is not being analysed. Find the trigger and fix or triage in writing | engineer | Closed by C-030 |
 | O-031 | Backend (AD-04, AD-08, U-13): the admin merchant screen shows each merchant's on-chain terms signature (`termsSigned`, `signedTermsHash`); a user paying a merchant who has not signed gets a readable "merchant not ready" instead of `MerchantTermsNotSigned` (D-36, D-37) | backend | Level 4 |
 | O-032 | Merchant guide (merchants use the block explorer): step 0, in bold at the top, says never to send USDC to the ledger address with `transfer`; only `approve` on the USDC contract, then `deposit`. A direct transfer is counted nowhere and cannot be recovered (D-38) | owner | before the first merchant deposits |
-| O-033 | `Pool.t.sol` simulates a loan's pool side by writing `poolUsdc`/`totalLent` (`_simulateLend`, `_simulateRepay`, `_simulateDefault`). Rerun those cases on real loans: beyond-liquidity withdraws (P1.8), short-of-cash `withdrawAll` then repay (P1.9), loss split, rounding pump and total wipeout (P1.11); then delete the helpers | engineer | P1.8, P1.9, P1.11 |
+| O-033 | `Pool.t.sol` simulates a loan's pool side by writing `poolUsdc`/`totalLent` (`_simulateLend`, `_simulateRepay`, `_simulateDefault`). Rerun those cases on real loans: beyond-liquidity withdraws (P1.8), short-of-cash `withdrawAll` then repay (P1.9, done in C-045), loss split, rounding pump and total wipeout (P1.11); then delete the helpers | engineer | P1.8, P1.9, P1.11 |
 | O-034 | Pool-state matrix (IT 2.4, 24 cells) moved from P1.7: it needs `requestLoan`, `repay` and a real default | engineer | P1.11 |
 | O-035 | Merchant guide and terms: while the pool is paused no merchant can deposit or withdraw, for as long as the pause lasts, and nothing can rescue the funds (D-41, CS §10); with the client's written pause policy (decisions, open non-blocking 2) | owner, client | before the first merchant deposits |
 | O-036 | The 11 `Math.t.sol` properties pinned by `forge-config: default.fuzz.runs = 100000` also run 100,000 times under `deep` (run 37169050467), so `LedgerMath` has never had 5,000,000 runs. Fix: a `deep` inline line per test, or move the pin; reopens P0.1 | engineer, owner | Closed by C-040 |
 | O-037 | Build D-43 (state-diff assertions instead of the full re-read snapshot) as its own change with the full gate: every G9 mutation from P1.1 to P1.7 still caught plus one new unexpected-slot mutation, gas per run before and after on the three heaviest fuzz tests, new Deep estimate per shard. After P1.7 merges, before P1.8 | engineer | Closed by C-041 |
+| O-038 | `repay` is `whenNotPaused` (contract-spec 6), so a pause that lasts past a loan's due date stops the borrower repaying, and at the unpause anyone may liquidate it. Owner decides before P1.11: accept and say so in the terms and pause policy, exempt `repay` from the pause, or handle it in `liquidate` (D-48) | owner | P1.11 |

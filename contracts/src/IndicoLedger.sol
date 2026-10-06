@@ -398,6 +398,32 @@ contract IndicoLedger is AccessControlDefaultAdminRules, Pausable, ReentrancyGua
         usdc.safeTransfer(msg.sender, principal);
     }
 
+    /// @notice Repay a loan's exact principal and release its collateral; borrower only (6.6).
+    function repay(uint256 loanId) external nonReentrant whenNotPaused {
+        Loan storage loan = loans[loanId];
+        address borrower = loan.borrower;
+        if (borrower == address(0)) revert IIndicoLedger.LoanNotFound();
+        if (loan.status != uint8(IIndicoLedger.LoanStatus.Active)) {
+            revert IIndicoLedger.LoanNotActive();
+        }
+        if (borrower != msg.sender) revert IIndicoLedger.NotBorrower();
+
+        uint256 principal = loan.principal;
+        uint256 collateral = loan.collateral;
+        loan.status = uint8(IIndicoLedger.LoanStatus.Repaid);
+        lockedCredit[borrower] -= collateral;
+        totalLent -= principal;
+        poolUsdc += principal;
+        emit IIndicoLedger.LoanRepaid(loanId, borrower, principal);
+        emit IIndicoLedger.CollateralReleased(borrower, collateral, loanId);
+
+        uint256 balanceBefore = usdc.balanceOf(address(this));
+        usdc.safeTransferFrom(msg.sender, address(this), principal);
+        uint256 received = usdc.balanceOf(address(this)) - balanceBefore;
+        // Less than the principal is a partial repayment (R-02, D-48); the revert undoes it all.
+        if (received < principal) revert IIndicoLedger.RepaymentShort(principal, received);
+    }
+
     /// @dev The only way credit enters circulation. Refuses a mint that would push one account
     ///      above `CREDIT_CAP`, so no balance a loan can lock against exceeds `uint128` (D-27).
     ///      Written as `amount > room` so it cannot overflow for any `amount`.

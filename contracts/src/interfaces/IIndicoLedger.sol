@@ -133,6 +133,8 @@ interface IIndicoLedger {
     error InsufficientShares(uint256 needed, uint256 held);
     /// @notice `deposit` of an amount worth less than one share; nothing would be minted (D-38).
     error ZeroShares();
+    /// @notice `repay` pulled `principal` but the ledger received only `received` (D-48).
+    error RepaymentShort(uint256 principal, uint256 received);
     /// @notice Raised by `lib/Math.sol`; same selector as `LedgerMath.DivisionByZero`.
     error DivisionByZero();
     /// @notice Raised by `lib/Math.sol`; same selector as `LedgerMath.MathOverflow`.
@@ -251,8 +253,12 @@ interface IIndicoLedger {
     function requestLoan(uint256 principal) external returns (uint256 loanId);
 
     /// @notice Repay the exact principal of an Active loan and release its collateral.
-    /// @dev Borrower only. Allowed after the due date until liquidated.
-    ///      Emits `LoanRepaid` and `CollateralReleased`.
+    /// @dev `whenNotPaused`, `nonReentrant`. Borrower only, approval and terms not required, so a
+    ///      revoked borrower can repay. Allowed after the due date until liquidated (D-09).
+    ///      Reverts, in order, `LoanNotFound`, `LoanNotActive`, `NotBorrower`, then
+    ///      `RepaymentShort(principal, received)` if the ledger receives less than the principal
+    ///      (D-48). The borrower approves `principal` USDC first. Emits `LoanRepaid` and
+    ///      `CollateralReleased`; the USDC moves last.
     function repay(uint256 loanId) external;
 
     /// @notice Push the due date out by `TERM`, from the existing due date. Unlimited, free.

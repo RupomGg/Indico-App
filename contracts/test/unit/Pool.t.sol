@@ -959,4 +959,42 @@ contract PoolTest is Actors {
             abi.encodeWithSelector(IIndicoLedger.InsufficientLiquidity.selector, DEP, 0)
         );
     }
+
+    /// @dev O-033 (P1.9 part): a real repayment raises `poolUsdc` by exactly the principal and
+    ///      leaves the share price alone.
+    function test_realLoan_repayRaisesPoolUsdcByPrincipal_priceUnchanged() public {
+        _deposit(merchantA, DEP);
+        _mintCredit(alice, 750e6);
+        vm.prank(alice);
+        ledger.requestLoan(600e6);
+        (uint256 a0, uint256 s0) = (_modelAssets(), _modelShares());
+        uint256 cash = ledger.poolUsdc();
+        vm.prank(alice);
+        ledger.repay(1);
+        assertEq(ledger.poolUsdc(), cash + 600e6);
+        assertEq(ledger.totalLent(), 0);
+        assertEq(_modelAssets() * s0, a0 * _modelShares(), "a repayment moved the price");
+        _assertBooks();
+    }
+
+    /// @dev O-033 (P1.9 part): `withdrawAll` short of cash pays the cash; after the real loan
+    ///      is repaid, a second pays the rest. Exact here (price 1:1).
+    function test_realLoan_withdrawAllShortOfCash_repay_secondPaysRest() public {
+        _deposit(merchantA, DEP);
+        _mintCredit(alice, 875e6);
+        vm.prank(alice);
+        ledger.requestLoan(700e6);
+
+        vm.expectEmit(true, true, true, true, address(ledger));
+        emit IIndicoLedger.Withdrawn(merchantA, DEP - 700e6, (DEP - 700e6) * 1e6);
+        _withdrawAll(merchantA);
+        assertEq(ledger.poolUsdc(), 0);
+
+        vm.prank(alice);
+        ledger.repay(1);
+        _withdrawAll(merchantA);
+        assertEq(ledger.shares(merchantA), 0);
+        assertEq(usdc.balanceOf(merchantA), FUND, "two payments are not the whole claim");
+        _assertBooks();
+    }
 }

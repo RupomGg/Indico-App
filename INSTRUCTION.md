@@ -319,6 +319,9 @@ pause matrix (IT §2.3) and the participant matrix (IT §2.2) with its own funct
   depositors split a real default within one wei; the rounding-pump attack after a real default
   is unprofitable (D-38); a deposit after every loan defaulted does not divide by zero; the
   pool-state matrix (IT §2.4, 24 cells).
+  **Before code (O-038):** the owner decides what happens to a loan whose due date passes while
+  the ledger is paused (`repay` is `whenNotPaused`, so the borrower cannot repay, and anyone may
+  liquidate at the unpause); the decision and its tests go in this portion.
 - Manual check: none beyond the gate.
 
 **P1.12 Views**
