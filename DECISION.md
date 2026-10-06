@@ -1753,6 +1753,28 @@ before status; M16 a revoked borrower refused. All caught.
 Open items: O-025 now 99 of 117; O-033 P1.9 part done (P1.11 remains); raised O-038.
 Commit: feat: repay the exact principal, revoked borrowers included, short delivery reverts (P1.9)
 
+### C-046 · chore · `main` restored after a force-push by a stolen credential · 2026-10-06
+Type: chore (incident)
+Files: none changed in this repository's content.
+- 2026-10-06 00:50:23 UTC: `main` was force-pushed from `2573a15` to `74165d0` under the owner's
+  account, not by the owner. Part of an automated sweep that rewrote 21 of the account's
+  repositories between 00:48 and 00:56 UTC. `74165d0` kept the original message and timestamp and
+  added `.vscode/tasks.json` (a hidden task, run when the folder is opened in VS Code, executing a
+  file disguised as a font under `contracts/lib/forge-std/public/fonts/`, a path that does not
+  exist in forge-std), `.vscode/settings.json` (`task.allowAutomaticTasks: true`) and two
+  `.gitignore` lines (`config.bat`, `node_modules`). `contracts/` and `.github/` were untouched;
+  CI run 37396085377 ran on it and passed, since CI never opens an editor. Nothing was pulled,
+  opened or executed locally.
+- Response: the owner rotated credentials (the GitHub CLI token is revoked); pushes now go over SSH
+  with a passphrase-protected key on one machine, and every commit is SSH-signed.
+- Restore: P1.9's commit re-signed as `6cf395c` (content identical to the unsigned `aa99320`), then
+  `git push --force-with-lease=main:74165d0`, which could replace only that commit. `main` is now
+  `6cf395c`, verified by GitHub, with no `.vscode`.
+- Ruleset `protect-default-branch` (id 24552584) on the default branch: deletion and force pushes
+  blocked, signed commits required, no bypass. A stolen token alone can no longer rewrite `main`.
+- G10 for `6cf395c` (P1.9): CI run 37403284404 green.
+Commit: docs: record the force-push incident and the restore of main
+
 ---
 
 ## Open items
