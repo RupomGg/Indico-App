@@ -21,7 +21,10 @@ import {StateSnapshot} from "../helpers/StateSnapshot.sol";
 /// | second ADMIN_ROLE holder    | granted by admin   | allowed                                    |
 /// | while paused (D-24)         |                    | allowed                                    |
 ///
-/// setUserApproved(address user, bool approved) and setMerchantApproved(address m, bool approved)
+/// setUserApproved(address user, bool approved, bytes32 accountRef) and
+/// setMerchantApproved(address m, bool approved). The user setter's account-link rules (D-60) are
+/// in `AccountLink.t.sol`; here every user call names its test account on approval and the
+/// wallet's current link on revoke.
 /// | Class                                   | approved | Expected                                       |
 /// |-----------------------------------------|----------|------------------------------------------------|
 /// | zero address                            | either   | ZeroAddress                                    |
@@ -62,9 +65,17 @@ contract MembershipTest is StateSnapshot {
         (w[4], w[5], w[6], w[7]) = (merchantB, address(this), address(ledger), makeAddr("random"));
     }
 
+    /// @dev The reference a user call names (D-60): the test account on approval, the wallet's
+    ///      current link on revoke, so P1.2's rules are tested unchanged under the account link.
+    function _refFor(address a, bool v) internal view returns (bytes32) {
+        // Read with vm.load, not a call: a call here would take a caller's vm.expectRevert.
+        return v ? _accountRef(a) : vm.load(address(ledger), _key(a, SLOT_ACCOUNT_REF_OF));
+    }
+
     function _setUser(address a, bool v) internal {
+        bytes32 ref = _refFor(a, v);
         vm.prank(admin);
-        ledger.setUserApproved(a, v);
+        ledger.setUserApproved(a, v, ref);
     }
 
     function _setMerchant(address a, bool v) internal {
@@ -74,8 +85,9 @@ contract MembershipTest is StateSnapshot {
 
     /// @dev Calls the user setter (`asUser`) or the merchant setter as `caller`.
     function _set(address caller, bool asUser, address a, bool v) internal {
+        bytes32 ref = _refFor(a, v);
         vm.prank(caller);
-        if (asUser) ledger.setUserApproved(a, v);
+        if (asUser) ledger.setUserApproved(a, v, ref);
         else ledger.setMerchantApproved(a, v);
     }
 
@@ -85,7 +97,7 @@ contract MembershipTest is StateSnapshot {
 
     function _expectApprovalEvent(bool asUser, address a, bool v) internal {
         vm.expectEmit(true, true, true, true, address(ledger));
-        if (asUser) emit IIndicoLedger.UserApprovalSet(a, v);
+        if (asUser) emit IIndicoLedger.UserApprovalSet(a, v, _refFor(a, v));
         else emit IIndicoLedger.MerchantApprovalSet(a, v);
     }
 
@@ -371,10 +383,17 @@ contract MembershipTest is StateSnapshot {
         uint8 role = userFirst ? ROLE_USER : ROLE_MERCHANT;
         _startDiff();
         _set(admin, userFirst, a, true);
-        Write[] memory w = new Write[](2);
+        // A user's first approval also links the wallet and the account both ways (D-60).
+        Write[] memory w = new Write[](userFirst ? 4 : 2);
         uint256 flag = userFirst ? SLOT_APPROVED_USER : SLOT_APPROVED_MERCHANT;
         w[0] = _w(address(ledger), _key(a, flag), 1);
         w[1] = _w(address(ledger), _key(a, SLOT_PARTICIPANT_ROLE), role);
+        if (userFirst) {
+            w[2] = _w(address(ledger), _key(a, SLOT_ACCOUNT_REF_OF), uint256(_accountRef(a)));
+            w[3] = _w(
+                address(ledger), _key(_accountRef(a), SLOT_WALLET_OF_ACCOUNT), uint256(uint160(a))
+            );
+        }
         _assertWrites(w);
         assertEq(ledger.participantRole(a), role);
         _set(admin, userFirst, a, false);
@@ -382,7 +401,7 @@ contract MembershipTest is StateSnapshot {
             admin,
             userFirst
                 ? abi.encodeCall(IIndicoLedger.setMerchantApproved, (a, true))
-                : abi.encodeCall(IIndicoLedger.setUserApproved, (a, true)),
+                : abi.encodeCall(IIndicoLedger.setUserApproved, (a, true, _accountRef(a))),
             abi.encodeWithSelector(IIndicoLedger.ParticipantRoleConflict.selector, a)
         );
         assertEq(ledger.participantRole(a), role);

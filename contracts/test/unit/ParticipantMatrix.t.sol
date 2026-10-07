@@ -214,7 +214,7 @@ contract ParticipantMatrixTest is Actors {
             if (pp == Participant.ApprovedAndSigned || pp == Participant.ApprovedThenRevoked) {
                 if (pp == Participant.ApprovedThenRevoked) {
                     vm.prank(admin);
-                    ledger.setUserApproved(who, true);
+                    ledger.setUserApproved(who, true, _accountRef(who));
                 }
                 _openLoan(who, ADMIN_CREDIT);
                 if (pp == Participant.ApprovedThenRevoked) _revokeUser(who);
@@ -270,7 +270,7 @@ contract ParticipantMatrixTest is Actors {
 
         vm.prank(who);
         if (c[1] == 0) ledger.signTerms(TERMS);
-        else if (c[1] == 1) ledger.setUserApproved(target, true);
+        else if (c[1] == 1) ledger.setUserApproved(target, true, _accountRef(target));
         else if (c[1] == 2) ledger.pause();
         else if (c[1] == 3) ledger.registerAsset(keccak256("matrix-doc"), 0, REGISTER_VALUE);
         else if (c[1] == 4) ledger.adminIssueCredit(bob, ADMIN_CREDIT, "matrix");

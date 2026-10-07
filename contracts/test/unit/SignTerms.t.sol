@@ -93,7 +93,7 @@ contract SignTermsTest is StateSnapshot {
     function test_anyone_canSign_noApprovalNeeded() public {
         _setHash(H1);
         vm.prank(admin);
-        ledger.setUserApproved(alice, true);
+        ledger.setUserApproved(alice, true, _accountRef(alice));
         vm.prank(admin);
         ledger.setMerchantApproved(merchantA, true);
         address[5] memory who = [x, alice, merchantA, admin, guardian];

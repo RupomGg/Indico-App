@@ -28,8 +28,9 @@ interface IIndicoLedger {
     event TermsHashSet(bytes32 indexed termsHash);
     /// @notice `signer` accepted the terms identified by `termsHash` at timestamp `at`.
     event TermsSigned(address indexed signer, bytes32 indexed termsHash, uint256 at);
-    /// @notice The admin approved or revoked a user.
-    event UserApprovalSet(address indexed user, bool approved);
+    /// @notice The admin approved or revoked a user, linked to the app account `accountRef`
+    ///         (an opaque random id, never personal data, D-60).
+    event UserApprovalSet(address indexed user, bool approved, bytes32 indexed accountRef);
     /// @notice The admin approved or revoked a merchant.
     event MerchantApprovalSet(address indexed merchant, bool approved);
 
@@ -146,6 +147,14 @@ interface IIndicoLedger {
     /// @notice `liquidate` within `LIQUIDATION_GRACE` of the last unpause; allowed after `endsAt`
     ///         (D-54).
     error LiquidationGracePeriod(uint256 endsAt);
+    /// @notice A user approval named no app account (D-60).
+    error ZeroAccountRef();
+    /// @notice `wallet` is already linked to the app account `linkedRef` (D-60).
+    error WalletAlreadyLinked(address wallet, bytes32 linkedRef);
+    /// @notice The app account `accountRef` is already linked to `linkedWallet` (D-60).
+    error AccountAlreadyLinked(bytes32 accountRef, address linkedWallet);
+    /// @notice A revoke named a reference other than the wallet's link `linkedRef` (D-60).
+    error AccountRefMismatch(address wallet, bytes32 linkedRef);
 
     // ---------------------------------------------------------------------------------------
     // Administration (spec 6.1)
@@ -160,9 +169,15 @@ interface IIndicoLedger {
     ///         existing loans are untouched and can still be repaid and liquidated.
     /// @dev ADMIN_ROLE. Works while paused (D-24). Reverts `ZeroAddress` for zero; on approval,
     ///      `InvalidParticipant` for the ledger or USDC address and `ParticipantRoleConflict` if
-    ///      the address was ever approved as a merchant. Repeats are allowed and emit (D-20).
-    ///      Emits `UserApprovalSet`.
-    function setUserApproved(address user, bool approved) external;
+    ///      the address was ever approved as a merchant. Then the account link (D-60): on
+    ///      approval `ZeroAccountRef` for a zero reference, `WalletAlreadyLinked` if the wallet is
+    ///      linked to another reference, `AccountAlreadyLinked` if the reference is linked to
+    ///      another wallet; the first approval links both ways, permanently. On revoke the
+    ///      reference must equal the wallet's link (0 if never linked), else
+    ///      `AccountRefMismatch`. Repeats are allowed and emit (D-20). `accountRef` must be random,
+    ///      never derived from personal data: the backend owns that rule (O-041).
+    ///      Emits `UserApprovalSet(user, approved, accountRef)`.
+    function setUserApproved(address user, bool approved, bytes32 accountRef) external;
 
     /// @notice Approve or revoke a merchant. A revoked merchant can still withdraw.
     /// @dev ADMIN_ROLE. Works while paused (D-24). Same checks as `setUserApproved`, with the
@@ -333,6 +348,10 @@ interface IIndicoLedger {
     function lastPausedAt() external view returns (uint64);
     /// @notice When the ledger was last unpaused; 0 before the first unpause (D-54).
     function lastUnpausedAt() external view returns (uint64);
+    /// @notice The app account linked to `wallet`, or 0 (D-60).
+    function accountRefOf(address wallet) external view returns (bytes32);
+    /// @notice The wallet linked to the app account `accountRef`, or address(0) (D-60).
+    function walletOfAccount(bytes32 accountRef) external view returns (address);
     function loans(uint256 loanId)
         external
         view

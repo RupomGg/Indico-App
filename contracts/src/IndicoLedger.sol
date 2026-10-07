@@ -88,6 +88,11 @@ contract IndicoLedger is AccessControlDefaultAdminRules, Pausable, ReentrancyGua
     /// @notice When the ledger was last unpaused, the start of the grace (D-54). 0 before.
     uint64 public lastUnpausedAt;
 
+    /// @notice The app account linked to each approved user wallet, an opaque random id, and the
+    ///         wallet linked to each account; one-to-one and permanent (D-60).
+    mapping(address => bytes32) public accountRefOf;
+    mapping(bytes32 => address) public walletOfAccount;
+
     // ---------------------------------------------------------------------------------------
     // Constructor, contract-spec 6.0
     // ---------------------------------------------------------------------------------------
@@ -145,12 +150,16 @@ contract IndicoLedger is AccessControlDefaultAdminRules, Pausable, ReentrancyGua
     /// @notice Approve or revoke a user. Revocation blocks new actions only; balances and
     ///         loans are untouched.
     /// @dev Not `whenNotPaused` (D-24). Repeats are allowed and emit (D-20).
-    function setUserApproved(address user, bool approved) external onlyRole(ADMIN_ROLE) {
+    function setUserApproved(address user, bool approved, bytes32 accountRef)
+        external
+        onlyRole(ADMIN_ROLE)
+    {
         _admit(user, approved, ROLE_USER);
+        _link(user, approved, accountRef);
         // Linter cannot match an event to a mapping write; UserApprovalSet follows (D-30).
         // forge-lint: disable-next-line(missing-events-access-control)
         approvedUser[user] = approved;
-        emit IIndicoLedger.UserApprovalSet(user, approved);
+        emit IIndicoLedger.UserApprovalSet(user, approved, accountRef);
     }
 
     /// @notice Approve or revoke a merchant. A revoked merchant can still withdraw.
@@ -175,6 +184,25 @@ contract IndicoLedger is AccessControlDefaultAdminRules, Pausable, ReentrancyGua
         uint8 current = participantRole[account];
         if (current == ROLE_NONE) participantRole[account] = role;
         else if (current != role) revert IIndicoLedger.ParticipantRoleConflict(account);
+    }
+
+    /// @dev The account link (D-60): one app account per wallet and one wallet per account,
+    ///      permanent. An approval must name an account; the first one links both ways, a repeat
+    ///      with the same account changes nothing. A revoke must name the wallet's own link (0 if
+    ///      it was never linked), so the signers see which account they revoke.
+    function _link(address user, bool approved, bytes32 accountRef) private {
+        bytes32 linked = accountRefOf[user];
+        if (!approved) {
+            if (accountRef != linked) revert IIndicoLedger.AccountRefMismatch(user, linked);
+            return;
+        }
+        if (accountRef == bytes32(0)) revert IIndicoLedger.ZeroAccountRef();
+        if (linked == accountRef) return;
+        if (linked != bytes32(0)) revert IIndicoLedger.WalletAlreadyLinked(user, linked);
+        address other = walletOfAccount[accountRef];
+        if (other != address(0)) revert IIndicoLedger.AccountAlreadyLinked(accountRef, other);
+        accountRefOf[user] = accountRef;
+        walletOfAccount[accountRef] = user;
     }
 
     // ---------------------------------------------------------------------------------------

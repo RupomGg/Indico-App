@@ -36,6 +36,8 @@ abstract contract FixtureBase is Test {
     uint256 internal constant SLOT_LOANS = 20;
     /// @dev `lastPausedAt` in the low 64 bits, `lastUnpausedAt` in the next 64 (D-58).
     uint256 internal constant SLOT_PAUSE_TIMES = 21;
+    uint256 internal constant SLOT_ACCOUNT_REF_OF = 22;
+    uint256 internal constant SLOT_WALLET_OF_ACCOUNT = 23;
     uint256 internal constant SLOT_USDC_BALANCES = 0;
 
     MockUSDC internal usdc;
@@ -69,6 +71,12 @@ abstract contract FixtureBase is Test {
         usdc.mint(a, FUND);
         vm.prank(a);
         usdc.approve(address(ledger), type(uint256).max);
+    }
+
+    /// @dev The test's account reference for `wallet`. Tests only: a production reference is
+    ///      random and never derived from anything about the user (D-60, O-041).
+    function _accountRef(address wallet) internal pure returns (bytes32) {
+        return keccak256(abi.encode("test-account", wallet));
     }
 
     function _pause() internal {
@@ -130,7 +138,7 @@ abstract contract Fixture is FixtureBase {
 
     function _approveUser(address user) internal {
         vm.prank(admin);
-        ledger.setUserApproved(user, true);
+        ledger.setUserApproved(user, true, _accountRef(user));
     }
 
     function _sign(address account) internal {
@@ -145,8 +153,9 @@ abstract contract Fixture is FixtureBase {
     }
 
     function _revokeUser(address user) internal {
+        bytes32 ref = ledger.accountRefOf(user); // read first: an argument call would take the prank
         vm.prank(admin);
-        ledger.setUserApproved(user, false);
+        ledger.setUserApproved(user, false, ref);
     }
 
     function _revokeMerchant(address m) internal {

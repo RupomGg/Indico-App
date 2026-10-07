@@ -265,7 +265,7 @@ contract PauseTest is StateSnapshot, Matrix {
             vm.prank(admin);
             ledger.setTermsHash(keccak256("matrix-terms-v1"));
             vm.prank(admin);
-            ledger.setUserApproved(alice, true);
+            ledger.setUserApproved(alice, true, _accountRef(alice));
             vm.prank(alice);
             ledger.signTerms(keccak256("matrix-terms-v1"));
         }
@@ -345,7 +345,7 @@ contract PauseTest is StateSnapshot, Matrix {
             s.termsHash = h;
         } else if (c[0] == 3) {
             vm.prank(admin);
-            ledger.setUserApproved(target, true);
+            ledger.setUserApproved(target, true, _accountRef(target));
             assertTrue(ledger.approvedUser(target));
         } else if (c[0] == 4) {
             vm.prank(admin);

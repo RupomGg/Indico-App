@@ -342,7 +342,7 @@ contract ConstructorTest is StateSnapshot {
         c[10] = abi.encodeCall(IAccessControlDefaultAdminRules.changeDefaultAdminDelay, (0));
         c[11] = abi.encodeCall(IAccessControlDefaultAdminRules.rollbackDefaultAdminDelay, ());
         c[12] = abi.encodeCall(IIndicoLedger.setTermsHash, (keccak256("sweep")));
-        c[13] = abi.encodeCall(IIndicoLedger.setUserApproved, (caller, true));
+        c[13] = abi.encodeCall(IIndicoLedger.setUserApproved, (caller, true, _accountRef(caller)));
         c[14] = abi.encodeCall(IIndicoLedger.setMerchantApproved, (caller, true));
         c[15] = abi.encodeCall(IIndicoLedger.signTerms, (keccak256("sweep")));
         c[16] = abi.encodeCall(IIndicoLedger.registerAsset, (keccak256("sweep-doc"), 0, 1_000e6));

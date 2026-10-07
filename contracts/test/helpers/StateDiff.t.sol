@@ -66,6 +66,19 @@ contract StateDiffTest is Actors {
         );
         assertEq(b, alice, "loans.borrower");
 
+        // The account link (D-60): alice was approved by the fixture with her test reference.
+        bytes32 ref = _accountRef(alice);
+        assertEq(
+            vm.load(l, _key(alice, SLOT_ACCOUNT_REF_OF)), ledger.accountRefOf(alice), "accountRefOf"
+        );
+        assertEq(ledger.accountRefOf(alice), ref, "accountRefOf written");
+        assertEq(
+            _u(l, _key(ref, SLOT_WALLET_OF_ACCOUNT)),
+            uint256(uint160(ledger.walletOfAccount(ref))),
+            "walletOfAccount"
+        );
+        assertEq(ledger.walletOfAccount(ref), alice, "walletOfAccount written");
+
         // lastPausedAt in the low 64 bits, lastUnpausedAt in the next 64 (D-58).
         uint256 times = _u(l, bytes32(SLOT_PAUSE_TIMES));
         assertEq(uint64(times), ledger.lastPausedAt(), "lastPausedAt");

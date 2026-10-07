@@ -2085,6 +2085,100 @@ the attacker's commits still served by id).
 Open items: raised O-041; O-040 updated.
 Commit: feat: read views for credit, borrowing limit, collateral, pool figures and withdrawable amount (P1.12)
 
+### C-053 · P1.12 done · CI and Deep fuzz green on P1.12 · 2026-10-07
+Type: chore
+Files: none changed in code.
+- G10: CI run 37571780220 on `b64c867` (`main`) green.
+- Deep fuzz pass: run 37571802464 on `b64c867`, dispatched by the owner: **22 of 22 shards
+  green**, each shard's D-42 guard passed. P1.12 is done (INSTRUCTION 1.2). Longest shard
+  `Pool.t.sol`, 99.5 minutes (28% of 360).
+- The scheduled run 37590096420 the same morning found `b64c867` already green and skipped its
+  deep jobs in 0.4 minutes, as D-31 intends.
+Commit: docs: record P1.12 CI and Deep fuzz green
+
+### C-054 · P1.2 reopened · D-60 · Each approved user wallet linked to one app account · 2026-10-07
+Type: feature
+Decisions: D-60 (owner approved, with the owner's additions: the reference is random, never
+derived from personal data, owned by the backend, O-041; the full case table); D-20, D-22, D-23,
+D-24, D-30 applied
+Reopens P1.2 (INSTRUCTION 1.3): `setUserApproved` changes, so P1.2's tests and mutations rerun
+inside this gate. Built on `main` after P1.12 (C-052, C-053).
+Files:
+- Changed: `contracts/src/IndicoLedger.sol`: `setUserApproved(user, approved, accountRef)`; after
+  `_admit` (zero address, the ledger or USDC address, role conflict), the private `_link`: an
+  approval reverts `ZeroAccountRef` for a zero reference, `WalletAlreadyLinked(user, linkedRef)` if
+  the wallet is linked elsewhere, `AccountAlreadyLinked(ref, linkedWallet)` if the account is;
+  the first approval links both ways, permanently; a repeat with the same reference writes
+  nothing. A revoke must name the wallet's own link (0 if never linked), else
+  `AccountRefMismatch(user, linkedRef)`. New public state `accountRefOf`, `walletOfAccount`
+  (slots 22 and 23). `UserApprovalSet` carries the reference, indexed. Merchants unchanged. The
+  email never reaches the chain.
+- Changed: `contracts/src/interfaces/IIndicoLedger.sol`: the new signature and its comment (the
+  reference must be random, O-041); the event `UserApprovalSet(address indexed, bool, bytes32
+  indexed)`; errors `ZeroAccountRef()`, `WalletAlreadyLinked(address, bytes32)`,
+  `AccountAlreadyLinked(bytes32, address)`, `AccountRefMismatch(address, bytes32)`; views
+  `accountRefOf(address)`, `walletOfAccount(bytes32)`.
+- New: `contracts/test/unit/AccountLink.t.sol`: partition table, 22 tests, every row of D-60's
+  table with its exact net writes: first approval (four writes); repeat approval (emits again,
+  no write); revoke then re-approve with the same reference (the flag only, each time); with a
+  different reference (`WalletAlreadyLinked`); a new wallet with the reference of a revoked or an
+  approved wallet (`AccountAlreadyLinked`); zero reference (`ZeroAccountRef`); revoke with the
+  wallet's own reference (the flag only), with zero or another reference (`AccountRefMismatch`);
+  revoke a wallet never linked with zero (allowed, no write) and with a non-zero reference
+  (`AccountRefMismatch(user, 0)`); a merchant's wallet (`ParticipantRoleConflict`, no link); five
+  check-order tests; non-admins; fuzz: a first approval with any wallet and any reference writes
+  exactly four slots; any sequence of approvals and revokes keeps the link one-to-one, both
+  directions agreeing, a link never changing once made.
+- Changed: `contracts/test/helpers/Fixture.sol`: `SLOT_ACCOUNT_REF_OF`, `SLOT_WALLET_OF_ACCOUNT`;
+  `_accountRef(wallet)`, a fixed per-wallet reference for tests only (production references are
+  random); `_approveUser` passes it, `_revokeUser` passes the wallet's stored link, read before
+  the prank (an argument that is itself a call would take the prank).
+- Changed: `contracts/test/helpers/StateSnapshot.sol`: the value snapshot also records each
+  actor's link, so a stray link write fails every snapshot test.
+- Changed: `contracts/test/helpers/StateDiff.t.sol`: both new slot constants checked against the
+  getters.
+- Changed: `contracts/test/unit/Membership.t.sol`: the user setter's calls pass the test reference
+  on approval and the stored link on revoke, read with `vm.load` so a caller's `vm.expectRevert`
+  is not taken by a call; the role fuzz expects the two link writes on a user's first approval.
+  No assertion weakened.
+- Changed: `contracts/test/unit/SignTerms.t.sol`, `Pause.t.sol`, `ParticipantMatrix.t.sol`,
+  `Constructor.t.sol`: every `setUserApproved` call passes a reference.
+- Changed: `contracts/.gas-snapshot`: 19 new `AccountLinkTest` lines; 133 changed; none removed.
+  29 over 10%, all from this change: a user approval writes two more slots (about 44,000 gas the
+  first time) and reads two more on every approval and revoke, and every value snapshot reads
+  each actor's link. The largest, `test_adminOwnAddress_canBeApproved` +53.9%, is one first
+  approval.
+- Changed: `INSTRUCTION.md`: none. `DECISION.md` open items O-040 and O-041 (C-052).
+- Changed (local, not pushed): `docs/decisions.md` D-60 approved with the case table;
+  `docs/event-catalogue.md` `UserApprovalSet(address,bool,bytes32)`, topic0
+  `0x813b7aca89556c5c342506e8b0d03b31ddf51fe9ac7f2b76de084c121324f3ce` (`cast keccak`), with the
+  note that the reference is never derived from personal data.
+Size: `IndicoLedger` runtime 12,045 B to 12,422 B (+377 B), margin 12,154 B.
+Slither, CI step 7 body on a scratch copy: exit 0, no IR error, 7 findings, the same as P1.12.
+Found while building (test errors, none in the contract): the fixture's revoke passed
+`ledger.accountRefOf(user)` as an argument after `vm.prank`, so the read took the prank; a
+"not linked" assertion compared `walletOfAccount(0)` to the wallet; the exact-writes fuzz drew a
+reference the fixture had already linked, now remapped (INSTRUCTION 1.2).
+Gate (logs in `docs/gate-logs/D-60/`, Forge 1.8.3; red phase `red.log`: every suite that approves
+a user in its setup failing on the missing three-argument function):
+- G1 pass: 537 passed, 0 failed, 0 skipped, exit 0.
+- G2 pass: src lines 258/258, branches 76/76.
+- G3 pass, G4 pass: exit 0 each (no new lint).
+- G5 pass: seeds 1 and 2, 537 passed each.
+- G6 pass: three runs, 537 passed each.
+- G7 pass: `ci` profile, 537 passed.
+- G8 pass: `IndicoLedger` 12,422 B; snapshot check 486 passed.
+- G9 pass, `G9.log`: 20 of 20 caught, on a scratch copy, then byte-identical to the real source.
+- G13 pass.
+- G10 pending: owner pushes.
+Mutations (G9): A1 zero reference accepted; A2 wallet-linked check removed; A3 account-linked
+check removed; A4 revoke mismatch removed; A5 a repeat approval not recognised; A6 and A7 either
+link not written; A8 the event without the reference; A9 the link checked before the role rules;
+A10 the account checked before the wallet. P1.2's M1 to M10 rerun on the reopened code. All
+caught.
+Open items: none raised (O-040 and O-041 in C-052).
+Commit: feat: link each approved user wallet to one app account by an opaque reference, one-to-one (D-60, P1.2 reopen)
+
 ---
 
 ## Open items

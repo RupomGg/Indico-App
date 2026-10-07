@@ -143,6 +143,7 @@ abstract contract StateSnapshot is FixtureBase {
         uint8[] participantRole;
         bool[] termsSigned;
         bytes32[] signedTermsHash;
+        bytes32[] accountRef;
         uint256 totalLent;
         uint256 poolUsdc;
         uint256 totalCredit;
@@ -170,6 +171,7 @@ abstract contract StateSnapshot is FixtureBase {
         s.participantRole = new uint8[](n);
         s.termsSigned = new bool[](n);
         s.signedTermsHash = new bytes32[](n);
+        s.accountRef = new bytes32[](n);
         for (uint256 i; i < n; ++i) {
             address a = actors[i];
             s.credit[i] = ledger.credit(a);
@@ -181,6 +183,7 @@ abstract contract StateSnapshot is FixtureBase {
             s.participantRole[i] = ledger.participantRole(a);
             s.termsSigned[i] = ledger.termsSigned(a);
             s.signedTermsHash[i] = ledger.signedTermsHash(a);
+            s.accountRef[i] = ledger.accountRefOf(a);
         }
         s.totalLent = ledger.totalLent();
         s.poolUsdc = ledger.poolUsdc();
@@ -208,6 +211,7 @@ abstract contract StateSnapshot is FixtureBase {
         _assertEqU8(s.participantRole, before.participantRole, "participantRole");
         assertEq(s.termsSigned, before.termsSigned, "termsSigned");
         assertEq(s.signedTermsHash, before.signedTermsHash, "signedTermsHash");
+        assertEq(s.accountRef, before.accountRef, "accountRef");
         assertEq(s.totalLent, before.totalLent, "totalLent");
         assertEq(s.poolUsdc, before.poolUsdc, "poolUsdc");
         assertEq(s.totalCredit, before.totalCredit, "totalCredit");
