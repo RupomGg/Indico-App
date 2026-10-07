@@ -2012,6 +2012,22 @@ by starting `t` at `START + 1`. A test error, not a contract one.
 Open items: closed O-013, O-020, O-021, O-025, O-033, O-034, O-038.
 Commit: feat: liquidate after the due date and a 7-day grace after any unpause, late extension after a pause (P1.11)
 
+### C-051 · P1.11 done · CI and Deep fuzz green on P1.11; D-59 approved · 2026-10-07
+Type: chore
+Files: none changed in code.
+- D-59 approved by the owner (`PauseTimesSet` on every `pause` and `unpause`).
+- G10: CI run 37553979384 on `1017b5e` (`main`) green, `docs/gate-logs/P1.11/G10.log`.
+- Deep fuzz pass: run 37554194027 on `1017b5e`, dispatched by the owner, its commit checked
+  against `main` when it appeared: `check` green, **21 of 21 shards green**; each shard's D-42
+  guard passed, so every fuzz test ran 5,000,000 times. P1.11 is done (INSTRUCTION 1.2).
+- Shard times (job wall minutes) against the C-050 estimates: `Pool.t.sol` 91.0 (estimate about
+  110, was 57 before its tests moved to real loans), `Liquidate.t.sol` 40.4 (about 42),
+  `Extend.t.sol` 39.8 (about 36), `Repay.t.sol` 68.6; the longest is 25% of 360. The two new
+  matrix files take under half a minute each.
+- Raised O-039 (P1.13): run every test on a realistic clock instead of Forge's default of 1.
+Open items: raised O-039.
+Commit: docs: record P1.11 CI and Deep fuzz green; O-039 for P1.13
+
 ---
 
 ## Open items
@@ -2056,3 +2072,4 @@ Commit: feat: liquidate after the due date and a 7-day grace after any unpause, 
 | O-036 | The 11 `Math.t.sol` properties pinned by `forge-config: default.fuzz.runs = 100000` also run 100,000 times under `deep` (run 37169050467), so `LedgerMath` has never had 5,000,000 runs. Fix: a `deep` inline line per test, or move the pin; reopens P0.1 | engineer, owner | Closed by C-040 |
 | O-037 | Build D-43 (state-diff assertions instead of the full re-read snapshot) as its own change with the full gate: every G9 mutation from P1.1 to P1.7 still caught plus one new unexpected-slot mutation, gas per run before and after on the three heaviest fuzz tests, new Deep estimate per shard. After P1.7 merges, before P1.8 | engineer | Closed by C-041 |
 | O-038 | `repay` is `whenNotPaused` (contract-spec 6), so a pause that lasts past a loan's due date stops the borrower repaying, and at the unpause anyone may liquidate it. The same pause can span a loan's whole extension window, so `extend` is impossible too (C-047). Owner decides before P1.11: accept and say so in the terms and pause policy, exempt `repay` from the pause, or handle it in `liquidate` (D-48) | owner | Closed by C-050 |
+| O-039 | Forge starts every test's clock at 1 second, far below any real Base timestamp (about 1.8e9) and below the 7-day grace. It hid the first-pause case (a pause at time 1 sits inside a grace that "ends" at 7 days, so `lastPausedAt` is not set) until the dedicated P1.11 tests ran at a realistic time (C-050). Proposal for P1.13: `FixtureBase.setUp` warps to a realistic timestamp (1,800,000,000) so every test runs on a realistic clock. Expected cost: every test that pauses also writes `lastPausedAt` (one more storage write, so those snapshot lines rise, mostly under 10%); exact-write and value-snapshot tests that pause are re-checked, the `_expectPaused` model already covers them; tests that warp to an absolute time stay correct, those that warp relative to `block.timestamp` shift but keep their meaning. Measured and decided before the change, not done now | engineer, owner | P1.13 |
