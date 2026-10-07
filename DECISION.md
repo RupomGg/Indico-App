@@ -2028,6 +2028,63 @@ Files: none changed in code.
 Open items: raised O-039.
 Commit: docs: record P1.11 CI and Deep fuzz green; O-039 for P1.13
 
+### C-052 · P1.12 · Views · 2026-10-07
+Type: feature
+Decisions: none new; D-38, D-45 applied. D-60 (account link) approved by the owner, built next.
+Session start (INSTRUCTION 1.2): Deep fuzz run 37554194027 on P1.11's code green (C-051), so
+P1.12 was built on `main`.
+Files:
+- Changed: `contracts/src/IndicoLedger.sol`: the eight views the interface declares (contract-spec
+  5): `available` (credit minus the lock; `public`, used by `maxBorrow`), `maxBorrow`
+  (`mulDivDown(available, LTV_BPS, BPS)`, so no overflow even for a merchant above 2^128),
+  `collateralFor` (`mulDivUp(principal, BPS, LTV_BPS)`, the computation `requestLoan` uses, D-45;
+  `MathOverflow` near 2^256, never a panic), `poolTotalAssets` (`poolUsdc + totalLent`),
+  `poolAvailable` (`poolUsdc`), `sharesToAssets` and `assetsToShares` (the pool's existing
+  conversions, rounded down, D-38), `maxWithdraw` (the claim capped by `poolUsdc`, exactly what
+  `withdrawAll` pays). `sharesToAssets` and `assetsToShares` were declared but not listed in
+  INSTRUCTION's P1.12; built here because `maxWithdraw` uses one and P1.13 makes the ledger
+  inherit the interface (O-014). No suppression.
+- New: `contracts/test/unit/Views.t.sol`: partition table, 18 tests: `available` for an unknown
+  address, with a lock, unchanged by a default; `maxBorrow` exact values (0, 1, 2, 999_999_999,
+  1_000e6), `requestLoan(maxBorrow)` opens and one wei more reverts, a credit near 2^256 without a
+  panic; `collateralFor` exact values and `MathOverflow` at `uint256` max; the pool figures empty,
+  deposited, lent with a default, fully lent; `maxWithdraw` with no shares; a direct transfer moves
+  no figure (with a loan out, so the cap must come from `poolUsdc`); both share conversions at
+  `uint256` max (a value, and the named `MathOverflow`); every view works while paused and writes
+  nothing; fuzz: `maxBorrow` is the exact boundary for any credit, `collateralFor` is 1.25x
+  rounded up, monotonic and equal to the loan's lock, `assetsToShares` equals what a deposit mints
+  and `maxWithdraw` equals what `withdrawAll` pays, after any loss.
+- Changed: `contracts/.gas-snapshot`: 15 new `ViewsTest` lines; 371 changed by dispatch only, at
+  most 1.81%; none removed.
+- Changed: `DECISION.md` open items: O-040 rewritten with the owner's notes, O-041 raised.
+- Changed (local, not pushed): `docs/decisions.md` D-60 (approved, built in the next change).
+Size: `IndicoLedger` runtime 11,578 B to 12,045 B (+467 B), margin 12,531 B.
+Slither, CI step 7 body on a scratch copy: exit 0, no IR error, 7 findings, the same as P1.11.
+Gate (logs in `docs/gate-logs/P1.12/`, Forge 1.8.3; red phase `red.log`: 17 of 17 failing on the
+missing views):
+- G1 pass: 516 passed, 0 failed, 0 skipped, exit 0.
+- G2 pass: src lines 245/245, branches 70/70.
+- G3 pass, G4 pass: exit 0 each.
+- G5 pass: seeds 1 and 2, 516 passed each.
+- G6 pass: three runs, 516 passed each.
+- G7 pass: `ci` profile, 516 passed.
+- G8 pass: `IndicoLedger` 12,045 B; snapshot check 467 passed.
+- G9 pass, `G9.log`: 10 of 10 caught. The first full run (`G9-first.log`) missed V10
+  (`maxWithdraw` capped by `balanceOf` instead of `poolUsdc`): no test had a claim above the cash
+  while stray USDC sat in the ledger. The direct-transfer test now lends first, and the whole
+  gate and all ten mutations ran again on the final tests.
+- G13 pass.
+- G10 pending: owner pushes.
+Mutations (G9): V1 `available` ignores the lock; V2 `maxBorrow` rounds up; V3 ratio inverted; V4
+`collateralFor` rounds down; V5 `poolTotalAssets` ignores loans; V6 `poolAvailable` counts loans;
+V7 `sharesToAssets` converts the wrong way; V8 `assetsToShares` rounds up; V9 `maxWithdraw`
+uncapped; V10 `maxWithdraw` capped by `balanceOf`. All caught.
+Also in this change: the full-history secret scan rerun on 44 commits, clean; the same three
+exposures as before (the author email of the root commit, the line naming a local notes file,
+the attacker's commits still served by id).
+Open items: raised O-041; O-040 updated.
+Commit: feat: read views for credit, borrowing limit, collateral, pool figures and withdrawable amount (P1.12)
+
 ---
 
 ## Open items
@@ -2073,3 +2130,5 @@ Commit: docs: record P1.11 CI and Deep fuzz green; O-039 for P1.13
 | O-037 | Build D-43 (state-diff assertions instead of the full re-read snapshot) as its own change with the full gate: every G9 mutation from P1.1 to P1.7 still caught plus one new unexpected-slot mutation, gas per run before and after on the three heaviest fuzz tests, new Deep estimate per shard. After P1.7 merges, before P1.8 | engineer | Closed by C-041 |
 | O-038 | `repay` is `whenNotPaused` (contract-spec 6), so a pause that lasts past a loan's due date stops the borrower repaying, and at the unpause anyone may liquidate it. The same pause can span a loan's whole extension window, so `extend` is impossible too (C-047). Owner decides before P1.11: accept and say so in the terms and pause policy, exempt `repay` from the pause, or handle it in `liquidate` (D-48) | owner | Closed by C-050 |
 | O-039 | Forge starts every test's clock at 1 second, far below any real Base timestamp (about 1.8e9) and below the 7-day grace. It hid the first-pause case (a pause at time 1 sits inside a grace that "ends" at 7 days, so `lastPausedAt` is not set) until the dedicated P1.11 tests ran at a realistic time (C-050). Proposal for P1.13: `FixtureBase.setUp` warps to a realistic timestamp (1,800,000,000) so every test runs on a realistic clock. Expected cost: every test that pauses also writes `lastPausedAt` (one more storage write, so those snapshot lines rise, mostly under 10%); exact-write and value-snapshot tests that pause are re-checked, the `_expectPaused` model already covers them; tests that warp to an absolute time stay correct, those that warp relative to `block.timestamp` shift but keep their meaning. Measured and decided before the change, not done now | engineer, owner | P1.13 |
+| O-040 | Account link (D-60): an app account is linked to exactly one wallet and a wallet to one account, permanently for now. **Under a permanent link, a lost wallet (a lost Tangem card, for example) leaves that user's credit and account stuck for good**, so an admin re-link (option B) will probably be needed. It is the client's open question "can a user's bound wallet ever be changed" (PRD U-05), kept open by the owner until the full contract is built and decided **before deployment** (P3.1), because the contract is immutable. The options presented then must cover: moving only a user with no active loan and no locked credit; how the credit moves with the account (one user's own wallets, so not a transfer between users, S-06, but it must be designed and tested); a time delay before the move takes effect; and an event the indexer reads | owner, client | before P3.1 |
+| O-041 | Backend handover (D-60): the `accountRef` passed to `setUserApproved` must be random, 32 random bytes or a UUIDv4, and never derived from the email or any personal data, since a hash of an email is reversed by hashing known emails. The contract cannot enforce it; the backend owns it. Goes into the P1.13 handover notes | backend | P1.13 handover |

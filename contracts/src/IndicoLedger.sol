@@ -358,6 +358,53 @@ contract IndicoLedger is AccessControlDefaultAdminRules, Pausable, ReentrancyGua
     }
 
     // ---------------------------------------------------------------------------------------
+    // Views, contract-spec 5
+    // ---------------------------------------------------------------------------------------
+
+    /// @notice Credit the user can spend or lock: `credit - lockedCredit`.
+    function available(address user) public view returns (uint256) {
+        return credit[user] - lockedCredit[user];
+    }
+
+    /// @notice The largest principal `available(user)` can secure, rounded down. A UI helper:
+    ///         `requestLoan` checks `collateralFor`, which this always passes.
+    function maxBorrow(address user) external view returns (uint256) {
+        return LedgerMath.mulDivDown(available(user), LTV_BPS, BPS);
+    }
+
+    /// @notice Credit locked for a loan of `principal`: 1.25x, rounded up in the pool's favour.
+    ///         The same computation `requestLoan` uses (D-45).
+    function collateralFor(uint256 principal) external pure returns (uint256) {
+        return LedgerMath.mulDivUp(principal, BPS, LTV_BPS);
+    }
+
+    /// @notice The pool's cash plus what is out on loans (D-38).
+    function poolTotalAssets() external view returns (uint256) {
+        return poolUsdc + totalLent;
+    }
+
+    /// @notice The pool's cash, available to lend or withdraw (D-38).
+    function poolAvailable() external view returns (uint256) {
+        return poolUsdc;
+    }
+
+    /// @notice `shareAmount` in USDC at the current price, rounded down (D-38).
+    function sharesToAssets(uint256 shareAmount) external view returns (uint256) {
+        return _toAssets(shareAmount);
+    }
+
+    /// @notice Shares a deposit of `assets` would mint now, rounded down (D-38).
+    function assetsToShares(uint256 assets) external view returns (uint256) {
+        return _toShares(assets, false);
+    }
+
+    /// @notice What `withdrawAll` would pay `merchant` now: their claim, capped by the cash.
+    function maxWithdraw(address merchant) external view returns (uint256) {
+        uint256 claim = _toAssets(shares[merchant]);
+        return claim < poolUsdc ? claim : poolUsdc;
+    }
+
+    // ---------------------------------------------------------------------------------------
     // Loans, contract-spec 6.6
     // ---------------------------------------------------------------------------------------
 
