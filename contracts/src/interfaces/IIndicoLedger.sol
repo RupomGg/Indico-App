@@ -75,6 +75,10 @@ interface IIndicoLedger {
         uint256 collateral,
         address caller
     );
+    /// @notice After every `pause` and `unpause`: the start of the latest disruption (merged per
+    ///         D-58) and the last unpause, so the grace end (`lastUnpausedAt + 7 days`) and the
+    ///         late-extension rule can be shown without replaying the merge (D-59).
+    event PauseTimesSet(uint64 lastPausedAt, uint64 lastUnpausedAt);
     /// @notice `amount` of `user`'s credit was locked against `loanId`.
     event CollateralLocked(address indexed user, uint256 amount, uint256 indexed loanId);
     /// @notice `amount` of `user`'s credit locked against `loanId` was released.
@@ -139,6 +143,9 @@ interface IIndicoLedger {
     error DivisionByZero();
     /// @notice Raised by `lib/Math.sol`; same selector as `LedgerMath.MathOverflow`.
     error MathOverflow();
+    /// @notice `liquidate` within `LIQUIDATION_GRACE` of the last unpause; allowed after `endsAt`
+    ///         (D-54).
+    error LiquidationGracePeriod(uint256 endsAt);
 
     // ---------------------------------------------------------------------------------------
     // Administration (spec 6.1)
@@ -162,10 +169,13 @@ interface IIndicoLedger {
     ///      roles swapped. Emits `MerchantApprovalSet`.
     function setMerchantApproved(address m, bool approved) external;
 
-    /// @notice Stop every `whenNotPaused` function. GUARDIAN_ROLE. Callable while paused.
+    /// @notice Stop every `whenNotPaused` function. GUARDIAN_ROLE.
+    /// @dev Records `lastPausedAt`, unless the pause starts inside the grace of the previous
+    ///      one, which then counts as the same disruption (D-58).
     function pause() external;
 
-    /// @notice Resume normal operation. GUARDIAN_ROLE. Callable while paused.
+    /// @notice Resume normal operation. GUARDIAN_ROLE.
+    /// @dev Records `lastUnpausedAt`, which starts the liquidation grace (D-54).
     function unpause() external;
 
     // ---------------------------------------------------------------------------------------
@@ -265,12 +275,20 @@ interface IIndicoLedger {
     /// @dev `whenNotPaused`. Reverts, in order (D-49), `LoanNotFound`, `LoanNotActive`,
     ///      `NotBorrower`, `NotApprovedUser` (a revoked borrower cannot extend, D-50; repaying
     ///      still works), `ExtensionWindowNotOpen(dueDate - EXTENSION_WINDOW)` before the window,
-    ///      `ExtensionWindowClosed` after the due date. Any signed terms version is enough
+    ///      `ExtensionWindowClosed` after the due date, except that a loan due on or after
+    ///      `lastPausedAt` may still be extended after its due date until
+    ///      `lastUnpausedAt + LIQUIDATION_GRACE` (D-58). Any signed terms version is enough
     ///      (D-52). Emits `LoanExtended(loanId, newDueDate, countAfter)`.
     function extend(uint256 loanId) external;
 
-    /// @notice Default an Active loan past its due date. Permissionless. No USDC moves.
-    /// @dev Burns the collateral from the borrower into `poolCredit`. Emits `LoanDefaulted`.
+    /// @notice Default an Active loan past its due date. Permissionless, the borrower included
+    ///         (D-56). No USDC moves.
+    /// @dev `whenNotPaused`. Reverts, in order, `LoanNotFound`, `LoanNotActive`,
+    ///      `NotYetDue(dueDate)` until `block.timestamp > dueDate`, then
+    ///      `LiquidationGracePeriod(lastUnpausedAt + LIQUIDATION_GRACE)` until that has passed too
+    ///      (D-54). Burns the collateral from the borrower's credit and lock into `poolCredit`;
+    ///      `totalLent` falls by the principal, so every share loses value together. Emits only
+    ///      `LoanDefaulted` (D-57).
     function liquidate(uint256 loanId) external;
 
     // ---------------------------------------------------------------------------------------
@@ -310,6 +328,11 @@ interface IIndicoLedger {
     function poolUsdc() external view returns (uint256);
 
     function nextLoanId() external view returns (uint256);
+    /// @notice Start of the latest disruption: a pause, merged with any pause that began inside
+    ///         the previous one's grace (D-58). 0 before the first pause.
+    function lastPausedAt() external view returns (uint64);
+    /// @notice When the ledger was last unpaused; 0 before the first unpause (D-54).
+    function lastUnpausedAt() external view returns (uint64);
     function loans(uint256 loanId)
         external
         view

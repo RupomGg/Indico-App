@@ -15,12 +15,14 @@ abstract contract Matrix is Test {
     error LoanTimeOutOfRange(uint256 t);
     error DueDateBeforeWindow(uint64 dueDate);
 
+    /// @dev Loan states of the loan matrix (`Actors.LoanState`), docs/input-testing.md 2.1.
+    uint256 internal constant LOAN_STATES = 4;
     /// @dev Time axis of the loan matrix, docs/input-testing.md 2.1.
     uint256 internal constant LOAN_TIMES = 5;
 
     /// @dev Loan matrix: 4 states x 3 actions x 3 callers x 5 times = 180 cells.
     function _loanDims() internal pure returns (uint256[] memory) {
-        return _dims(4, 3, 3, LOAN_TIMES);
+        return _dims(LOAN_STATES, 3, 3, LOAN_TIMES);
     }
 
     /// @notice The five moments the loan matrix tests, around the D-13 extension window:

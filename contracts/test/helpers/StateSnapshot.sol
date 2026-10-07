@@ -4,6 +4,7 @@ pragma solidity 0.8.26;
 import {VmSafe} from "forge-std/Vm.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {FixtureBase} from "./Fixture.sol";
+import {LIQUIDATION_GRACE} from "../../src/lib/Constants.sol";
 
 /// @notice Two ways to prove what a call changed.
 ///
@@ -151,6 +152,8 @@ abstract contract StateSnapshot is FixtureBase {
         uint256 nextLoanId;
         bytes32 termsHash;
         bool paused;
+        uint64 lastPausedAt;
+        uint64 lastUnpausedAt;
         /// @dev keccak of every stored loan, so any change to any loan field shows up.
         bytes32 loansHash;
     }
@@ -188,6 +191,8 @@ abstract contract StateSnapshot is FixtureBase {
         s.nextLoanId = ledger.nextLoanId();
         s.termsHash = ledger.termsHash();
         s.paused = Pausable(address(ledger)).paused();
+        s.lastPausedAt = ledger.lastPausedAt();
+        s.lastUnpausedAt = ledger.lastUnpausedAt();
         s.loansHash = _loansHash(s.nextLoanId);
     }
 
@@ -212,7 +217,23 @@ abstract contract StateSnapshot is FixtureBase {
         assertEq(s.nextLoanId, before.nextLoanId, "nextLoanId");
         assertEq(s.termsHash, before.termsHash, "termsHash");
         assertEq(s.paused, before.paused, "paused");
+        assertEq(s.lastPausedAt, before.lastPausedAt, "lastPausedAt");
+        assertEq(s.lastUnpausedAt, before.lastUnpausedAt, "lastUnpausedAt");
         assertEq(s.loansHash, before.loansHash, "loans");
+    }
+
+    /// @dev Expected pause timestamps after a successful `pause` (D-58: a pause starting inside
+    ///      the previous grace keeps the earlier start) or `unpause`, at the current time.
+    function _expectPaused(Snapshot memory s) internal view {
+        s.paused = true;
+        if (block.timestamp > uint256(s.lastUnpausedAt) + LIQUIDATION_GRACE) {
+            s.lastPausedAt = uint64(block.timestamp);
+        }
+    }
+
+    function _expectUnpaused(Snapshot memory s) internal view {
+        s.paused = false;
+        s.lastUnpausedAt = uint64(block.timestamp);
     }
 
     function _assertEqU8(uint8[] memory a, uint8[] memory b, string memory what) private pure {

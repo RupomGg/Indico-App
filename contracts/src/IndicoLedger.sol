@@ -25,7 +25,8 @@ import {
     BPS,
     LTV_BPS,
     TERM,
-    EXTENSION_WINDOW
+    EXTENSION_WINDOW,
+    LIQUIDATION_GRACE
 } from "./lib/Constants.sol";
 
 /// @title IndicoLedger
@@ -68,7 +69,6 @@ contract IndicoLedger is AccessControlDefaultAdminRules, Pausable, ReentrancyGua
     mapping(address => uint256) public credit;
     mapping(address => uint256) public lockedCredit;
     uint256 public totalCredit;
-    // forge-lint: disable-next-line(uninitialized-state)
     uint256 public poolCredit;
 
     mapping(bytes32 => bool) public assetRegistered;
@@ -81,6 +81,12 @@ contract IndicoLedger is AccessControlDefaultAdminRules, Pausable, ReentrancyGua
 
     uint256 public nextLoanId;
     mapping(uint256 => Loan) public loans;
+
+    /// @notice Start of the latest disruption: a pause, merged with any pause that began inside
+    ///         the previous one's grace (D-58). 0 before the first pause.
+    uint64 public lastPausedAt;
+    /// @notice When the ledger was last unpaused, the start of the grace (D-54). 0 before.
+    uint64 public lastUnpausedAt;
 
     // ---------------------------------------------------------------------------------------
     // Constructor, contract-spec 6.0
@@ -442,13 +448,53 @@ contract IndicoLedger is AccessControlDefaultAdminRules, Pausable, ReentrancyGua
         // forge-lint: disable-next-line(block-timestamp)
         if (block.timestamp < opensAt) revert IIndicoLedger.ExtensionWindowNotOpen(opensAt);
         // forge-lint: disable-next-line(block-timestamp)
-        if (block.timestamp > dueDate) revert IIndicoLedger.ExtensionWindowClosed();
+        if (block.timestamp > dueDate && !_lateExtensionAllowed(dueDate)) {
+            revert IIndicoLedger.ExtensionWindowClosed();
+        }
 
         uint64 newDueDate = SafeCast.toUint64(uint256(dueDate) + TERM);
         uint16 count = SafeCast.toUint16(uint256(loan.extensionCount) + 1);
         loan.dueDate = newDueDate;
         loan.extensionCount = count;
         emit IIndicoLedger.LoanExtended(loanId, newDueDate, count);
+    }
+
+    /// @notice Default an Active loan past its due date and past any grace after an unpause.
+    ///         Permissionless, the borrower included (6.6, D-07, D-56). No USDC moves.
+    function liquidate(uint256 loanId) external whenNotPaused {
+        Loan storage loan = loans[loanId];
+        address borrower = loan.borrower;
+        if (borrower == address(0)) revert IIndicoLedger.LoanNotFound();
+        if (loan.status != uint8(IIndicoLedger.LoanStatus.Active)) {
+            revert IIndicoLedger.LoanNotActive();
+        }
+        uint64 dueDate = loan.dueDate;
+        // Loan deadlines, the one kind of condition allowed to read the time (D-26, D-53).
+        // forge-lint: disable-next-line(block-timestamp)
+        if (block.timestamp <= dueDate) revert IIndicoLedger.NotYetDue(dueDate);
+        uint256 graceEndsAt = uint256(lastUnpausedAt) + LIQUIDATION_GRACE;
+        // forge-lint: disable-next-line(block-timestamp)
+        if (block.timestamp <= graceEndsAt) {
+            revert IIndicoLedger.LiquidationGracePeriod(graceEndsAt);
+        }
+
+        uint256 principal = loan.principal;
+        uint256 collateral = loan.collateral;
+        loan.status = uint8(IIndicoLedger.LoanStatus.Defaulted);
+        lockedCredit[borrower] -= collateral;
+        credit[borrower] -= collateral;
+        totalCredit -= collateral;
+        poolCredit += collateral;
+        totalLent -= principal;
+        emit IIndicoLedger.LoanDefaulted(loanId, borrower, principal, collateral, msg.sender);
+    }
+
+    /// @dev D-58: a loan due on or after the start of the latest disruption may still be
+    ///      extended after its due date, until the grace that follows the unpause has ended.
+    function _lateExtensionAllowed(uint64 dueDate) private view returns (bool) {
+        if (dueDate < lastPausedAt) return false;
+        // forge-lint: disable-next-line(block-timestamp)
+        return block.timestamp <= uint256(lastUnpausedAt) + LIQUIDATION_GRACE;
     }
 
     /// @dev The only way credit enters circulation. Refuses a mint that would push one account
@@ -465,10 +511,18 @@ contract IndicoLedger is AccessControlDefaultAdminRules, Pausable, ReentrancyGua
     /// @notice Stop every `whenNotPaused` function. Reverts `EnforcedPause` if already paused.
     function pause() external onlyRole(GUARDIAN_ROLE) {
         _pause();
+        // A pause starting inside the previous grace is the same disruption (D-58).
+        // forge-lint: disable-next-line(block-timestamp)
+        if (block.timestamp > uint256(lastUnpausedAt) + LIQUIDATION_GRACE) {
+            lastPausedAt = SafeCast.toUint64(block.timestamp);
+        }
+        emit IIndicoLedger.PauseTimesSet(lastPausedAt, lastUnpausedAt);
     }
 
     /// @notice Resume normal operation. Reverts `ExpectedPause` if not paused.
     function unpause() external onlyRole(GUARDIAN_ROLE) {
         _unpause();
+        lastUnpausedAt = SafeCast.toUint64(block.timestamp);
+        emit IIndicoLedger.PauseTimesSet(lastPausedAt, lastUnpausedAt);
     }
 }

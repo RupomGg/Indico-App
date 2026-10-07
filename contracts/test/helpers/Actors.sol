@@ -47,7 +47,6 @@ abstract contract Actors is StateSnapshot, Fixture, Matrix {
     }
 
     uint256 internal constant PARTICIPANTS = 9;
-    uint256 internal constant LOAN_STATES = 4;
     uint256 internal constant POOL_STATES = 6;
 
     /// @dev Returned by `_poolInState` when no loan is left Active.
@@ -91,9 +90,10 @@ abstract contract Actors is StateSnapshot, Fixture, Matrix {
 
     /// @notice A loan of `principal` borrowed by `alice`, in state `s`. The clock is left
     ///         where it was, so the caller positions time relative to the loan's due date.
-    /// @return loanId For `NonExistent`, `nextLoanId`, the first id that does not exist.
+    /// @return loanId For `NonExistent`, `nextLoanId + 1`, the first id not yet issued (ids
+    ///         start at 1 and `nextLoanId` is the newest, D-44).
     function _loanInState(LoanState s, uint256 principal) internal returns (uint256 loanId) {
-        if (s == LoanState.NonExistent) return ledger.nextLoanId();
+        if (s == LoanState.NonExistent) return ledger.nextLoanId() + 1;
 
         loanId = _openLoan(alice, principal);
         if (s == LoanState.Repaid) {

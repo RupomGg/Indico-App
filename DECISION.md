@@ -1896,6 +1896,122 @@ Files: none changed.
   covers them.
 Commit: docs: record P1.10 CI and Deep fuzz green
 
+### C-050 · P1.11 · liquidate, grace after unpause, late extension, full loan and pool matrices · 2026-10-07
+Type: feature
+Decisions: D-54, D-55, D-56, D-57, D-58 (owner decided), D-53 (four more lines, owner approved),
+D-59 (proposed, for approval at this gate); D-07, D-09, D-26, D-38 applied
+Reopens P1.1 (`pause`, `unpause`) and P1.10 (`extend`): their tests and G9 mutations rerun inside
+this gate (INSTRUCTION 1.3). Built on `main` (P1.10's Deep fuzz green, C-049).
+Files:
+- Changed: `contracts/src/IndicoLedger.sol`:
+  - `liquidate(loanId)`, `whenNotPaused`, permissionless, the borrower included (D-56); reverts in
+    order `LoanNotFound`, `LoanNotActive`, `NotYetDue(dueDate)` until `now > dueDate`,
+    `LiquidationGracePeriod(lastUnpausedAt + 7 days)` until that has passed too (D-54, D-55);
+    effects: status Defaulted, `lockedCredit[b] -= k`, `credit[b] -= k`, `totalCredit -= k`,
+    `poolCredit += k`, `totalLent -= p`; no USDC moves; emits only `LoanDefaulted` (D-57).
+  - New state `lastPausedAt`, `lastUnpausedAt` (`uint64`, one slot, slot 21). `pause` records
+    `lastPausedAt` unless the pause starts inside the previous grace (merge rule, D-58);
+    `unpause` records `lastUnpausedAt`; both emit `PauseTimesSet(lastPausedAt, lastUnpausedAt)`
+    (D-59, proposed).
+  - `extend`: after the due date it is also allowed when `dueDate >= lastPausedAt` and
+    `now <= lastUnpausedAt + 7 days` (private `_lateExtensionAllowed`, D-58); the new due date is
+    still the old one + 90 days.
+  - Lint: four more `block-timestamp` lines under D-53 (two in `liquidate`, one in
+    `_lateExtensionAllowed`, one in `pause`); D-18's `poolCredit` suppression deleted (O-020).
+- Changed: `contracts/src/lib/Constants.sol`: `LIQUIDATION_GRACE = 7 days`.
+- Changed: `contracts/src/interfaces/IIndicoLedger.sol`: error `LiquidationGracePeriod(uint256)`;
+  event `PauseTimesSet(uint64, uint64)`; views `lastPausedAt()`, `lastUnpausedAt()`; comments on
+  `liquidate`, `extend`, `pause`, `unpause`.
+- New: `contracts/test/unit/Liquidate.t.sol`: partition table, 30 tests: exact effects and event,
+  only that event, exactly six net writes; available credit unchanged and spending afterwards up
+  to exactly the same amount (one more reverts); share price down by exactly the principal; other
+  loans and users untouched; at the due date, right after opening, inside the window, after three
+  extensions (the extended due date, both sides); same block, repay then liquidate and liquidate
+  then repay (`LoanNotActive`, one set of effects); twice; extend after; ids 0, one past the end,
+  max; eight callers including the borrower, the ledger and USDC addresses, each named in the
+  event; a revoked borrower's loan; paused; the grace: blocks 7 days, still at its end exactly,
+  through one second later; repay during the grace; a short pause long after the due date still
+  graces (the accepted cost in D-54); no grace before the first unpause; in one block during the
+  grace liquidate is refused and the late extension goes through; the last loan defaults with
+  shares outstanding (deposit and withdraw work, no division by zero, the old holder's shares worth
+  under 1 wei); the `_default` clock test (O-021); four check-order tests; fuzz: succeeds exactly
+  when past the due date and past the grace (exact writes, else nothing changed), any caller,
+  credit plus pool credit conserved and available credit unchanged. Credit >= lockedCredit for
+  every actor after every liquidation.
+- New: `contracts/test/unit/LoanMatrix.t.sol`: the 180-cell loan matrix (IT 2.1) on real loans,
+  its expected table as code, plus a size check.
+- New: `contracts/test/unit/PoolStateMatrix.t.sol`: the 24-cell pool-state matrix (IT 2.4, O-034)
+  on real loans and a real default; `FullyLent` x withdraw is the named `InsufficientLiquidity`.
+- Changed: `contracts/test/unit/Extend.t.sol`: 13 late-extension tests (D-58): through to the
+  grace end, one second after, overdue before the pause, due inside the grace after the unpause,
+  due after the grace, two merged pauses, two separate pauses, two in one block (short pause: the
+  second reverts `ExtensionWindowNotOpen(due + 90 days)`), a 190-day pause (three catch-up
+  extensions, then the normal window), revoked (D-50), an old terms version (D-52), paused again;
+  and a fuzz over pause start, length and call time.
+- Changed: `contracts/test/unit/Pause.t.sol`: five pause-timestamp tests (first pause ever with
+  both timestamps 0, unpause, merge inside the grace up to its last second, a new disruption one
+  second after, exact writes); `PauseTimesSet` asserted; the two "emits nothing else" tests now
+  expect two events; pause matrix 16 x 3 with `liquidate`, whose paused-then-unpaused cell
+  reverts `LiquidationGracePeriod` by design.
+- Changed: `contracts/test/unit/ParticipantMatrix.t.sol`: `liquidate` column; all 13 columns,
+  117 of 117 cells (O-025).
+- Changed: `contracts/test/unit/Constructor.t.sol`: the no-USDC sweep gains `liquidate` (27 calls).
+- Changed: `contracts/test/unit/Pool.t.sol`: every simulated loan replaced by real ones
+  (`_lendOut`, `_repayLoan`; O-033).
+- Changed: `contracts/test/helpers/Fixture.sol`: `SLOT_PAUSE_TIMES`; `_lendOut(lent, lost)` and
+  `_repayLoan` replace `_simulateLend`, `_simulateRepay`, `_simulateDefault`, `LOAN_SINK` and
+  `_writeUint`, deleted.
+- Changed: `contracts/test/helpers/StateSnapshot.sol`: records both pause timestamps;
+  `_expectPaused` and `_expectUnpaused` model them, the merge rule included. Forge starts the
+  clock at 1, so a first pause in a test at time 1 sits inside a "grace" ending at 7 days and does
+  not set `lastPausedAt`; on Base the clock is about 1.8 billion, so the contract needs no special
+  case (D-54) and the dedicated tests run at a realistic time.
+- Changed: `contracts/test/helpers/StateDiff.t.sol`: the slot check uses a real loan and covers
+  the pause-times slot.
+- Changed: `contracts/test/helpers/Matrix.sol`, `Actors.sol`: `LOAN_STATES` moved into
+  `Matrix.sol` and used by `_loanDims` (O-013; kept in `Matrix.sol` so `Helpers.t.sol` still tests
+  it without a ledger); `_loanInState(NonExistent)` returns `nextLoanId + 1`, the first id not yet
+  issued since D-44 (it returned `nextLoanId`, the newest loan).
+- Changed: `INSTRUCTION.md` P1.11 (O-038) and P1.13: the allowed suppressions now include D-53's
+  six `block-timestamp` lines; D-18's `poolCredit` line is gone.
+- Changed: `contracts/.gas-snapshot`: 49 new lines (Liquidate 29, Extend 12, Pause 5, LoanMatrix
+  2, PoolStateMatrix 1); 317 changed; none removed. Over 10%: eleven `Pool.t.sol` tests +104% to
+  +171% (real loans instead of storage writes, O-033); the slot check +34.5% (a real loan and an
+  unpause); `test_unpauseEmitsNothingElse` +33.1% and two paused `extend` tests about +24% (pause
+  and unpause now write the timestamps slot and emit `PauseTimesSet`); pause matrix +12.7% (48
+  cells) and participant matrix +11.6% (117 cells).
+- Changed (local, not pushed): `docs/decisions.md` D-54 to D-59; `docs/event-catalogue.md`
+  (`PauseTimesSet`, topic0 from `cast keccak`).
+Size: `IndicoLedger` runtime 10,743 B to 11,578 B (+835 B), margin 12,998 B.
+Slither, CI step 7 body on a scratch copy: exit 0, no IR error, 7 findings (`timestamp` low on the
+deadline checks, `low-level-calls`, `naming-convention`); `constable-states` is gone now that
+`poolCredit` is written.
+Deep cost (20,000 local runs scaled by the CI ratio measured in P1.10): `Pool.t.sol` about 110
+minutes (was 57, real loans), `Liquidate.t.sol` about 42, `Extend.t.sol` about 36; all under 31%
+of 360.
+Gate (logs in `docs/gate-logs/P1.11/`, Forge 1.8.3; red phase `red.log`: 90 failing, the new
+function and views missing):
+- G1 pass: 498 passed, 0 failed, 0 skipped, exit 0.
+- G2 pass: src lines 228/228, branches 70/70.
+- G3 pass, G4 pass (no lint beyond the approved lines): exit 0 each.
+- G5 pass: seeds 1 and 2, 498 passed each.
+- G6 pass: three runs, 498 passed each.
+- G7 pass: `ci` profile, 498 passed.
+- G8 pass: `IndicoLedger` 11,578 B; snapshot check 452 passed.
+- G9 pass, `G9.log`: 41 of 41 caught, on a scratch copy, then byte-identical to the real source.
+- G13 pass.
+- G10 pending: owner pushes.
+Mutations (G9): `liquidate` L1 to L16 (works while paused; each check removed or shifted by one;
+the grace ignoring the unpause; each of the five effects dropped; the principal burned instead of
+the collateral; status Repaid; the event naming the wrong caller); pause and late path L17 to L25
+(merge rule removed or `>=`; `lastUnpausedAt` not written; no event on unpause; late path removed;
+pause start ignored; grace `<`; P1.1's pause open to anyone and unpause calling pause); P1.10's
+sixteen `extend` mutations E1 to E16 rerun on the new code. All caught.
+Found while building: the new liquidate fuzz had an empty `bound` range when `t == START`; fixed
+by starting `t` at `START + 1`. A test error, not a contract one.
+Open items: closed O-013, O-020, O-021, O-025, O-033, O-034, O-038.
+Commit: feat: liquidate after the due date and a 7-day grace after any unpause, late extension after a pause (P1.11)
+
 ---
 
 ## Open items
@@ -1914,19 +2030,19 @@ Commit: docs: record P1.10 CI and Deep fuzz green
 | O-010 | Client: written acknowledgement that no external audit was bought, before any real money | owner, client | before P3.3 |
 | O-011 | Decisions due inside portions: duplicate approvals, zero terms hash, one address as user and merchant (P1.2); maximum declared asset value so `totalCredit` cannot overflow, zero document hash (P1.4); issuing credit to an unapproved address (P1.5); first-deposit inflation mitigation (P1.7) | engineer proposes, owner approves | P1.2, P1.4, P1.5, P1.7 |
 | O-012 | CI warnings: `actions/checkout@v4` runs on deprecated Node.js 20 (move to v5 in both workflows); `ubuntu-latest` becomes Ubuntu 26 from 2026-10-19, so recheck CI after that date | engineer | |
-| O-013 | Reconsider where the loan time axis lives: `_loanTimeAt` and `_loanDims` sit in `Matrix.sol` because `Actors.sol` could not build in Phase 0. Once it builds, decide whether to move them next to `LoanState` and replace the literal `4` with `LOAN_STATES` | engineer | P1.11 |
+| O-013 | Reconsider where the loan time axis lives: `_loanTimeAt` and `_loanDims` sit in `Matrix.sol` because `Actors.sol` could not build in Phase 0. Once it builds, decide whether to move them next to `LoanState` and replace the literal `4` with `LOAN_STATES` | engineer | Closed by C-050 |
 | O-014 | `IndicoLedger` must inherit `IIndicoLedger`, so the compiler proves the implementation matches the interface the backend builds against | engineer | P1.13 at the latest |
 | O-015 | Delete the `uninitialized-state` suppression on `termsHash` (D-18) as part of the gate | engineer | Closed by C-017 |
 | O-016 | Delete the `uninitialized-state` suppression on `totalCredit` (D-18) as part of the gate | engineer | Closed by C-024 |
 | O-017 | Delete the `uninitialized-state` suppression on `totalShares` (D-18) as part of the gate | engineer | Closed by C-034 |
 | O-018 | Delete both suppressions on `totalLent` as part of the gate: the D-18 lint line and the D-40 Slither `uninitialized-state` start/end pair (read by the pool from P1.7) | engineer | Closed by C-042 |
 | O-019 | Delete the `uninitialized-state` suppression on `nextLoanId` (D-18) as part of the gate | engineer | Closed by C-042 |
-| O-020 | Delete the `uninitialized-state` suppression on `poolCredit` (D-18) as part of the gate | engineer | P1.11 |
-| O-021 | Test for the `Fixture._default` clock fix (C-012): after `_default`, `block.timestamp` is back to its value before the call | engineer | P1.11 |
+| O-020 | Delete the `uninitialized-state` suppression on `poolCredit` (D-18) as part of the gate | engineer | Closed by C-050 |
+| O-021 | Test for the `Fixture._default` clock fix (C-012): after `_default`, `block.timestamp` is back to its value before the call | engineer | Closed by C-050 |
 | O-022 | Participant matrix (IT 2.2): the `pause` column, nine participants, moved from P1.1 because building them needs approvals and `signTerms` | engineer | Closed by C-019 |
 | O-023 | The Phase-0 skip step in `ci.yml` and `deep.yml` no longer runs now that `src/IndicoLedger.sol` exists; delete it | engineer | P1.13 |
 | O-024 | Backend admin screen (AD-04, AD-02): before approving a wallet as user or merchant, warn that its role becomes permanent (D-22); a mistaken approval can only be fixed by the person using a different wallet | backend | Level 4 |
-| O-025 | Participant matrix (IT 2.2): 12 of 13 action columns (`signTerms`, `setUserApproved`, `pause`, `registerAsset`, `adminIssueCredit`, `adminDebitCredit`, `spend`, `deposit`, `withdraw`, `requestLoan`, `repay`, `extend`), 108 of 117 cells. Each later portion adds its own column at its gate; all 13 columns, 117 cells, by P1.13 | engineer | P1.13 |
+| O-025 | Participant matrix (IT 2.2): 12 of 13 action columns (`signTerms`, `setUserApproved`, `pause`, `registerAsset`, `adminIssueCredit`, `adminDebitCredit`, `spend`, `deposit`, `withdraw`, `requestLoan`, `repay`, `extend`), 108 of 117 cells. Each later portion adds its own column at its gate; all 13 columns, 117 cells, by P1.13 | engineer | Closed by C-050 |
 | O-026 | On any Forge upgrade (D-14), re-run the D-30 probe (`docs/lint-probes/missing-events-access-control`, `forge build --deny warnings`); if the mapping rows are no longer flagged, delete every `missing-events-access-control` suppression in the same commit as the upgrade. Same for D-40's `reentrancy-events` probe (`docs/lint-probes/reentrancy-events/`): if `Withdrawn` or `Deposited` no longer fires, delete that line. On a Slither upgrade, the D-40 `incorrect-equality` probe likewise | engineer | next Forge upgrade |
 | O-027 | `_mint` computes `room = CREDIT_CAP - credit[account]`, which underflows (panic) if the account already holds more than the cap. Only a merchant can (via `spend`, D-27), and P1.4 mints only to users, so it is unreachable now. P1.5 decides whether `adminIssueCredit` may credit a merchant (O-011); if it can, P1.5 writes the failing test first (mint to a merchant above the cap must revert `CreditCapExceeded(amount, 0)`, never panic) and fixes `_mint` | engineer | Closed by D-33 (C-026) |
 | O-028 | Delete the `slither-disable-next-line uninitialized-state` above `lockedCredit` (D-34) as part of the gate; it covers every read site (`adminDebitCredit`, and `spend` in P1.6) | engineer | Closed by C-042 |
@@ -1934,9 +2050,9 @@ Commit: docs: record P1.10 CI and Deep fuzz green
 | O-030 | Slither has logged `ERROR:ContractSolcParsing: Impossible to generate IR for Math.mulDivDown (src/lib/Math.sol#27-34): 'NoneType' object has no attribute 'parameters'` since P1.3, locally and on CI (run 37108382319); P1.1 and P1.2 runs did not. Detectors still run on everything else and the exit code ignores it, so CI stays green, but `mulDivDown` is not being analysed. Find the trigger and fix or triage in writing | engineer | Closed by C-030 |
 | O-031 | Backend (AD-04, AD-08, U-13): the admin merchant screen shows each merchant's on-chain terms signature (`termsSigned`, `signedTermsHash`); a user paying a merchant who has not signed gets a readable "merchant not ready" instead of `MerchantTermsNotSigned` (D-36, D-37) | backend | Level 4 |
 | O-032 | Merchant guide (merchants use the block explorer): step 0, in bold at the top, says never to send USDC to the ledger address with `transfer`; only `approve` on the USDC contract, then `deposit`. A direct transfer is counted nowhere and cannot be recovered (D-38) | owner | before the first merchant deposits |
-| O-033 | `Pool.t.sol` simulates a loan's pool side by writing `poolUsdc`/`totalLent` (`_simulateLend`, `_simulateRepay`, `_simulateDefault`). Rerun those cases on real loans: beyond-liquidity withdraws (P1.8), short-of-cash `withdrawAll` then repay (P1.9, done in C-045), loss split, rounding pump and total wipeout (P1.11); then delete the helpers | engineer | P1.8, P1.9, P1.11 |
-| O-034 | Pool-state matrix (IT 2.4, 24 cells) moved from P1.7: it needs `requestLoan`, `repay` and a real default | engineer | P1.11 |
+| O-033 | `Pool.t.sol` simulates a loan's pool side by writing `poolUsdc`/`totalLent` (`_simulateLend`, `_simulateRepay`, `_simulateDefault`). Rerun those cases on real loans: beyond-liquidity withdraws (P1.8), short-of-cash `withdrawAll` then repay (P1.9, done in C-045), loss split, rounding pump and total wipeout (P1.11); then delete the helpers | engineer | Closed by C-050 |
+| O-034 | Pool-state matrix (IT 2.4, 24 cells) moved from P1.7: it needs `requestLoan`, `repay` and a real default | engineer | Closed by C-050 |
 | O-035 | Merchant guide and terms: while the pool is paused no merchant can deposit or withdraw, for as long as the pause lasts, and nothing can rescue the funds (D-41, CS §10); with the client's written pause policy (decisions, open non-blocking 2) | owner, client | before the first merchant deposits |
 | O-036 | The 11 `Math.t.sol` properties pinned by `forge-config: default.fuzz.runs = 100000` also run 100,000 times under `deep` (run 37169050467), so `LedgerMath` has never had 5,000,000 runs. Fix: a `deep` inline line per test, or move the pin; reopens P0.1 | engineer, owner | Closed by C-040 |
 | O-037 | Build D-43 (state-diff assertions instead of the full re-read snapshot) as its own change with the full gate: every G9 mutation from P1.1 to P1.7 still caught plus one new unexpected-slot mutation, gas per run before and after on the three heaviest fuzz tests, new Deep estimate per shard. After P1.7 merges, before P1.8 | engineer | Closed by C-041 |
-| O-038 | `repay` is `whenNotPaused` (contract-spec 6), so a pause that lasts past a loan's due date stops the borrower repaying, and at the unpause anyone may liquidate it. The same pause can span a loan's whole extension window, so `extend` is impossible too (C-047). Owner decides before P1.11: accept and say so in the terms and pause policy, exempt `repay` from the pause, or handle it in `liquidate` (D-48) | owner | P1.11 |
+| O-038 | `repay` is `whenNotPaused` (contract-spec 6), so a pause that lasts past a loan's due date stops the borrower repaying, and at the unpause anyone may liquidate it. The same pause can span a loan's whole extension window, so `extend` is impossible too (C-047). Owner decides before P1.11: accept and say so in the terms and pause policy, exempt `repay` from the pause, or handle it in `liquidate` (D-48) | owner | Closed by C-050 |

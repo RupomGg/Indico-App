@@ -34,6 +34,8 @@ abstract contract FixtureBase is Test {
     uint256 internal constant SLOT_POOL_USDC = 18;
     uint256 internal constant SLOT_NEXT_LOAN_ID = 19;
     uint256 internal constant SLOT_LOANS = 20;
+    /// @dev `lastPausedAt` in the low 64 bits, `lastUnpausedAt` in the next 64 (D-58).
+    uint256 internal constant SLOT_PAUSE_TIMES = 21;
     uint256 internal constant SLOT_USDC_BALANCES = 0;
 
     MockUSDC internal usdc;
@@ -187,39 +189,38 @@ abstract contract Fixture is FixtureBase {
         ledger.deposit(amount);
     }
 
-    // ------------------------------------------------ simulated loans (until P1.8 to P1.11)
+    // ------------------------------------------------ loans for pool tests (O-033)
 
-    /// @dev Where simulated loan principal goes and comes back from.
-    address internal constant LOAN_SINK = address(0x10A115);
+    /// @dev The borrower behind `_lendOut`: an approved user who signed, created on first use.
+    address internal poolBorrower = makeAddr("poolBorrower");
 
-    /// @notice The pool side of `requestLoan(amount)`: `poolUsdc` down, `totalLent` up, the USDC
-    ///         leaves the ledger. Storage written directly (`vm.store`, D-43) because `requestLoan` is P1.8; the
-    ///         tests that use this rerun on real loans in P1.8, P1.9 and P1.11 (O-033).
-    function _simulateLend(uint256 amount) internal {
-        _writeUint(SLOT_POOL_USDC, ledger.poolUsdc() - amount);
-        _writeUint(SLOT_TOTAL_LENT, ledger.totalLent() + amount);
-        vm.prank(address(ledger));
-        usdc.transfer(LOAN_SINK, amount);
+    /// @notice Lends `lent` out of the pool in real loans and defaults `lost` of it: a loan of
+    ///         `lost`, liquidated past its due date with the clock restored (`_default`), and a
+    ///         loan of `lent - lost` left Active. A loan of 0 is not opened. The pool ends with
+    ///         `poolUsdc` down by `lent` and `totalLent` up by `lent - lost`; the USDC goes to the
+    ///         borrower.
+    /// @return activeLoanId The Active loan of `lent - lost`, or 0 if `lent == lost`.
+    function _lendOut(uint256 lent, uint256 lost) internal returns (uint256 activeLoanId) {
+        if (!ledger.approvedUser(poolBorrower)) {
+            _addActor(poolBorrower);
+            _approveAndSign(poolBorrower);
+        }
+        uint256 collateral = _collateralFor(lost) + _collateralFor(lent - lost);
+        if (collateral > 0) _mintCredit(poolBorrower, collateral);
+        if (lost > 0) {
+            vm.prank(poolBorrower);
+            _default(ledger.requestLoan(lost));
+        }
+        if (lent > lost) {
+            vm.prank(poolBorrower);
+            activeLoanId = ledger.requestLoan(lent - lost);
+        }
     }
 
-    /// @notice The pool side of `repay`: the USDC comes back, `totalLent` down, `poolUsdc` up.
-    function _simulateRepay(uint256 amount) internal {
-        vm.prank(LOAN_SINK);
-        usdc.transfer(address(ledger), amount);
-        _writeUint(SLOT_TOTAL_LENT, ledger.totalLent() - amount);
-        _writeUint(SLOT_POOL_USDC, ledger.poolUsdc() + amount);
-    }
-
-    /// @notice The pool side of `liquidate`: `totalLent` down, no USDC moves, so every share
-    ///         is worth less.
-    function _simulateDefault(uint256 amount) internal {
-        _writeUint(SLOT_TOTAL_LENT, ledger.totalLent() - amount);
-    }
-
-    /// @dev Slots from the storage layout, checked against the getters by
-    ///      `StateDiffTest.test_slotConstants_matchGetters` (D-43).
-    function _writeUint(uint256 slot, uint256 value) private {
-        vm.store(address(ledger), bytes32(slot), bytes32(value));
+    /// @dev The pool borrower repays `loanId` in full.
+    function _repayLoan(uint256 loanId) internal {
+        vm.prank(poolBorrower);
+        ledger.repay(loanId);
     }
 
     /// @dev Collateral computed independently of the ledger's own view.

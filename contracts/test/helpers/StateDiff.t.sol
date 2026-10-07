@@ -30,6 +30,9 @@ contract StateDiffTest is Actors {
         vm.prank(alice);
         ledger.registerAsset(DOC, 0, 3e6);
         _deposit(merchantA, 5e6);
+        vm.warp(1_800_000_000);
+        vm.prank(alice);
+        ledger.requestLoan(1e6); // loan 1: lockedCredit, totalLent, nextLoanId, loans
         _pause();
 
         address l = address(ledger);
@@ -49,24 +52,34 @@ contract StateDiffTest is Actors {
         assertEq(_u(l, bytes32(SLOT_POOL_USDC)), ledger.poolUsdc(), "poolUsdc");
         assertEq(_u(address(usdc), _key(alice, SLOT_USDC_BALANCES)), usdc.balanceOf(alice), "usdc");
 
-        // Written by test helpers only until P1.8 and P1.11: checked by writing and reading back.
-        _simulateLend(1e6);
         assertEq(_u(l, bytes32(SLOT_TOTAL_LENT)), ledger.totalLent(), "totalLent");
         assertEq(ledger.totalLent(), 1e6, "totalLent written");
-        vm.store(l, _key(alice, SLOT_LOCKED_CREDIT), bytes32(uint256(9)));
-        assertEq(ledger.lockedCredit(alice), 9, "lockedCredit");
-        bytes32 loan7 = keccak256(abi.encode(uint256(7), SLOT_LOANS));
-        vm.store(l, loan7, bytes32(uint256(uint160(alice)) | (uint256(123) << 160)));
-        vm.store(l, bytes32(uint256(loan7) + 1), bytes32(uint256(5) | (uint256(6) << 128)));
-        (address b, uint64 due,,, uint128 pr, uint128 col) = ledger.loans(7);
+        assertEq(_u(l, _key(alice, SLOT_LOCKED_CREDIT)), ledger.lockedCredit(alice), "lockedCredit");
+        assertEq(ledger.lockedCredit(alice), 1.25e6, "lockedCredit written");
+        assertEq(_u(l, bytes32(SLOT_NEXT_LOAN_ID)), ledger.nextLoanId(), "nextLoanId");
+        assertEq(ledger.nextLoanId(), 1);
+        bytes32 loan1 = keccak256(abi.encode(uint256(1), SLOT_LOANS));
+        (address b, uint64 due,,, uint128 pr, uint128 col) = ledger.loans(1);
+        assertEq(_u(l, loan1), uint256(uint160(b)) | (uint256(due) << 160), "loans slot 0");
+        assertEq(
+            _u(l, bytes32(uint256(loan1) + 1)), uint256(pr) | (uint256(col) << 128), "loans slot 1"
+        );
         assertEq(b, alice, "loans.borrower");
-        assertEq(due, 123, "loans.dueDate");
-        assertEq(pr, 5, "loans.principal");
-        assertEq(col, 6, "loans.collateral");
+
+        // lastPausedAt in the low 64 bits, lastUnpausedAt in the next 64 (D-58).
+        uint256 times = _u(l, bytes32(SLOT_PAUSE_TIMES));
+        assertEq(uint64(times), ledger.lastPausedAt(), "lastPausedAt");
+        assertEq(ledger.lastPausedAt(), 1_800_000_000, "lastPausedAt written");
+        vm.warp(1_800_000_100);
+        vm.prank(guardian);
+        ledger.unpause();
+        times = _u(l, bytes32(SLOT_PAUSE_TIMES));
+        assertEq(uint64(times >> 64), ledger.lastUnpausedAt(), "lastUnpausedAt");
+        assertEq(ledger.lastUnpausedAt(), 1_800_000_100, "lastUnpausedAt written");
+
+        // poolCredit is written only by liquidate: checked by writing and reading back.
         vm.store(l, bytes32(SLOT_POOL_CREDIT), bytes32(uint256(11)));
         assertEq(ledger.poolCredit(), 11, "poolCredit");
-        vm.store(l, bytes32(SLOT_NEXT_LOAN_ID), bytes32(uint256(13)));
-        assertEq(ledger.nextLoanId(), 13, "nextLoanId");
     }
 
     function _u(address account, bytes32 slot) internal view returns (uint256) {

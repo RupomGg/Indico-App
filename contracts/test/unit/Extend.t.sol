@@ -5,7 +5,7 @@ import {Vm} from "forge-std/Vm.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {IIndicoLedger} from "../../src/interfaces/IIndicoLedger.sol";
-import {TERM, EXTENSION_WINDOW} from "../../src/lib/Constants.sol";
+import {TERM, EXTENSION_WINDOW, LIQUIDATION_GRACE} from "../../src/lib/Constants.sol";
 import {Actors} from "../helpers/Actors.sol";
 
 /// @notice `extend`, contract-spec 6.6; PRD R-04 to R-06; D-13 (the window), D-49 (check order),
@@ -30,6 +30,14 @@ import {Actors} from "../helpers/Actors.sol";
 /// Effects: only loan slot 0 changes (dueDate += TERM, extensionCount += 1); nothing else in the
 /// ledger or the token; `LoanExtended(id, newDue, countAfter)` and nothing else.
 /// Overflow (D-51): count 65,535 or a due date near 2^64 -> SafeCastOverflowedUintDowncast.
+/// Late extension (D-58), with P = lastPausedAt, U = lastUnpausedAt, G = LIQUIDATION_GRACE:
+/// | t > d, P <= d, t <= U + G                    | extended to d + TERM                  |
+/// | t > d, P <= d, t = U + G + 1                 | ExtensionWindowClosed                 |
+/// | t > d, d < P (overdue before the pause)      | ExtensionWindowClosed                 |
+/// | second pause inside the first grace          | merged: P stays, late extend allowed  |
+/// | second pause after the first grace           | new P > d: ExtensionWindowClosed      |
+/// | long pause: d + TERM still past              | extend again (catch-up), then D-13    |
+/// | revoked / old terms version / paused again   | NotApprovedUser / extended / EnforcedPause |
 /// Order: EnforcedPause, LoanNotFound, LoanNotActive, NotBorrower, NotApprovedUser, window.
 /// Every revert: `_revertsUnchanged` (state diff, D-43).
 contract ExtendTest is Actors {
@@ -374,6 +382,137 @@ contract ExtendTest is Actors {
         );
     }
 
+    // ================================================================== late extension (D-58)
+
+    function _pauseFromTo(uint256 from, uint256 to) internal {
+        vm.warp(from);
+        _pause();
+        vm.warp(to);
+        vm.prank(guardian);
+        ledger.unpause();
+    }
+
+    /// @dev The pause covers the due date: inside the grace the borrower extends from the old
+    ///      due date, up to the grace's end exactly.
+    function test_late_pauseCoversDue_extendsUntilGraceEnd() public {
+        uint256 u = uint256(due) + 5 days;
+        _pauseFromTo(due - 1 days, u);
+        vm.warp(u + LIQUIDATION_GRACE);
+        vm.expectEmit(true, true, true, true, address(ledger));
+        emit IIndicoLedger.LoanExtended(1, due + TERM, 1);
+        _extend(alice, 1);
+        (uint64 d, uint16 n) = _dueAndCount(1);
+        assertEq(d, due + TERM, "from the old due date");
+        assertEq(n, 1);
+    }
+
+    function test_late_oneSecondAfterGrace_revertsClosed() public {
+        uint256 u = uint256(due) + 5 days;
+        _pauseFromTo(due - 1 days, u);
+        vm.warp(u + LIQUIDATION_GRACE + 1);
+        _revertsUnchanged(alice, _call(1), _closed());
+    }
+
+    /// @dev Overdue before the pause began: the borrower had their chance.
+    function test_late_overdueBeforePause_revertsClosed() public {
+        uint256 u = uint256(due) + 3 days;
+        _pauseFromTo(uint256(due) + 1, u);
+        _revertsUnchanged(alice, _call(1), _closed());
+    }
+
+    /// @dev Due after the unpause but inside the grace: the late path covers it too, the same
+    ///      period the liquidation grace protects.
+    function test_late_dueInsideGraceAfterUnpause_extends() public {
+        uint256 u = uint256(due) - 2 days;
+        _pauseFromTo(due - 10 days, u);
+        vm.warp(uint256(due) + 1);
+        _extend(alice, 1);
+        (uint64 d,) = _dueAndCount(1);
+        assertEq(d, due + TERM);
+    }
+
+    /// @dev A loan due after the grace has ended: only the normal rules.
+    function test_late_dueAfterGrace_normalRulesOnly() public {
+        _pauseFromTo(START + 1 days, START + 2 days);
+        vm.warp(uint256(due) + 1);
+        _revertsUnchanged(alice, _call(1), _closed());
+    }
+
+    /// @dev A second pause starting inside the first one's grace is the same disruption: P
+    ///      stays at the first pause, and the loan due during it still extends after the second.
+    function test_late_twoPausesMerged_extendsAfterSecond() public {
+        uint256 u1 = uint256(due) + 1 days;
+        _pauseFromTo(due - 1 days, u1);
+        uint256 u2 = u1 + 10 days;
+        _pauseFromTo(u1 + 3 days, u2);
+        assertEq(ledger.lastPausedAt(), due - 1 days, "merged: start kept");
+        assertEq(ledger.lastUnpausedAt(), u2);
+        vm.warp(u2 + 1);
+        _extend(alice, 1);
+        (uint64 d,) = _dueAndCount(1);
+        assertEq(d, due + TERM);
+    }
+
+    /// @dev A second pause after the first grace ended is a new disruption: the loan was
+    ///      already overdue when it began.
+    function test_late_twoPausesSeparate_overdueLoanCannotExtend() public {
+        uint256 u1 = uint256(due) + 1 days;
+        _pauseFromTo(due - 1 days, u1);
+        uint256 p2 = u1 + LIQUIDATION_GRACE + 1;
+        _pauseFromTo(p2, p2 + 1 days);
+        assertEq(ledger.lastPausedAt(), p2, "new disruption");
+        _revertsUnchanged(alice, _call(1), _closed());
+    }
+
+    /// @dev Two late extends in one block, short pause: the first reaches due + TERM, ahead of
+    ///      now and outside its window, so the second reverts ExtensionWindowNotOpen.
+    function test_late_twoInOneBlock_shortPause_secondNotOpen() public {
+        uint256 u = uint256(due) + 5 days;
+        _pauseFromTo(due - 1 days, u);
+        _extend(alice, 1);
+        _revertsUnchanged(alice, _call(1), _notOpen(due + TERM));
+    }
+
+    /// @dev A 190-day pause: each late extension adds TERM to the old due date, so the borrower
+    ///      catches up (due + 90 and due + 180 days are still past), then the normal window
+    ///      applies and a fourth in the same block reverts ExtensionWindowNotOpen.
+    function test_late_longPause_catchUpThenNormalRules() public {
+        uint256 u = uint256(due) + 190 days;
+        _pauseFromTo(due - 10 days, u);
+        _extend(alice, 1); // due + 90 days, still past
+        _extend(alice, 1); // due + 180 days, still past
+        _extend(alice, 1); // due + 270 days, ahead
+        (uint64 d, uint16 n) = _dueAndCount(1);
+        assertEq(d, due + 3 * TERM);
+        assertEq(n, 3);
+        _revertsUnchanged(alice, _call(1), _notOpen(d));
+    }
+
+    /// @dev D-50 still applies on the late path.
+    function test_late_revokedBorrower_revertsNotApproved() public {
+        _pauseFromTo(due - 1 days, uint256(due) + 5 days);
+        _revokeUser(alice);
+        _revertsUnchanged(
+            alice, _call(1), abi.encodeWithSelector(IIndicoLedger.NotApprovedUser.selector)
+        );
+    }
+
+    /// @dev D-52 still applies on the late path.
+    function test_late_oldTermsVersion_extends() public {
+        _pauseFromTo(due - 1 days, uint256(due) + 5 days);
+        vm.prank(admin);
+        ledger.setTermsHash(keccak256("terms-v2"));
+        _extend(alice, 1);
+        (, uint16 n) = _dueAndCount(1);
+        assertEq(n, 1);
+    }
+
+    function test_late_pausedAgain_revertsEnforcedPause() public {
+        _pauseFromTo(due - 1 days, uint256(due) + 5 days);
+        _pause();
+        _revertsUnchanged(alice, _call(1), abi.encodeWithSelector(Pausable.EnforcedPause.selector));
+    }
+
     // ================================================================== properties (IT 3.2)
 
     /// @dev For any n from 1 to 10, extending n times, each at a fuzzed moment inside that
@@ -410,5 +549,30 @@ contract ExtendTest is Actors {
         if (who == alice) who = bob;
         vm.warp(due);
         _revertsUnchanged(who, _call(1), abi.encodeWithSelector(IIndicoLedger.NotBorrower.selector));
+    }
+
+    /// @dev One pause [p, u], then a call at t >= u: extend succeeds exactly when the normal
+    ///      window or the late rule (D-58) allows it, with only loan slot 0 written, and
+    ///      otherwise reverts the matching error and changes nothing.
+    function testFuzz_extend_afterOnePause_iffWindowOrLateRule(uint256 p, uint256 len, uint256 t)
+        public
+    {
+        p = bound(p, START + 1, uint256(due) + 30 days);
+        len = bound(len, 1, 200 days);
+        uint256 u = p + len;
+        t = bound(t, u, u + 30 days);
+        _pauseFromTo(p, u);
+        vm.warp(t);
+        bool inWindow = t >= _opens(due) && t <= due;
+        bool late = t > due && p <= due && t <= u + LIQUIDATION_GRACE;
+        if (inWindow || late) {
+            _startDiff();
+            _extend(alice, 1);
+            Write[] memory w = new Write[](1);
+            w[0] = _w(address(ledger), _loanSlot(1), _slot0(alice, due + TERM, 1));
+            _assertWrites(w);
+        } else {
+            _revertsUnchanged(alice, _call(1), t < _opens(due) ? _notOpen(due) : _closed());
+        }
     }
 }

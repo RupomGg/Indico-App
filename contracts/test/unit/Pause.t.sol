@@ -4,7 +4,7 @@ pragma solidity 0.8.26;
 import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {IIndicoLedger} from "../../src/interfaces/IIndicoLedger.sol";
-import {TERM} from "../../src/lib/Constants.sol";
+import {TERM, LIQUIDATION_GRACE} from "../../src/lib/Constants.sol";
 import {StateSnapshot} from "../helpers/StateSnapshot.sol";
 import {Matrix} from "../helpers/Matrix.sol";
 
@@ -41,7 +41,7 @@ contract PauseTest is StateSnapshot, Matrix {
         emit Pausable.Paused(guardian);
         _pause();
         assertTrue(_paused());
-        s.paused = true;
+        _expectPaused(s);
         _assertUnchanged(s);
     }
 
@@ -53,14 +53,15 @@ contract PauseTest is StateSnapshot, Matrix {
         vm.prank(guardian);
         ledger.unpause();
         assertFalse(_paused());
-        s.paused = false;
+        _expectUnpaused(s);
         _assertUnchanged(s);
     }
 
+    /// @dev `Paused` and `PauseTimesSet` (D-59), nothing else.
     function test_pauseEmitsNothingElse() public {
         vm.recordLogs();
         _pause();
-        assertEq(vm.getRecordedLogs().length, 1);
+        assertEq(vm.getRecordedLogs().length, 2);
     }
 
     function test_unpauseEmitsNothingElse() public {
@@ -68,7 +69,7 @@ contract PauseTest is StateSnapshot, Matrix {
         vm.recordLogs();
         vm.prank(guardian);
         ledger.unpause();
-        assertEq(vm.getRecordedLogs().length, 1);
+        assertEq(vm.getRecordedLogs().length, 2);
     }
 
     // ------------------------------------------------------------------ wrong state
@@ -148,6 +149,82 @@ contract PauseTest is StateSnapshot, Matrix {
 
     // ------------------------------------------------------------------ pause matrix, IT 2.3
 
+    // ------------------------------------------------------------------ pause timestamps (D-54, D-58)
+
+    uint64 internal constant T0 = 1_800_000_000;
+
+    function _pauseAt(uint256 t) internal {
+        vm.warp(t);
+        _pause();
+    }
+
+    function _unpauseAt(uint256 t) internal {
+        vm.warp(t);
+        vm.prank(guardian);
+        ledger.unpause();
+    }
+
+    /// @dev Both timestamps 0: the first pause ever records its start.
+    function test_times_firstPauseEver_setsLastPausedAt() public {
+        assertEq(ledger.lastPausedAt(), 0);
+        assertEq(ledger.lastUnpausedAt(), 0);
+        vm.warp(T0);
+        vm.expectEmit(true, true, true, true, address(ledger));
+        emit IIndicoLedger.PauseTimesSet(T0, 0);
+        _pause();
+        assertEq(ledger.lastPausedAt(), T0);
+        assertEq(ledger.lastUnpausedAt(), 0, "a pause does not touch lastUnpausedAt");
+    }
+
+    function test_times_unpause_setsLastUnpausedAt_keepsStart() public {
+        _pauseAt(T0);
+        vm.warp(T0 + 5 days);
+        vm.expectEmit(true, true, true, true, address(ledger));
+        emit IIndicoLedger.PauseTimesSet(T0, T0 + 5 days);
+        vm.prank(guardian);
+        ledger.unpause();
+        assertEq(ledger.lastUnpausedAt(), T0 + 5 days);
+        assertEq(ledger.lastPausedAt(), T0);
+    }
+
+    /// @dev A pause starting inside the previous grace, up to its last second, keeps the start.
+    function test_times_pauseInsideGrace_keepsStart() public {
+        _pauseAt(T0);
+        _unpauseAt(T0 + 1 days);
+        vm.warp(T0 + 1 days + LIQUIDATION_GRACE);
+        vm.expectEmit(true, true, true, true, address(ledger));
+        emit IIndicoLedger.PauseTimesSet(T0, T0 + 1 days);
+        _pause();
+        assertEq(ledger.lastPausedAt(), T0, "merged with the first pause");
+    }
+
+    /// @dev One second after the grace, a pause starts a new disruption.
+    function test_times_pauseAfterGrace_newStart() public {
+        _pauseAt(T0);
+        _unpauseAt(T0 + 1 days);
+        _pauseAt(T0 + 1 days + LIQUIDATION_GRACE + 1);
+        assertEq(ledger.lastPausedAt(), T0 + 1 days + LIQUIDATION_GRACE + 1);
+    }
+
+    /// @dev The exact writes of pause and unpause: the paused flag, and the one packed slot.
+    function test_times_exactWrites() public {
+        vm.warp(T0);
+        _startDiff();
+        _pause();
+        Write[] memory w = new Write[](2);
+        w[0] = _w(address(ledger), bytes32(SLOT_PAUSED), 1);
+        w[1] = _w(address(ledger), bytes32(SLOT_PAUSE_TIMES), T0);
+        _assertWrites(w);
+
+        vm.warp(T0 + 1 days);
+        _startDiff();
+        vm.prank(guardian);
+        ledger.unpause();
+        w[0] = _w(address(ledger), bytes32(SLOT_PAUSED), 0);
+        w[1] = _w(address(ledger), bytes32(SLOT_PAUSE_TIMES), T0 | (uint256(T0 + 1 days) << 64));
+        _assertWrites(w);
+    }
+
     /// @dev Rows: function. Columns: starting state (unpaused, paused, paused then unpaused);
     ///      the third column expects exactly what the first does, so every function, the pool
     ///      ones included (D-41), works again after an unpause. Each cell runs from a
@@ -170,14 +247,17 @@ contract PauseTest is StateSnapshot, Matrix {
     /// | requestLoan         | succeeds      | EnforcedPause               |
     /// | repay               | succeeds      | EnforcedPause               |
     /// | extend              | succeeds      | EnforcedPause               |
+    /// | liquidate           | succeeds      | EnforcedPause               |
     /// Rows from registerAsset on onboard alice (terms set, approved, signed) before pausing; the
     /// debit and spend rows issue her credit first. The spend and pool rows approve and sign
     /// merchantA, and the two withdraw rows have merchantA deposit 2e6 first, so each paused cell
     /// fails for the pause alone. The repay and extend rows have alice borrow 1e6 (loan 1) before pausing; the extend row
-    /// then moves to its due date. The pool rows follow contract-spec 6: every 6.5 function is
+    /// then moves to its due date, the liquidate row one second past it. In the liquidate row the
+    /// paused-then-unpaused column is the one cell that differs from unpaused: the unpause just
+    /// happened, so liquidate reverts LiquidationGracePeriod(now + 7 days) (D-54). The pool rows follow contract-spec 6: every 6.5 function is
     /// `whenNotPaused`, and none is stated otherwise (D-39).
     function test_pauseMatrix_everyCell() public {
-        _crossProduct(_dims(15, 3), _pauseCell);
+        _crossProduct(_dims(16, 3), _pauseCell);
     }
 
     function _pauseCell(uint256[] memory c) internal {
@@ -207,9 +287,9 @@ contract PauseTest is StateSnapshot, Matrix {
             vm.prank(alice);
             ledger.requestLoan(1e6);
         }
-        if (c[0] == 14) {
+        if (c[0] >= 14) {
             (, uint64 due,,,,) = ledger.loans(1);
-            vm.warp(due);
+            vm.warp(c[0] == 14 ? uint256(due) : uint256(due) + 1);
         }
         if (c[1] >= 1) _pause();
         if (c[1] == 2) {
@@ -217,7 +297,7 @@ contract PauseTest is StateSnapshot, Matrix {
             ledger.unpause();
         }
 
-        uint8[2][15] memory expected = [
+        uint8[2][16] memory expected = [
             [uint8(0), 1],
             [uint8(2), 0],
             [uint8(0), 0],
@@ -232,23 +312,33 @@ contract PauseTest is StateSnapshot, Matrix {
             [uint8(0), 1],
             [uint8(0), 1],
             [uint8(0), 1],
+            [uint8(0), 1],
             [uint8(0), 1]
         ];
         uint8 e = expected[c[0]][c[1] == 2 ? 0 : c[1]];
+        if (c[0] == 15 && c[1] == 2) e = 3; // the grace after the unpause (D-54)
         bytes32 h = keccak256("matrix-terms");
         address target = makeAddr("matrixTarget");
 
         Snapshot memory s = _snapshot();
         if (e == 1) vm.expectRevert(Pausable.EnforcedPause.selector);
         if (e == 2) vm.expectRevert(Pausable.ExpectedPause.selector);
+        if (e == 3) {
+            vm.expectRevert(
+                abi.encodeWithSelector(
+                    IIndicoLedger.LiquidationGracePeriod.selector,
+                    block.timestamp + LIQUIDATION_GRACE
+                )
+            );
+        }
         if (c[0] == 0) {
             vm.prank(guardian);
             ledger.pause();
-            if (e == 0) s.paused = true;
+            if (e == 0) _expectPaused(s);
         } else if (c[0] == 1) {
             vm.prank(guardian);
             ledger.unpause();
-            if (e == 0) s.paused = false;
+            if (e == 0) _expectUnpaused(s);
         } else if (c[0] == 2) {
             vm.prank(admin);
             ledger.setTermsHash(h);
@@ -330,7 +420,7 @@ contract PauseTest is StateSnapshot, Matrix {
                 s.totalLent -= 1e6;
                 s.loansHash = _snapshot().loansHash; // loan 1's status asserted just above
             }
-        } else {
+        } else if (c[0] == 14) {
             vm.prank(alice);
             ledger.extend(1);
             if (e == 0) {
@@ -338,6 +428,19 @@ contract PauseTest is StateSnapshot, Matrix {
                 assertEq(d, block.timestamp + TERM);
                 assertEq(n, 1);
                 s.loansHash = _snapshot().loansHash; // loan 1's new due date asserted just above
+            }
+        } else {
+            vm.prank(bob);
+            ledger.liquidate(1);
+            if (e == 0) {
+                (,,, uint8 st,,) = ledger.loans(1);
+                assertEq(st, uint8(IIndicoLedger.LoanStatus.Defaulted));
+                s.credit[2] -= 1.25e6; // alice is actors[2]
+                s.lockedCredit[2] -= 1.25e6;
+                s.totalCredit -= 1.25e6;
+                s.poolCredit += 1.25e6;
+                s.totalLent -= 1e6;
+                s.loansHash = _snapshot().loansHash; // loan 1's status asserted just above
             }
         }
         _assertUnchanged(s);

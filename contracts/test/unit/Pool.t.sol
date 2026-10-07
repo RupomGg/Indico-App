@@ -13,9 +13,9 @@ import {Actors} from "../helpers/Actors.sol";
 
 /// @notice The pool: `deposit`, `withdraw`, `withdrawAll`. Contract-spec 5, 6.5; PRD 3.4; D-06,
 ///         D-38 (internal accounting, virtual offset 1e6 shares / 1 asset), D-39 (withdraw by
-///         USDC amount). S = totalShares, A = poolUsdc + totalLent. Loans do not exist until
-///         P1.8, so a loan's pool side is simulated (`_simulateLend`, `_simulateRepay`,
-///         `_simulateDefault`); those tests rerun on real loans in P1.8, P1.9 and P1.11 (O-033).
+///         USDC amount). S = totalShares, A = poolUsdc + totalLent. Loans are real
+///         (`_lendOut`, `_repayLoan`, `_default`): until P1.11 a loan's pool side was simulated
+///         by writing storage; O-033 moved every such test onto real loans.
 ///
 /// deposit(amount), caller an approved merchant who signed
 /// | Class                                  | Expected                                        |
@@ -122,8 +122,7 @@ contract PoolTest is Actors {
     /// @dev Deposit `DEP`, lend `lent`, default `lost` of it: a pool whose price is off 1:1.
     function _poolWithLoss(uint256 lent, uint256 lost) internal {
         _deposit(merchantA, DEP);
-        _simulateLend(lent);
-        _simulateDefault(lost);
+        _lendOut(lent, lost);
     }
 
     // ================================================================== deposit, happy path
@@ -217,8 +216,7 @@ contract PoolTest is Actors {
         second = bound(second, 1, FUND);
         _deposit(merchantA, first);
         lost = bound(lost, 0, first);
-        _simulateLend(lost);
-        _simulateDefault(lost);
+        _lendOut(lost, lost);
 
         uint256 aBefore = _modelClaim(merchantA);
         _deposit(merchantB, second);
@@ -421,7 +419,7 @@ contract PoolTest is Actors {
 
     function test_withdraw_exactlyCash_succeeds() public {
         _deposit(merchantA, DEP);
-        _simulateLend(600e6);
+        _lendOut(600e6, 0);
         _withdraw(merchantA, 400e6);
         assertEq(ledger.poolUsdc(), 0);
         assertEq(ledger.totalLent(), 600e6);
@@ -448,8 +446,7 @@ contract PoolTest is Actors {
         _deposit(merchantA, depA);
         _deposit(merchantB, depB);
         lost = bound(lost, 0, (depA + depB) / 2); // A keeps a claim, the pool keeps cash
-        _simulateLend(lost);
-        _simulateDefault(lost);
+        _lendOut(lost, lost);
 
         uint256 claim = _modelClaim(merchantA);
         uint256 bBefore = _modelClaim(merchantB);
@@ -508,7 +505,7 @@ contract PoolTest is Actors {
 
     function test_withdraw_aboveCash_revertsInsufficientLiquidity() public {
         _deposit(merchantA, DEP);
-        _simulateLend(600e6);
+        _lendOut(600e6, 0);
         _expectRevertUnchanged(
             merchantA,
             _withdrawCall(400e6 + 1),
@@ -560,7 +557,7 @@ contract PoolTest is Actors {
     /// @dev Above both the claim and the cash: the shares are checked first.
     function test_withdraw_order_sharesBeforeLiquidity() public {
         _deposit(merchantA, DEP);
-        _simulateLend(600e6);
+        _lendOut(600e6, 0);
         _expectRevertUnchanged(
             merchantA,
             _withdrawCall(DEP + 1),
@@ -600,8 +597,7 @@ contract PoolTest is Actors {
     function test_withdrawAll_afterLoss_paysFloorClaim_noDustShares() public {
         _deposit(merchantA, DEP);
         _deposit(merchantB, DEP);
-        _simulateLend(3);
-        _simulateDefault(3);
+        _lendOut(3, 3);
         uint256 claim = _modelClaim(merchantA);
         _withdrawAll(merchantA);
         assertEq(ledger.shares(merchantA), 0, "dust shares left");
@@ -633,8 +629,7 @@ contract PoolTest is Actors {
     /// @dev 1 wei deposited, then lost: 1e6 shares worth 1e6 * 1 / 2e6 = 0.
     function test_withdrawAll_sharesWorthNothing_revertsZeroAmount() public {
         _deposit(merchantA, 1);
-        _simulateLend(1);
-        _simulateDefault(1);
+        _lendOut(1, 1);
         assertEq(ledger.shares(merchantA), 1e6);
         _expectRevertUnchanged(
             merchantA, _withdrawAllCall(), abi.encodeWithSelector(IIndicoLedger.ZeroAmount.selector)
@@ -643,7 +638,7 @@ contract PoolTest is Actors {
 
     function test_withdrawAll_noCash_revertsInsufficientLiquidity() public {
         _deposit(merchantA, DEP);
-        _simulateLend(DEP);
+        _lendOut(DEP, 0);
         _expectRevertUnchanged(
             merchantA,
             _withdrawAllCall(),
@@ -673,7 +668,7 @@ contract PoolTest is Actors {
     ///      it; after the loan comes back, a second pays the rest. Exact here (price 1:1).
     function test_withdrawAll_shortOfCash_secondPaysRest() public {
         _deposit(merchantA, DEP);
-        _simulateLend(700e6);
+        uint256 loanId = _lendOut(700e6, 0);
 
         vm.expectEmit(true, true, true, true, address(ledger));
         emit IIndicoLedger.Withdrawn(merchantA, 300e6, 300e6 * 1e6);
@@ -681,7 +676,7 @@ contract PoolTest is Actors {
         assertEq(ledger.shares(merchantA), 700e6 * 1e6);
         assertEq(ledger.poolUsdc(), 0);
 
-        _simulateRepay(700e6);
+        _repayLoan(loanId);
         _withdrawAll(merchantA);
         assertEq(ledger.shares(merchantA), 0);
         assertEq(usdc.balanceOf(merchantA), FUND, "two payments are not the whole claim");
@@ -708,8 +703,7 @@ contract PoolTest is Actors {
         uint256 total = depA + depB;
         uint256 claimIf = LedgerMath.mulDivDown(depA * 1e6, total - lost + 1, total * 1e6 + 1e6);
         if (claimIf <= total - lent) lost = 0;
-        _simulateLend(lent);
-        _simulateDefault(lost);
+        uint256 active = _lendOut(lent, lost);
 
         uint256 claim = _modelClaim(merchantA);
         uint256 cash = ledger.poolUsdc();
@@ -727,7 +721,7 @@ contract PoolTest is Actors {
             assertGt(ledger.shares(merchantA), 0, "burned everything on a partial payment");
         }
 
-        _simulateRepay(lent - lost);
+        _repayLoan(active);
         if (_modelClaim(merchantA) == 0) {
             // What is left is worth under 1 wei: correctly ZeroAmount, never a silent payment.
             vm.expectRevert(IIndicoLedger.ZeroAmount.selector);
@@ -761,8 +755,7 @@ contract PoolTest is Actors {
     function test_twoEqualDepositors_splitLossWithinOneWei() public {
         _deposit(merchantA, DEP);
         _deposit(merchantB, DEP);
-        _simulateLend(301e6 + 1);
-        _simulateDefault(301e6 + 1);
+        _lendOut(301e6 + 1, 301e6 + 1);
         uint256 a = _modelClaim(merchantA);
         uint256 b = _modelClaim(merchantB);
         assertEq(a, b);
@@ -829,8 +822,7 @@ contract PoolTest is Actors {
         amount = bound(amount, 1, FUND);
         state = uint8(bound(state, 0, 3));
         if (state >= 1) _deposit(merchantA, DEP);
-        if (state >= 2) _simulateLend(DEP / 2);
-        if (state == 3) _simulateDefault(DEP / 4);
+        if (state >= 2) _lendOut(DEP / 2, state == 3 ? DEP / 4 : 0);
 
         uint256 claim = _modelClaim(merchantA);
         uint256 held = usdc.balanceOf(address(ledger));
@@ -886,8 +878,7 @@ contract PoolTest is Actors {
         first = bound(first, 1, 1_000e6);
         _deposit(attacker, first);
         uint256 lost = bound(seed, 0, first);
-        _simulateLend(lost);
-        _simulateDefault(lost);
+        _lendOut(lost, lost);
 
         uint256 before = usdc.balanceOf(attacker) + _modelClaim(attacker);
         uint256 steps = bound(seed >> 8, 0, 40);
