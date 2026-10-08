@@ -22,10 +22,6 @@ jobs:
         with:
           version: v1.8.3
 
-      - name: Phase 0 only, drop test files that need src/IndicoLedger.sol until it exists
-        if: hashFiles('contracts/src/IndicoLedger.sol') == ''
-        run: rm test/unit/Smoke.t.sol test/helpers/Fixture.sol test/helpers/Actors.sol test/helpers/StateSnapshot.sol
-
       - name: 1. forge fmt --check
         run: forge fmt --check
 

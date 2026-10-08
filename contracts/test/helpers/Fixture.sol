@@ -54,6 +54,9 @@ abstract contract FixtureBase is Test {
     address[] internal actors;
 
     function setUp() public virtual {
+        // A realistic clock (O-039): Forge starts at 1, below any Base timestamp and inside
+        // the first 7-day grace, which hid the first pause recording `lastPausedAt`.
+        vm.warp(1_700_000_000);
         usdc = new MockUSDC();
         ledger = IIndicoLedger(address(new IndicoLedger(usdc, admin, guardian)));
 

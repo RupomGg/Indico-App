@@ -2189,6 +2189,74 @@ Files: none changed in code.
   minutes (22% of 360).
 Commit: docs: record D-60 CI and Deep fuzz green
 
+### C-056 · P1.13 · Close-out: interface inherited, negative space, re-entry, realistic clock · 2026-10-08
+Type: feature (tests, one inheritance line, CI clean-up)
+Decisions: D-61, D-62 (owner decided); D-63, D-64 recorded for the two changes that follow
+Session start (INSTRUCTION 1.2): Deep fuzz run 37624883608 on D-60's code green (C-055). Built on
+`main`. The interface freeze is not part of this change: it waits for D-63 and D-64 (INSTRUCTION
+P1.13, freeze step).
+Files:
+- Changed: `contracts/src/IndicoLedger.sol`: inherits `IIndicoLedger` (O-014), so the compiler
+  proves every interface function is implemented with the same signature and mutability; header
+  comment updated. Runtime size unchanged (12,422 B).
+- Changed: `contracts/src/lib/Math.sol`: the dead `slither-disable-next-line unused-return` line
+  deleted (D-61, O-029); comment only, bytecode identical. Probe in
+  `docs/lint-probes/slither-unused-return/` (local); the code change to use if a newer Slither flags
+  it is written in D-61.
+- New: `contracts/test/unit/NegativeSpace.t.sol`: partition table, 8 tests (IT 5): a list of one
+  call for each of the ledger's 68 functions, checked against the compiled ABI's
+  `methodIdentifiers`, so a function added later fails until listed; unknown selectors, an ERC-20
+  selector, a `rescueTokens` selector and a 3-byte call revert empty, nothing changed; raw ETH
+  reverts; every function one byte short reverts empty, nothing changed; every function with 100
+  bytes appended, the last 20 the admin's address, gives the same success, return data and net
+  writes (an ERC-2771-style suffix never changes who acts); every function sent 1 wei reverts; a
+  stray ERC-20 sent to the ledger writes no ledger slot and no function moves it; the re-entry cross
+  product, 5 USDC functions (`deposit`, `withdraw`, `withdrawAll`, `requestLoan`, `repay`) x 18
+  targets re-entered by the token: the guard on the five guarded functions, the target's own
+  refusal as the token address on the rest, the outer call rolled back whole; inside `repay` loan 1
+  is already Repaid and inside `requestLoan` loan 2 already exists (effects before the transfer);
+  `signTerms` is the one target the token may call, and the outer call then completes.
+- Changed: `contracts/foundry.toml`: `fs_permissions` read on `./out`, for the ABI check.
+- Changed: `contracts/test/helpers/Fixture.sol`: `FixtureBase.setUp` warps to `1_700_000_000`
+  first (D-62, O-039).
+- Changed: `.github/workflows/ci.yml`, `.github/workflows/deep.yml`: the Phase-0 skip step deleted
+  (O-023); both parse.
+- Changed: `INSTRUCTION.md` P1.13: the handover list in full (the owner's items, the memo rule
+  O-043); the freeze step blocked on O-040, O-008, O-042; the tag `interface-v1.0.0` closes O-003.
+- Changed: `contracts/.gas-snapshot`: 8 new `NegativeSpaceTest` lines; 37 changed; none removed.
+  18 over 10%, every one by exactly +20,144 gas: the first pause now records `lastPausedAt` (D-62).
+  The largest, `PauseTest:test_pauseEmitsNothingElse`, +30.6%.
+- Changed (local, not pushed): `docs/decisions.md` D-61 to D-64.
+- Checked, already present: `adminDebitCredit` cannot reach locked credit at the exact boundary,
+  `RequestLoanTest.test_partlyLocked_debitExactlyUnlocked_succeeds` (available + 1 reverts
+  `InsufficientAvailableCredit(500e6 + 1, 500e6)`, nothing changed; exactly available succeeds and
+  leaves credit equal to the lock).
+Suppressions: `grep -rnE "forge-lint: disable|slither-disable" src/` finds 14 lines, exactly the
+allowed list: D-30 (2), D-40 (4), D-46 (2), D-53 (6).
+Slither, CI step 7 body on a scratch copy: exit 0, no IR error, 7 findings, the same as P1.12.
+Gate (logs in `docs/gate-logs/P1.13/`, Forge 1.8.3):
+- G1 pass: 545 passed, 0 failed, 0 skipped, exit 0.
+- G2 pass: src lines 258/258, branches 76/76.
+- G3 pass, G4 pass: exit 0 each.
+- G5 pass: seeds 1 and 2, 545 passed each.
+- G6 pass: three runs, 545 passed each.
+- G7 pass: `ci` profile, 545 passed.
+- G8 pass: `IndicoLedger` 12,422 B; snapshot check 494 passed.
+- G9 pass, `G9.log`: 7 of 7 caught by `NegativeSpace.t.sol`, plus one refused by the compiler; on a
+  scratch copy, then byte-identical to the real source.
+- G13 pass.
+- G10 pending: owner pushes.
+Mutations (G9): N1 a `receive` (raw ETH accepted); N2 a `fallback` (unknown selectors and short
+calldata accepted); N3 a `rescueTokens` function (69 functions against a list of 68); N5 `repay`
+without `nonReentrant`; N6 `repay` marks the loan Repaid after the transfer; N7 `requestLoan`
+pays out before storing the loan; N8 `spend` reading the payer from trailing calldata. All caught.
+N4 (`deposit` made payable) does not compile: an override cannot change an interface function's
+mutability, which O-014 now enforces.
+Open items: closed O-014, O-023, O-029, O-039, O-042 (owner confirmed: `adminIssueCredit` with a
+payment memo, no new function); raised O-043; O-008 and O-040 decided (D-63, D-64), closed by the
+changes that build them.
+Commit: test: P1.13 close-out, ledger inherits its interface, negative space and re-entry cross product, realistic test clock
+
 ---
 
 ## Open items
@@ -2208,7 +2276,7 @@ Commit: docs: record D-60 CI and Deep fuzz green
 | O-011 | Decisions due inside portions: duplicate approvals, zero terms hash, one address as user and merchant (P1.2); maximum declared asset value so `totalCredit` cannot overflow, zero document hash (P1.4); issuing credit to an unapproved address (P1.5); first-deposit inflation mitigation (P1.7) | engineer proposes, owner approves | P1.2, P1.4, P1.5, P1.7 |
 | O-012 | CI warnings: `actions/checkout@v4` runs on deprecated Node.js 20 (move to v5 in both workflows); `ubuntu-latest` becomes Ubuntu 26 from 2026-10-19, so recheck CI after that date | engineer | |
 | O-013 | Reconsider where the loan time axis lives: `_loanTimeAt` and `_loanDims` sit in `Matrix.sol` because `Actors.sol` could not build in Phase 0. Once it builds, decide whether to move them next to `LoanState` and replace the literal `4` with `LOAN_STATES` | engineer | Closed by C-050 |
-| O-014 | `IndicoLedger` must inherit `IIndicoLedger`, so the compiler proves the implementation matches the interface the backend builds against | engineer | P1.13 at the latest |
+| O-014 | `IndicoLedger` must inherit `IIndicoLedger`, so the compiler proves the implementation matches the interface the backend builds against | engineer | Closed by C-056 |
 | O-015 | Delete the `uninitialized-state` suppression on `termsHash` (D-18) as part of the gate | engineer | Closed by C-017 |
 | O-016 | Delete the `uninitialized-state` suppression on `totalCredit` (D-18) as part of the gate | engineer | Closed by C-024 |
 | O-017 | Delete the `uninitialized-state` suppression on `totalShares` (D-18) as part of the gate | engineer | Closed by C-034 |
@@ -2217,13 +2285,13 @@ Commit: docs: record D-60 CI and Deep fuzz green
 | O-020 | Delete the `uninitialized-state` suppression on `poolCredit` (D-18) as part of the gate | engineer | Closed by C-050 |
 | O-021 | Test for the `Fixture._default` clock fix (C-012): after `_default`, `block.timestamp` is back to its value before the call | engineer | Closed by C-050 |
 | O-022 | Participant matrix (IT 2.2): the `pause` column, nine participants, moved from P1.1 because building them needs approvals and `signTerms` | engineer | Closed by C-019 |
-| O-023 | The Phase-0 skip step in `ci.yml` and `deep.yml` no longer runs now that `src/IndicoLedger.sol` exists; delete it | engineer | P1.13 |
+| O-023 | The Phase-0 skip step in `ci.yml` and `deep.yml` no longer runs now that `src/IndicoLedger.sol` exists; delete it | engineer | Closed by C-056 |
 | O-024 | Backend admin screen (AD-04, AD-02): before approving a wallet as user or merchant, warn that its role becomes permanent (D-22); a mistaken approval can only be fixed by the person using a different wallet | backend | Level 4 |
 | O-025 | Participant matrix (IT 2.2): 12 of 13 action columns (`signTerms`, `setUserApproved`, `pause`, `registerAsset`, `adminIssueCredit`, `adminDebitCredit`, `spend`, `deposit`, `withdraw`, `requestLoan`, `repay`, `extend`), 108 of 117 cells. Each later portion adds its own column at its gate; all 13 columns, 117 cells, by P1.13 | engineer | Closed by C-050 |
 | O-026 | On any Forge upgrade (D-14), re-run the D-30 probe (`docs/lint-probes/missing-events-access-control`, `forge build --deny warnings`); if the mapping rows are no longer flagged, delete every `missing-events-access-control` suppression in the same commit as the upgrade. Same for D-40's `reentrancy-events` probe (`docs/lint-probes/reentrancy-events/`): if `Withdrawn` or `Deposited` no longer fires, delete that line. On a Slither upgrade, the D-40 `incorrect-equality` probe likewise | engineer | next Forge upgrade |
 | O-027 | `_mint` computes `room = CREDIT_CAP - credit[account]`, which underflows (panic) if the account already holds more than the cap. Only a merchant can (via `spend`, D-27), and P1.4 mints only to users, so it is unreachable now. P1.5 decides whether `adminIssueCredit` may credit a merchant (O-011); if it can, P1.5 writes the failing test first (mint to a merchant above the cap must revert `CreditCapExceeded(amount, 0)`, never panic) and fixes `_mint` | engineer | Closed by D-33 (C-026) |
 | O-028 | Delete the `slither-disable-next-line uninitialized-state` above `lockedCredit` (D-34) as part of the gate; it covers every read site (`adminDebitCredit`, and `spend` in P1.6) | engineer | Closed by C-042 |
-| O-029 | `src/lib/Math.sol` carries `slither-disable-next-line unused-return` (C-006 triage). The P1.13 grep now covers Slither, so it fails close-out unless it gets its own decision allowing it to survive, or is removed | engineer, owner | before P1.13 |
+| O-029 | `src/lib/Math.sol` carries `slither-disable-next-line unused-return` (C-006 triage). The P1.13 grep now covers Slither, so it fails close-out unless it gets its own decision allowing it to survive, or is removed | engineer, owner | Closed by C-056 |
 | O-030 | Slither has logged `ERROR:ContractSolcParsing: Impossible to generate IR for Math.mulDivDown (src/lib/Math.sol#27-34): 'NoneType' object has no attribute 'parameters'` since P1.3, locally and on CI (run 37108382319); P1.1 and P1.2 runs did not. Detectors still run on everything else and the exit code ignores it, so CI stays green, but `mulDivDown` is not being analysed. Find the trigger and fix or triage in writing | engineer | Closed by C-030 |
 | O-031 | Backend (AD-04, AD-08, U-13): the admin merchant screen shows each merchant's on-chain terms signature (`termsSigned`, `signedTermsHash`); a user paying a merchant who has not signed gets a readable "merchant not ready" instead of `MerchantTermsNotSigned` (D-36, D-37) | backend | Level 4 |
 | O-032 | Merchant guide (merchants use the block explorer): step 0, in bold at the top, says never to send USDC to the ledger address with `transfer`; only `approve` on the USDC contract, then `deposit`. A direct transfer is counted nowhere and cannot be recovered (D-38) | owner | before the first merchant deposits |
@@ -2233,6 +2301,8 @@ Commit: docs: record D-60 CI and Deep fuzz green
 | O-036 | The 11 `Math.t.sol` properties pinned by `forge-config: default.fuzz.runs = 100000` also run 100,000 times under `deep` (run 37169050467), so `LedgerMath` has never had 5,000,000 runs. Fix: a `deep` inline line per test, or move the pin; reopens P0.1 | engineer, owner | Closed by C-040 |
 | O-037 | Build D-43 (state-diff assertions instead of the full re-read snapshot) as its own change with the full gate: every G9 mutation from P1.1 to P1.7 still caught plus one new unexpected-slot mutation, gas per run before and after on the three heaviest fuzz tests, new Deep estimate per shard. After P1.7 merges, before P1.8 | engineer | Closed by C-041 |
 | O-038 | `repay` is `whenNotPaused` (contract-spec 6), so a pause that lasts past a loan's due date stops the borrower repaying, and at the unpause anyone may liquidate it. The same pause can span a loan's whole extension window, so `extend` is impossible too (C-047). Owner decides before P1.11: accept and say so in the terms and pause policy, exempt `repay` from the pause, or handle it in `liquidate` (D-48) | owner | Closed by C-050 |
-| O-039 | Forge starts every test's clock at 1 second, far below any real Base timestamp (about 1.8e9) and below the 7-day grace. It hid the first-pause case (a pause at time 1 sits inside a grace that "ends" at 7 days, so `lastPausedAt` is not set) until the dedicated P1.11 tests ran at a realistic time (C-050). Proposal for P1.13: `FixtureBase.setUp` warps to a realistic timestamp (1,800,000,000) so every test runs on a realistic clock. Expected cost: every test that pauses also writes `lastPausedAt` (one more storage write, so those snapshot lines rise, mostly under 10%); exact-write and value-snapshot tests that pause are re-checked, the `_expectPaused` model already covers them; tests that warp to an absolute time stay correct, those that warp relative to `block.timestamp` shift but keep their meaning. Measured and decided before the change, not done now | engineer, owner | P1.13 |
+| O-039 | Forge starts every test's clock at 1 second, far below any real Base timestamp (about 1.8e9) and below the 7-day grace. It hid the first-pause case (a pause at time 1 sits inside a grace that "ends" at 7 days, so `lastPausedAt` is not set) until the dedicated P1.11 tests ran at a realistic time (C-050). Proposal for P1.13: `FixtureBase.setUp` warps to a realistic timestamp (1,800,000,000) so every test runs on a realistic clock. Expected cost: every test that pauses also writes `lastPausedAt` (one more storage write, so those snapshot lines rise, mostly under 10%); exact-write and value-snapshot tests that pause are re-checked, the `_expectPaused` model already covers them; tests that warp to an absolute time stay correct, those that warp relative to `block.timestamp` shift but keep their meaning. Measured and decided before the change, not done now | engineer, owner | Closed by C-056 |
 | O-040 | Account link (D-60): an app account is linked to exactly one wallet and a wallet to one account, permanently for now. **Under a permanent link, a lost wallet (a lost Tangem card, for example) leaves that user's credit and account stuck for good**, so an admin re-link (option B) will probably be needed. It is the client's open question "can a user's bound wallet ever be changed" (PRD U-05), kept open by the owner until the full contract is built and decided **before deployment** (P3.1), because the contract is immutable. The options presented then must cover: moving only a user with no active loan and no locked credit; how the credit moves with the account (one user's own wallets, so not a transfer between users, S-06, but it must be designed and tested); a time delay before the move takes effect; and an event the indexer reads | owner, client | before P3.1 |
 | O-041 | Backend handover (D-60): the `accountRef` passed to `setUserApproved` must be random, 32 random bytes or a UUIDv4, and never derived from the email or any personal data, since a hash of an email is reversed by hashing known emails. The contract cannot enforce it; the backend owns it. Goes into the P1.13 handover notes | backend | P1.13 handover |
+| O-042 | Direct Payments (AD-10, AD-11): `adminIssueCredit(user, amount, memo)` already issues credit with no asset; `memo` is a 32-byte payment reference, emitted in `CreditMinted`. Limits: users only (approved or revoked, D-32), not while paused, the per-account cap (D-27). The memo is public, so it must be an opaque reference, never personal data. Client confirms this fits before the interface freeze | owner, client | Closed by C-056 |
+| O-043 | Backend handover (next to O-041): the `memo` passed to `adminIssueCredit` and `adminDebitCredit` is public on chain, in `CreditMinted` and `CreditBurned`. It must be an opaque reference, a random id or a hash of an internal record id with a secret salt, never a name, email, bank reference or description of the amount. The contract cannot enforce it; the backend owns it | backend | P1.13 handover |

@@ -31,9 +31,9 @@ import {
 
 /// @title IndicoLedger
 /// @notice Credit, spending, the USDC pool and every loan, in one contract deployed once.
-/// @dev docs/contract-spec.md. Built portion by portion; functions not yet implemented are
-///      absent, so calls to them revert. Inherits `IIndicoLedger` once every function exists.
-contract IndicoLedger is AccessControlDefaultAdminRules, Pausable, ReentrancyGuard {
+/// @dev docs/contract-spec.md. Inherits `IIndicoLedger`, so the compiler proves every function
+///      the backend builds against is implemented with the same signature (O-014).
+contract IndicoLedger is IIndicoLedger, AccessControlDefaultAdminRules, Pausable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     bytes32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");

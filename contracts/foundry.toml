@@ -7,6 +7,8 @@ evm_version = "cancun"
 optimizer = true
 optimizer_runs = 200
 via_ir = true
+# NegativeSpace.t.sol reads the ABI to prove its call list covers every function.
+fs_permissions = [{ access = "read", path = "./out" }]
 
 [profile.default.fuzz]
 runs = 10_000

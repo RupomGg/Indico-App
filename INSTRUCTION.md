@@ -344,9 +344,31 @@ pause matrix (IT §2.3) and the participant matrix (IT §2.2) with its own funct
   lines (two in `extend`, one in `_lateExtensionAllowed`, one in `pause`, two in `liquidate`);
   D-34's and D-40's `totalLent` lines are gone since P1.8, D-18's `poolCredit` line since P1.11;
   see D-18, O-029).
-- Handover produced: ABI JSON, TypeScript client package (viem), custom-error decoder map, gas
-  table per function.
-- Manual check: owner tags `interface-v1.0.0` and sends the handover to the backend. From here the
+- Handover produced (`handover/`): ABI JSON and a typed TypeScript client (viem); error map
+  (selector, name, arguments, a plain-English message for the app); event catalogue (topic0,
+  arguments, what each event changes in state); the views the backend calls instead of rebuilding
+  state; gas per function, typical and worst case; deployment parameters (USDC on Base and Base
+  Sepolia, admin Safe, guardian) with the 3-day admin transfer note (D-19); backend rules (the
+  `accountRef` is random and never derived from the email or any personal data, O-041; the `memo`
+  of `adminIssueCredit` and `adminDebitCredit` is public too, so it is an opaque reference (a
+  random id, or a hash of an internal record id with a secret salt), never a name, email, bank
+  reference or description of the amount, O-043; a merchant
+  deposit is two transactions, `approve` then `deposit`; USDC sent straight to the ledger is stuck
+  for good, D-38; what the pause blocks; grace and late-extension dates come from `PauseTimesSet`,
+  D-58, D-59); the invariants list (CS 9), so the indexer can check itself.
+- **Freeze step, blocked.** Everything above is built and gated now. The freeze (the tag and the
+  handover sent) waits until each of these has the client's answer, because after the freeze a new
+  function means a new contract:
+  - O-040: moving an account to a new wallet (the lost-wallet case);
+  - O-008: what a merchant does with credit received, and whether Cash Reconciliation needs to
+    reduce a merchant's credit (`adminDebitCredit` reduces a user's available credit only, D-32;
+    nothing can reduce a merchant's);
+  - O-042: Direct Payments: confirm `adminIssueCredit(user, amount, memo)` fits (credit with no
+    asset, a 32-byte payment reference, approved or revoked users only).
+  Any answer that needs a new function is built as its own change, with the full gate, before the
+  freeze.
+- Manual check, at the freeze: owner tags `interface-v1.0.0` (this replaces the lost
+  `interface-v0.2.0`, closing O-003) and sends the handover to the backend. From here the
   interface is frozen; a change needs a decision entry and a version bump.
 
 ### Level 2: Proof
