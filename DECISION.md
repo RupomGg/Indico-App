@@ -2179,6 +2179,16 @@ caught.
 Open items: none raised (O-040 and O-041 in C-052).
 Commit: feat: link each approved user wallet to one app account by an opaque reference, one-to-one (D-60, P1.2 reopen)
 
+### C-055 · D-60 done · CI and Deep fuzz green on the account link · 2026-10-08
+Type: chore
+Files: none changed in code.
+- G10: CI run 37624857311 on `c16d796` (`main`, signed) green.
+- Deep fuzz pass: run 37624883608 on `c16d796`, dispatched by the owner: `check` green, **23 of 23
+  shards green**, each shard's D-42 guard passed. D-60 and the P1.2 reopen are done
+  (INSTRUCTION 1.2). New shard `AccountLink.t.sol` 66.8 minutes; longest `Pool.t.sol` 78.5
+  minutes (22% of 360).
+Commit: docs: record D-60 CI and Deep fuzz green
+
 ---
 
 ## Open items
