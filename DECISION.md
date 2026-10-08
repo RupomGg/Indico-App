@@ -2257,6 +2257,70 @@ payment memo, no new function); raised O-043; O-008 and O-040 decided (D-63, D-6
 changes that build them.
 Commit: test: P1.13 close-out, ledger inherits its interface, negative space and re-entry cross product, realistic test clock
 
+### C-057 · P1.13 done, freeze pending · CI and Deep fuzz green on P1.13 · 2026-10-08
+Type: chore
+Files: none changed in code.
+- G10: CI run 37723805647 on `99018f8` (`main`, signed) green.
+- Deep fuzz pass: run 37723815035 on `99018f8`, dispatched by the owner: **25 of 25 shards
+  green**, each shard's D-42 guard passed. P1.13 is done except the freeze step, which waits for
+  D-63 and D-64. New shard `NegativeSpace.t.sol` under a minute; longest `Pool.t.sol` 89.1
+  minutes (25% of 360).
+Commit: part of the D-63 commit.
+
+### C-058 · P1.5 reopened · D-63 · `adminDebitCredit` may debit a merchant · 2026-10-08
+Type: feature
+Decisions: D-63 (owner decided, O-008: Cash Reconciliation); D-32 changed for the debit only;
+D-27, D-33 unchanged (issuing stays users only)
+Reopens P1.5 (INSTRUCTION 1.3): its mutations rerun in this gate. Built on `main` after P1.13's
+Deep fuzz run went green (C-057). A freeze blocker (INSTRUCTION P1.13).
+Files:
+- Changed: `contracts/src/IndicoLedger.sol`: `_checkCreditTarget(user, amount, merchantAllowed)`;
+  `adminDebitCredit` passes `true`, so a merchant, approved or revoked, may be debited up to its
+  balance (a merchant never has locked credit); `adminIssueCredit` passes `false`, unchanged. Any
+  other address still reverts `NotAUser(account)`; error, check order and `CreditBurned`
+  unchanged, so the backend's error map and indexer need no change.
+- Changed: `contracts/src/interfaces/IIndicoLedger.sol`: the two functions' comments (merchant on
+  debit; the memo is public and opaque, O-043).
+- Changed: `contracts/test/unit/AdminCredit.t.sol`: partition table updated; the "not a user"
+  test keeps both merchants refused on issue and drops them from debit; new: a target matrix over
+  all nine participant states (IT 2.2) for both functions (issue succeeds for the three user
+  states only; debit passes the role check for user and merchant states, then
+  `InsufficientAvailableCredit(1, 0)` on an empty balance, and is `NotAUser` otherwise); a merchant
+  debit with exact state and exactly one exact `CreditBurned`; the whole balance; the balance plus
+  one (`InsufficientAvailableCredit(b + 1, b)`, nothing changed); a revoked merchant; issue to a
+  merchant holding credit still `NotAUser`; fuzz: any merchant debit within the balance writes
+  exactly its credit and `totalCredit`, any amount above it is the named revert.
+  The participant matrix (IT 2.2) is by caller and only the admin may call either function, so its
+  cells do not change; the new target matrix covers the change.
+- Changed: `contracts/.gas-snapshot`: 6 new `AdminCreditTest` lines; 83 changed; none removed. One
+  over 10%: `test_user_notAUser_bothFunctions` -12.0%, two fewer refused calls. The rest move by
+  dispatch only.
+- Changed (local, not pushed): `docs/decisions.md` D-63; `docs/event-catalogue.md`
+  (`CreditBurned` may name a merchant).
+Found while building (test errors, none in the contract): the target matrix built the revoked user
+a second time (`AlreadySigned`); the event test mixed `expectEmit` with `recordLogs`, which
+counted the event twice. Both fixed before the gate.
+Size: `IndicoLedger` runtime 12,422 B to 12,495 B (+73 B), margin 12,081 B.
+Slither, CI step 7 body on a scratch copy: exit 0, no IR error, 7 findings, unchanged.
+Gate (logs in `docs/gate-logs/D-63/`, Forge 1.8.3; red phase `red.log`: 7 failing, every one on
+`NotAUser` for a merchant debit, after the test error above was fixed):
+- G1 pass: 553 passed, 0 failed, 0 skipped, exit 0.
+- G2 pass: src lines 260/260, branches 76/76.
+- G3 pass, G4 pass: exit 0 each.
+- G5 pass: seeds 1 and 2, 553 passed each.
+- G6 pass: three runs, 553 passed each.
+- G7 pass: `ci` profile, 553 passed.
+- G8 pass: `IndicoLedger` 12,495 B; snapshot check 500 passed.
+- G9 pass, `G9.log`: 16 of 16 caught, on a scratch copy, then byte-identical to the real source.
+- G13 pass.
+- G10 pending: owner pushes.
+Mutations (G9): P1.5's M1 to M11 rerun on the new code; B1 issue accepts a merchant; B2 debit
+refuses a merchant (D-32 as before); B3 debit accepts any address; B4 debit refuses a revoked
+merchant; B5 a merchant debit skips the balance check. All caught.
+Open items: closed O-008 (for this contract: the admin may debit a merchant's credit; no
+redemption path is built).
+Commit: feat: adminDebitCredit may debit a merchant for cash reconciliation, issuing stays users only (D-63, P1.5 reopen)
+
 ---
 
 ## Open items
@@ -2270,7 +2334,7 @@ Commit: test: P1.13 close-out, ledger inherits its interface, negative space and
 | O-005 | Foundry was not on PATH on 2026-09-29 | owner | Closed by C-009 |
 | O-006 | Backend stack: NestJS container, or Next.js + Supabase + a committed worker. The backend owner decides before Level 4 | backend | |
 | O-007 | Client: what defaulted collateral held by the pool is for. Until answered it is inert and a default is a straight USDC loss to depositors | owner, client | |
-| O-008 | Client: what merchants do with credit they receive. No redemption path is built until answered | owner, client | |
+| O-008 | Client: what merchants do with credit they receive. No redemption path is built until answered | Closed by C-058 |
 | O-009 | Client: arbitration wording. Clause 5 makes a merchant bound after 72 hours of silence; the confirmed admin flow has only not sent / sent / signed and cannot record that | owner, client | |
 | O-010 | Client: written acknowledgement that no external audit was bought, before any real money | owner, client | before P3.3 |
 | O-011 | Decisions due inside portions: duplicate approvals, zero terms hash, one address as user and merchant (P1.2); maximum declared asset value so `totalCredit` cannot overflow, zero document hash (P1.4); issuing credit to an unapproved address (P1.5); first-deposit inflation mitigation (P1.7) | engineer proposes, owner approves | P1.2, P1.4, P1.5, P1.7 |

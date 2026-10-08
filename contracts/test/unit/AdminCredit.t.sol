@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.26;
 
+import {Vm} from "forge-std/Vm.sol";
 import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {IIndicoLedger} from "../../src/interfaces/IIndicoLedger.sol";
@@ -8,14 +9,15 @@ import {CREDIT_CAP} from "../../src/lib/Constants.sol";
 import {Actors} from "../helpers/Actors.sol";
 
 /// @notice `adminIssueCredit` and `adminDebitCredit`, contract-spec 6.3, PRD AD-10 to AD-12,
-///         D-27, D-32, D-33.
+///         D-27, D-32, D-33, D-63 (debit also accepts a merchant).
 ///
 /// user (address), both functions
 /// | Class                         | Expected                                      |
 /// |-------------------------------|-----------------------------------------------|
 /// | zero address                  | ZeroAddress (first, as in `_admit`)           |
 /// | never approved                | NotAUser(user)                                |
-/// | merchant, revoked merchant    | NotAUser(user) (D-32; D-33 evidence for issue) |
+/// | merchant, revoked merchant    | issue: NotAUser(user) (D-32; D-33 evidence);  |
+/// |                               | debit: succeeds up to the balance (D-63)      |
 /// | the ledger, the USDC address  | NotAUser(user), they can never be approved    |
 /// | approved user                 | succeeds                                      |
 /// | revoked user                  | succeeds (D-32)                               |
@@ -281,18 +283,19 @@ contract AdminCreditTest is Actors {
         }
     }
 
-    /// @dev Never approved, merchant, revoked merchant, the ledger, USDC: NotAUser, both
-    ///      functions. For issue to a merchant this is the D-33 evidence: `_mint` is never reached.
+    /// @dev Never approved, the ledger, USDC: NotAUser on both functions. A merchant or revoked
+    ///      merchant: NotAUser on issue only (D-32; the D-33 evidence: `_mint` is never reached).
     function test_user_notAUser_bothFunctions() public {
         address[5] memory who = [
             makeAddr("stranger"),
-            merchantA,
-            _participant(Participant.MerchantRevoked),
             address(ledger),
-            address(usdc)
+            address(usdc),
+            merchantA,
+            _participant(Participant.MerchantRevoked)
         ];
         for (uint256 f; f < 2; ++f) {
             for (uint256 i; i < who.length; ++i) {
+                if (f == 1 && i >= 3) continue; // merchants may be debited (D-63)
                 _expectRevertUnchanged(
                     admin,
                     f == 0,
@@ -302,6 +305,129 @@ contract AdminCreditTest is Actors {
                 );
             }
         }
+    }
+
+    /// @dev Every participant state (IT 2.2) as the target, with no credit: issue(1) succeeds
+    ///      only for the three user states; debit(1) passes the role check for the user and
+    ///      merchant states (then InsufficientAvailableCredit(1, 0)) and is NotAUser otherwise.
+    function test_targetMatrix_everyParticipant_bothFunctions() public {
+        for (uint256 p; p < 9; ++p) {
+            Participant st = Participant(p);
+            // setUp already built the revoked user; building it again would sign twice.
+            address t = st == Participant.ApprovedThenRevoked ? revokedUser : _participant(st);
+            bool isUser = st == Participant.ApprovedNotSigned || st == Participant.ApprovedAndSigned
+                || st == Participant.ApprovedThenRevoked;
+            bool isMerchant = st == Participant.Merchant || st == Participant.MerchantRevoked;
+            bytes memory notAUser = abi.encodeWithSelector(IIndicoLedger.NotAUser.selector, t);
+            if (isUser) {
+                _issue(t, 1, MEMO);
+                assertEq(ledger.credit(t), 1, "issue");
+                _debit(t, 1, MEMO);
+                assertEq(ledger.credit(t), 0, "debit");
+            } else {
+                _expectRevertUnchanged(admin, true, t, 1, notAUser);
+            }
+            _expectRevertUnchanged(
+                admin,
+                false,
+                t,
+                1,
+                isUser || isMerchant
+                    ? abi.encodeWithSelector(
+                        IIndicoLedger.InsufficientAvailableCredit.selector, 1, 0
+                    )
+                    : notAUser
+            );
+        }
+    }
+
+    // ================================================================== merchant debit (D-63)
+
+    /// @dev alice pays merchantA `b`, then the admin debits `a` of it.
+    function _merchantHolds(uint256 b) internal {
+        _issue(alice, b, MEMO);
+        vm.prank(alice);
+        ledger.spend(merchantA, b);
+    }
+
+    function test_debit_merchant_burnsExactly_emitsCreditBurned() public {
+        _merchantHolds(300e6);
+        Snapshot memory s = _snapshot();
+        vm.recordLogs();
+        _debit(merchantA, 120e6, MEMO);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        assertEq(logs.length, 1, "one event");
+        assertEq(logs[0].emitter, address(ledger));
+        assertEq(logs[0].topics[0], IIndicoLedger.CreditBurned.selector);
+        assertEq(logs[0].topics[1], bytes32(uint256(uint160(merchantA))));
+        assertEq(logs[0].data, abi.encode(uint256(120e6), MEMO));
+        s.credit[_index(merchantA)] -= 120e6;
+        s.totalCredit -= 120e6;
+        _assertUnchanged(s);
+    }
+
+    function test_debit_merchant_wholeBalance_toZero() public {
+        _merchantHolds(300e6);
+        _debit(merchantA, 300e6, MEMO);
+        assertEq(ledger.credit(merchantA), 0);
+        assertEq(ledger.totalCredit(), 0);
+    }
+
+    function test_debit_merchant_balancePlusOne_reverts() public {
+        _merchantHolds(300e6);
+        _expectRevertUnchanged(
+            admin,
+            false,
+            merchantA,
+            300e6 + 1,
+            abi.encodeWithSelector(
+                IIndicoLedger.InsufficientAvailableCredit.selector, 300e6 + 1, 300e6
+            )
+        );
+    }
+
+    function test_debit_revokedMerchant_succeeds() public {
+        _merchantHolds(300e6);
+        _revokeMerchant(merchantA);
+        _debit(merchantA, 100e6, MEMO);
+        assertEq(ledger.credit(merchantA), 200e6);
+    }
+
+    /// @dev Issue to a merchant stays refused (D-63 changes the debit only).
+    function test_issue_merchantWithCredit_stillNotAUser() public {
+        _merchantHolds(300e6);
+        _expectRevertUnchanged(
+            admin,
+            true,
+            merchantA,
+            1,
+            abi.encodeWithSelector(IIndicoLedger.NotAUser.selector, merchantA)
+        );
+    }
+
+    function testFuzz_debit_merchant_withinBalance_exact(uint256 b, uint256 a) public {
+        b = bound(b, 1, CREDIT_CAP);
+        a = bound(a, 1, b);
+        _merchantHolds(b);
+        _startDiff();
+        _debit(merchantA, a, MEMO);
+        Write[] memory w = new Write[](2);
+        w[0] = _w(address(ledger), _key(merchantA, SLOT_CREDIT), b - a);
+        w[1] = _w(address(ledger), bytes32(SLOT_TOTAL_CREDIT), b - a);
+        _assertWrites(w);
+    }
+
+    function testFuzz_debit_merchant_aboveBalance_alwaysNamedRevert(uint256 b, uint256 a) public {
+        b = bound(b, 1, CREDIT_CAP);
+        a = bound(a, b + 1, type(uint256).max);
+        _merchantHolds(b);
+        _expectRevertUnchanged(
+            admin,
+            false,
+            merchantA,
+            a,
+            abi.encodeWithSelector(IIndicoLedger.InsufficientAvailableCredit.selector, a, b)
+        );
     }
 
     function test_user_signedButNeverApproved_notAUser() public {

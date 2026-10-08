@@ -221,8 +221,10 @@ interface IIndicoLedger {
     ///      `CreditCapExceeded` (D-27). Emits `CreditMinted(user, amount, memo)`.
     function adminIssueCredit(address user, uint256 amount, bytes32 memo) external;
 
-    /// @notice Debit `user`'s credit for a private cash settlement.
-    /// @dev ADMIN_ROLE, `whenNotPaused`. Reverts, in order, `ZeroAddress`, `NotAUser`,
+    /// @notice Debit a user's or a merchant's credit for a cash settlement (AD-12, D-63).
+    /// @dev ADMIN_ROLE, `whenNotPaused`. `user` may be a user or a merchant, approved or revoked;
+    ///      `memo` is public, an opaque reference, never personal data (O-043). Reverts, in order,
+    ///      `ZeroAddress`, `NotAUser` (neither role),
     ///      `ZeroAmount`, then `InsufficientAvailableCredit` if `amount > available(user)`; never
     ///      reaches locked collateral. Emits `CreditBurned(user, amount, memo)`.
     function adminDebitCredit(address user, uint256 amount, bytes32 memo) external;

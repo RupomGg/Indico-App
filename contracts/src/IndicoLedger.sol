@@ -253,19 +253,20 @@ contract IndicoLedger is IIndicoLedger, AccessControlDefaultAdminRules, Pausable
         onlyRole(ADMIN_ROLE)
         whenNotPaused
     {
-        _checkCreditTarget(user, amount);
+        _checkCreditTarget(user, amount, false);
         _mint(user, amount, memo);
     }
 
-    /// @notice Debit `user`'s credit for a private cash settlement (AD-12).
-    /// @dev Users only (D-32). Limited to available credit, so it never reaches collateral
-    ///      locked against a loan.
+    /// @notice Debit `user`'s credit for a private cash settlement (AD-12), or a merchant's
+    ///         for Cash Reconciliation (D-63).
+    /// @dev Users and merchants, approved or revoked (D-32, D-63). Limited to available credit,
+    ///      so it never reaches collateral locked against a loan.
     function adminDebitCredit(address user, uint256 amount, bytes32 memo)
         external
         onlyRole(ADMIN_ROLE)
         whenNotPaused
     {
-        _checkCreditTarget(user, amount);
+        _checkCreditTarget(user, amount, true);
         uint256 avail = credit[user] - lockedCredit[user];
         if (amount > avail) revert IIndicoLedger.InsufficientAvailableCredit(amount, avail);
         credit[user] -= amount;
@@ -273,10 +274,15 @@ contract IndicoLedger is IIndicoLedger, AccessControlDefaultAdminRules, Pausable
         emit IIndicoLedger.CreditBurned(user, amount, memo);
     }
 
-    /// @dev Same order as `_admit`: zero address first, then the role, then the amount.
-    function _checkCreditTarget(address user, uint256 amount) private view {
+    /// @dev Same order as `_admit`: zero address first, then the role, then the amount. A
+    ///      merchant is accepted only for a debit (D-63); issuing to one would be a redemption
+    ///      path (O-008).
+    function _checkCreditTarget(address user, uint256 amount, bool merchantAllowed) private view {
         if (user == address(0)) revert IIndicoLedger.ZeroAddress();
-        if (participantRole[user] != ROLE_USER) revert IIndicoLedger.NotAUser(user);
+        uint8 role = participantRole[user];
+        if (role != ROLE_USER && !(merchantAllowed && role == ROLE_MERCHANT)) {
+            revert IIndicoLedger.NotAUser(user);
+        }
         if (amount == 0) revert IIndicoLedger.ZeroAmount();
     }
 
