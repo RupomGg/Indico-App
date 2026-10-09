@@ -2479,6 +2479,38 @@ Open items: closed O-041, O-043 (both in the README's backend rules). O-003 clos
 tags `interface-v1.0.0`.
 Commit: docs: backend handover for interface 1.0.0, generated from the ABI and checked in CI (P1.13 freeze)
 
+### C-063 · P1.13 done · Interface 1.0.0 frozen and tagged · 2026-10-10
+Type: chore
+Files: none changed in code.
+- G10: CI run 37980867757 on `c24f5a1` (`main`, signed) green, step 2b (handover current) included;
+  CI run 37980873995 for the tag push, same commit, green.
+- The owner tagged `c24f5a1` `interface-v1.0.0` (signed tag, ED25519 key verified locally) and
+  pushed it. From here the interface is frozen: a change needs a decision entry and a version bump
+  (INSTRUCTION P1.13). Level 1 is complete.
+- No Deep fuzz run needed: `contracts/` unchanged since `de1984d`, green in run 37902270802 (C-061).
+Open items: closed O-003 (`interface-v1.0.0` replaces the lost `interface-v0.2.0`).
+Commit: part of the O-012 commit.
+
+### C-064 · chore · O-012 · checkout v5, runners pinned to Ubuntu 24.04 · 2026-10-10
+Type: chore
+Decisions: none (owner's instruction: its own change, before GitHub moves `ubuntu-latest` on
+2026-10-19)
+Files:
+- Changed: `.github/workflows/ci.yml` (one job), `.github/workflows/deep.yml` (`check` and `deep`):
+  `actions/checkout@v4` to `@v5`; `runs-on: ubuntu-latest` to `ubuntu-24.04`, so the image change
+  cannot alter the toolchain without a commit. Moving to Ubuntu 26 is a later, separate change.
+- Checked: `checkout@v5`, `setup-python@v6` and `foundry-toolchain@v1` all declare `node24` in their
+  `action.yml`, so no step runs on the deprecated Node 20. `checkout` has newer majors (v7); v5 is
+  the version the owner chose.
+Gate (`docs/gate-logs/O-012/gate.log`): both workflows parse; `deep-should-run.test.sh` and
+`deep-runs-guard.test.sh` all `ok`, exit 0; `forge fmt --check` exit 0; `forge build --deny
+warnings` exit 0; `handover/build.py --check` current. `contracts/` unchanged, so the D-64 gate
+(C-060) stands.
+- G10 pending: owner pushes. `deep.yml` changed, so by D-31 the next nightly runs the full deep job
+  on unchanged contracts; nothing needs dispatching by hand.
+Open items: closed O-012.
+Commit: ci: actions/checkout v5 and runners pinned to ubuntu-24.04 (O-012)
+
 ---
 
 ## Open items
@@ -2487,7 +2519,7 @@ Commit: docs: backend handover for interface 1.0.0, generated from the ABI and c
 |---|---|---|---|
 | O-001 | CI has known problems: Slither installed with plain `pip` (refused on the runner) and scanning tests and libraries; invariant step with no invariant tests; gas snapshot check may use different flags than the committed snapshot | engineer | Closed by C-007 |
 | O-002 | Loan matrix: `input-testing.md` says 144 cells, `Helpers.t.sol` checks 108; the agreed figure is 180 (five time points) | engineer | Closed by C-010 |
-| O-003 | Re-create the lost tag: `git tag interface-v0.2.0` on current `main`, then push it, and tell the backend that v0.1.0 no longer exists | owner | |
+| O-003 | Re-create the lost tag: `git tag interface-v0.2.0` on current `main`, then push it, and tell the backend that v0.1.0 no longer exists | owner | Closed by C-063 |
 | O-004 | GitHub CLI not installed; gate line G10 needs it | owner | Closed by C-007 |
 | O-005 | Foundry was not on PATH on 2026-09-29 | owner | Closed by C-009 |
 | O-006 | Backend stack: NestJS container, or Next.js + Supabase + a committed worker. The backend owner decides before Level 4 | backend | |
@@ -2496,7 +2528,7 @@ Commit: docs: backend handover for interface 1.0.0, generated from the ABI and c
 | O-009 | Client: arbitration wording. Clause 5 makes a merchant bound after 72 hours of silence; the confirmed admin flow has only not sent / sent / signed and cannot record that | owner, client | |
 | O-010 | Client: written acknowledgement that no external audit was bought, before any real money | owner, client | before P3.3 |
 | O-011 | Decisions due inside portions: duplicate approvals, zero terms hash, one address as user and merchant (P1.2); maximum declared asset value so `totalCredit` cannot overflow, zero document hash (P1.4); issuing credit to an unapproved address (P1.5); first-deposit inflation mitigation (P1.7) | engineer proposes, owner approves | P1.2, P1.4, P1.5, P1.7 |
-| O-012 | CI warnings: `actions/checkout@v4` runs on deprecated Node.js 20 (move to v5 in both workflows); `ubuntu-latest` becomes Ubuntu 26 from 2026-10-19, so recheck CI after that date | engineer | |
+| O-012 | CI warnings: `actions/checkout@v4` runs on deprecated Node.js 20 (move to v5 in both workflows); `ubuntu-latest` becomes Ubuntu 26 from 2026-10-19, so recheck CI after that date | engineer | Closed by C-064 |
 | O-013 | Reconsider where the loan time axis lives: `_loanTimeAt` and `_loanDims` sit in `Matrix.sol` because `Actors.sol` could not build in Phase 0. Once it builds, decide whether to move them next to `LoanState` and replace the literal `4` with `LOAN_STATES` | engineer | Closed by C-050 |
 | O-014 | `IndicoLedger` must inherit `IIndicoLedger`, so the compiler proves the implementation matches the interface the backend builds against | engineer | Closed by C-056 |
 | O-015 | Delete the `uninitialized-state` suppression on `termsHash` (D-18) as part of the gate | engineer | Closed by C-017 |

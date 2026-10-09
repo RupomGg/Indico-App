@@ -14,12 +14,12 @@ jobs:
   # green run, and stays red without re-running when nothing changed since a red one (D-31).
   # A manual dispatch always runs.
   check:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       run: ${{ steps.decide.outputs.run }}
       files: ${{ steps.shards.outputs.files }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -52,7 +52,7 @@ jobs:
     needs: check
     if: needs.check.outputs.run == 'true'
     name: deep (${{ matrix.file }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 360
     strategy:
       fail-fast: false
@@ -62,7 +62,7 @@ jobs:
       run:
         working-directory: contracts
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: recursive
 
