@@ -1,0 +1,550 @@
+[
+  {
+    "selector": "0x6697b232",
+    "name": "AccessControlBadConfirmation",
+    "signature": "AccessControlBadConfirmation()",
+    "args": [],
+    "message": "The role can only be given up by the address that holds it."
+  },
+  {
+    "selector": "0x19ca5ebb",
+    "name": "AccessControlEnforcedDefaultAdminDelay",
+    "signature": "AccessControlEnforcedDefaultAdminDelay(uint48)",
+    "args": [
+      {
+        "name": "schedule",
+        "type": "uint48"
+      }
+    ],
+    "message": "The top admin transfer is not ready yet; it can be accepted after {schedule}."
+  },
+  {
+    "selector": "0x3fc3c27a",
+    "name": "AccessControlEnforcedDefaultAdminRules",
+    "signature": "AccessControlEnforcedDefaultAdminRules()",
+    "args": [],
+    "message": "The top admin role can only move through the two-step, three-day transfer."
+  },
+  {
+    "selector": "0xc22c8022",
+    "name": "AccessControlInvalidDefaultAdmin",
+    "signature": "AccessControlInvalidDefaultAdmin(address)",
+    "args": [
+      {
+        "name": "defaultAdmin",
+        "type": "address"
+      }
+    ],
+    "message": "Only the address named in the pending transfer can accept the top admin role."
+  },
+  {
+    "selector": "0xe2517d3f",
+    "name": "AccessControlUnauthorizedAccount",
+    "signature": "AccessControlUnauthorizedAccount(address,bytes32)",
+    "args": [
+      {
+        "name": "account",
+        "type": "address"
+      },
+      {
+        "name": "neededRole",
+        "type": "bytes32"
+      }
+    ],
+    "message": "This wallet is not allowed to do that."
+  },
+  {
+    "selector": "0x49b2ba29",
+    "name": "AccountAlreadyLinked",
+    "signature": "AccountAlreadyLinked(bytes32,address)",
+    "args": [
+      {
+        "name": "accountRef",
+        "type": "bytes32"
+      },
+      {
+        "name": "linkedWallet",
+        "type": "address"
+      }
+    ],
+    "message": "This app account is already linked to another wallet."
+  },
+  {
+    "selector": "0x43d1f469",
+    "name": "AccountHasLockedCredit",
+    "signature": "AccountHasLockedCredit(address,uint256)",
+    "args": [
+      {
+        "name": "wallet",
+        "type": "address"
+      },
+      {
+        "name": "locked",
+        "type": "uint256"
+      }
+    ],
+    "message": "This account has credit locked in an open loan; it can move once every loan is repaid or closed."
+  },
+  {
+    "selector": "0xc79a0507",
+    "name": "AccountRefMismatch",
+    "signature": "AccountRefMismatch(address,bytes32)",
+    "args": [
+      {
+        "name": "wallet",
+        "type": "address"
+      },
+      {
+        "name": "linkedRef",
+        "type": "bytes32"
+      }
+    ],
+    "message": "The account reference does not match the one linked to this wallet."
+  },
+  {
+    "selector": "0xb0bd6aca",
+    "name": "AlreadySigned",
+    "signature": "AlreadySigned()",
+    "args": [],
+    "message": "You have already signed these terms."
+  },
+  {
+    "selector": "0x4db515c4",
+    "name": "AssetAlreadyRegistered",
+    "signature": "AssetAlreadyRegistered()",
+    "args": [],
+    "message": "This document has already been registered."
+  },
+  {
+    "selector": "0x0f600b44",
+    "name": "CreditCapExceeded",
+    "signature": "CreditCapExceeded(uint256,uint256)",
+    "args": [
+      {
+        "name": "requested",
+        "type": "uint256"
+      },
+      {
+        "name": "room",
+        "type": "uint256"
+      }
+    ],
+    "message": "This amount would take the account above the maximum credit it can hold."
+  },
+  {
+    "selector": "0x23d359a3",
+    "name": "DivisionByZero",
+    "signature": "DivisionByZero()",
+    "args": [],
+    "message": "Internal calculation error. Please contact support."
+  },
+  {
+    "selector": "0xd93c0665",
+    "name": "EnforcedPause",
+    "signature": "EnforcedPause()",
+    "args": [],
+    "message": "The platform is paused. Please try again later."
+  },
+  {
+    "selector": "0x8dfc202b",
+    "name": "ExpectedPause",
+    "signature": "ExpectedPause()",
+    "args": [],
+    "message": "The platform is not paused."
+  },
+  {
+    "selector": "0x4e1ae030",
+    "name": "ExtensionWindowClosed",
+    "signature": "ExtensionWindowClosed()",
+    "args": [],
+    "message": "This loan is past its due date and can no longer be extended."
+  },
+  {
+    "selector": "0xb96b328f",
+    "name": "ExtensionWindowNotOpen",
+    "signature": "ExtensionWindowNotOpen(uint64)",
+    "args": [
+      {
+        "name": "opensAt",
+        "type": "uint64"
+      }
+    ],
+    "message": "This loan can be extended from {opensAt}, in the last 30 days before it is due."
+  },
+  {
+    "selector": "0x13427a09",
+    "name": "InsufficientAvailableCredit",
+    "signature": "InsufficientAvailableCredit(uint256,uint256)",
+    "args": [
+      {
+        "name": "requested",
+        "type": "uint256"
+      },
+      {
+        "name": "available",
+        "type": "uint256"
+      }
+    ],
+    "message": "Not enough available credit: {requested} needed, {available} available."
+  },
+  {
+    "selector": "0xa17e11d5",
+    "name": "InsufficientLiquidity",
+    "signature": "InsufficientLiquidity(uint256,uint256)",
+    "args": [
+      {
+        "name": "requested",
+        "type": "uint256"
+      },
+      {
+        "name": "available",
+        "type": "uint256"
+      }
+    ],
+    "message": "The pool does not hold enough USDC right now: {requested} requested, {available} available."
+  },
+  {
+    "selector": "0xcb1d8bba",
+    "name": "InsufficientShares",
+    "signature": "InsufficientShares(uint256,uint256)",
+    "args": [
+      {
+        "name": "needed",
+        "type": "uint256"
+      },
+      {
+        "name": "held",
+        "type": "uint256"
+      }
+    ],
+    "message": "This is more than your share of the pool."
+  },
+  {
+    "selector": "0x4547f748",
+    "name": "InvalidAssetType",
+    "signature": "InvalidAssetType(uint8)",
+    "args": [
+      {
+        "name": "assetType",
+        "type": "uint8"
+      }
+    ],
+    "message": "Unknown document type."
+  },
+  {
+    "selector": "0x2c53d702",
+    "name": "InvalidParticipant",
+    "signature": "InvalidParticipant(address)",
+    "args": [
+      {
+        "name": "account",
+        "type": "address"
+      }
+    ],
+    "message": "This address cannot take part in the platform."
+  },
+  {
+    "selector": "0xb7e92b55",
+    "name": "LiquidationGracePeriod",
+    "signature": "LiquidationGracePeriod(uint256)",
+    "args": [
+      {
+        "name": "endsAt",
+        "type": "uint256"
+      }
+    ],
+    "message": "This loan cannot be closed yet: borrowers have until {endsAt} after the platform was paused."
+  },
+  {
+    "selector": "0x082f7846",
+    "name": "LoanNotActive",
+    "signature": "LoanNotActive()",
+    "args": [],
+    "message": "This loan is already repaid or closed."
+  },
+  {
+    "selector": "0x0e7e621d",
+    "name": "LoanNotFound",
+    "signature": "LoanNotFound()",
+    "args": [],
+    "message": "Loan not found."
+  },
+  {
+    "selector": "0x9d565d4e",
+    "name": "MathOverflow",
+    "signature": "MathOverflow()",
+    "args": [],
+    "message": "This amount is too large."
+  },
+  {
+    "selector": "0xa64b0877",
+    "name": "MerchantTermsNotSigned",
+    "signature": "MerchantTermsNotSigned(address)",
+    "args": [
+      {
+        "name": "merchant",
+        "type": "address"
+      }
+    ],
+    "message": "This merchant is not ready to receive payments yet."
+  },
+  {
+    "selector": "0x9c363e25",
+    "name": "NotAUser",
+    "signature": "NotAUser(address)",
+    "args": [
+      {
+        "name": "account",
+        "type": "address"
+      }
+    ],
+    "message": "This address is not a platform user."
+  },
+  {
+    "selector": "0xcd8ebff5",
+    "name": "NotApprovedMerchant",
+    "signature": "NotApprovedMerchant()",
+    "args": [],
+    "message": "This merchant is not approved."
+  },
+  {
+    "selector": "0xb367ae0e",
+    "name": "NotApprovedUser",
+    "signature": "NotApprovedUser()",
+    "args": [],
+    "message": "Your account is not approved."
+  },
+  {
+    "selector": "0xcb1e8f38",
+    "name": "NotBorrower",
+    "signature": "NotBorrower()",
+    "args": [],
+    "message": "Only the borrower can do this."
+  },
+  {
+    "selector": "0x54dc6a89",
+    "name": "NotYetDue",
+    "signature": "NotYetDue(uint64)",
+    "args": [
+      {
+        "name": "dueDate",
+        "type": "uint64"
+      }
+    ],
+    "message": "This loan is not overdue; it is due on {dueDate}."
+  },
+  {
+    "selector": "0x0a249e24",
+    "name": "ParticipantRoleConflict",
+    "signature": "ParticipantRoleConflict(address)",
+    "args": [
+      {
+        "name": "account",
+        "type": "address"
+      }
+    ],
+    "message": "This wallet already has a different role on the platform."
+  },
+  {
+    "selector": "0x3ee5aeb5",
+    "name": "ReentrancyGuardReentrantCall",
+    "signature": "ReentrancyGuardReentrantCall()",
+    "args": [],
+    "message": "The transaction was refused. Please try again."
+  },
+  {
+    "selector": "0x3ab0c886",
+    "name": "RepaymentShort",
+    "signature": "RepaymentShort(uint256,uint256)",
+    "args": [
+      {
+        "name": "principal",
+        "type": "uint256"
+      },
+      {
+        "name": "received",
+        "type": "uint256"
+      }
+    ],
+    "message": "The repayment arrived short: {principal} needed, {received} received."
+  },
+  {
+    "selector": "0x6dfcc650",
+    "name": "SafeCastOverflowedUintDowncast",
+    "signature": "SafeCastOverflowedUintDowncast(uint8,uint256)",
+    "args": [
+      {
+        "name": "bits",
+        "type": "uint8"
+      },
+      {
+        "name": "value",
+        "type": "uint256"
+      }
+    ],
+    "message": "This amount is too large."
+  },
+  {
+    "selector": "0x5274afe7",
+    "name": "SafeERC20FailedOperation",
+    "signature": "SafeERC20FailedOperation(address)",
+    "args": [
+      {
+        "name": "token",
+        "type": "address"
+      }
+    ],
+    "message": "The USDC transfer failed. Check your balance and approval."
+  },
+  {
+    "selector": "0xbbbf512f",
+    "name": "TermsNotSet",
+    "signature": "TermsNotSet()",
+    "args": [],
+    "message": "The terms are not available yet."
+  },
+  {
+    "selector": "0x7c97f434",
+    "name": "TermsNotSigned",
+    "signature": "TermsNotSigned()",
+    "args": [],
+    "message": "Please sign the terms first."
+  },
+  {
+    "selector": "0x7cbc7041",
+    "name": "UsdcDecimalsUnreadable",
+    "signature": "UsdcDecimalsUnreadable(address)",
+    "args": [
+      {
+        "name": "token",
+        "type": "address"
+      }
+    ],
+    "message": "Deployment error: the token does not report its decimals."
+  },
+  {
+    "selector": "0xd866c0c7",
+    "name": "UsdcNotAContract",
+    "signature": "UsdcNotAContract(address)",
+    "args": [
+      {
+        "name": "token",
+        "type": "address"
+      }
+    ],
+    "message": "Deployment error: the token address is not a contract."
+  },
+  {
+    "selector": "0xfe742091",
+    "name": "UsdcWrongDecimals",
+    "signature": "UsdcWrongDecimals(uint256)",
+    "args": [
+      {
+        "name": "decimals",
+        "type": "uint256"
+      }
+    ],
+    "message": "Deployment error: the token does not have 6 decimals."
+  },
+  {
+    "selector": "0x97e8a30f",
+    "name": "WalletAlreadyLinked",
+    "signature": "WalletAlreadyLinked(address,bytes32)",
+    "args": [
+      {
+        "name": "wallet",
+        "type": "address"
+      },
+      {
+        "name": "linkedRef",
+        "type": "bytes32"
+      }
+    ],
+    "message": "This wallet is already linked to another app account."
+  },
+  {
+    "selector": "0x3c99b2c4",
+    "name": "WalletNotFresh",
+    "signature": "WalletNotFresh(address)",
+    "args": [
+      {
+        "name": "wallet",
+        "type": "address"
+      }
+    ],
+    "message": "The new wallet has already been used on the platform; choose one that never has."
+  },
+  {
+    "selector": "0x619333b0",
+    "name": "WrongTermsHash",
+    "signature": "WrongTermsHash()",
+    "args": [],
+    "message": "These are not the current terms. Please reload and sign again."
+  },
+  {
+    "selector": "0xd4d67a5a",
+    "name": "ZeroAccountRef",
+    "signature": "ZeroAccountRef()",
+    "args": [],
+    "message": "An app account must be given."
+  },
+  {
+    "selector": "0xd92e233d",
+    "name": "ZeroAddress",
+    "signature": "ZeroAddress()",
+    "args": [],
+    "message": "An address is missing."
+  },
+  {
+    "selector": "0x1f2a2005",
+    "name": "ZeroAmount",
+    "signature": "ZeroAmount()",
+    "args": [],
+    "message": "The amount must be more than zero."
+  },
+  {
+    "selector": "0xa3262d7d",
+    "name": "ZeroDocHash",
+    "signature": "ZeroDocHash()",
+    "args": [],
+    "message": "The document fingerprint is missing."
+  },
+  {
+    "selector": "0x9811e0c7",
+    "name": "ZeroShares",
+    "signature": "ZeroShares()",
+    "args": [],
+    "message": "This deposit is too small to buy any share of the pool."
+  },
+  {
+    "selector": "0xe6578ce2",
+    "name": "ZeroTermsHash",
+    "signature": "ZeroTermsHash()",
+    "args": [],
+    "message": "The terms fingerprint is missing."
+  },
+  {
+    "selector": "0x08c379a0",
+    "name": "Error",
+    "signature": "Error(string)",
+    "args": [
+      {
+        "name": "message",
+        "type": "string"
+      }
+    ],
+    "message": "The USDC transfer failed: {message}. Check your balance and approval."
+  },
+  {
+    "selector": "0x4e487b71",
+    "name": "Panic",
+    "signature": "Panic(uint256)",
+    "args": [
+      {
+        "name": "code",
+        "type": "uint256"
+      }
+    ],
+    "message": "Internal error. Please contact support. The ledger never panics by design; report this."
+  }
+]

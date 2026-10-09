@@ -2414,6 +2414,71 @@ means none (the old wallet approvable again); X18 blocked while paused. All caug
 Open items: closed O-040. With O-008 (C-058) and O-042 (C-056) closed, nothing blocks the freeze.
 Commit: feat: admin moves a user account to a fresh wallet for a lost wallet, old wallet retired for good (D-64)
 
+### C-061 · D-64 done · CI and Deep fuzz green on the account move · 2026-10-09
+Type: chore
+Files: none changed in code.
+- G10: CI run 37902219553 on `de1984d` (`main`, signed) green.
+- Deep fuzz pass: run 37902270802 on `de1984d`, dispatched by the owner: **25 of 25 shards
+  green**, each shard's D-42 guard passed. D-64 is done; nothing blocks the freeze. New shard
+  `AccountMove.t.sol` 55.8 minutes; longest `Pool.t.sol` 90.1 minutes (25% of 360).
+- The scheduled run 37903112682 again ran in full on the same commit (green), starting eight
+  minutes after the dispatch, before any green run existed for D-31 to skip on. The second time
+  in a row (C-059): a dispatch shortly before the nightly doubles the run.
+Commit: part of the freeze commit.
+
+### C-062 · P1.13 freeze · Backend handover, interface 1.0.0 · 2026-10-09
+Type: docs (handover generated from the ABI; `src/` and `test/` unchanged)
+Decisions: D-64's D-30 lint line approved by the owner (2026-10-09); D-19, D-38, D-54, D-58, D-60,
+D-63, D-64 described for the backend
+Session start (INSTRUCTION 1.2): Deep fuzz run 37902270802 on D-64's code green (C-061). The
+three freeze blockers are settled (O-040 C-060, O-008 C-058, O-042 C-056).
+Files:
+- New: `handover/build.py`: generates the four files below from `forge inspect IndicoLedger
+  abi|errors|events`, so they cannot drift from the contract. Every ABI error must have a
+  plain-English message and every event an effect, and every entry must be in the ABI, or it
+  exits 1. `--check` exits 1 if a written file differs from what the contract gives; `--gas`
+  also writes `gas.md`.
+- New: `handover/abi/IndicoLedger.json`: the full ABI (69 functions, 28 events, 50 errors).
+- New: `handover/client/indicoLedger.ts`: `INTERFACE_VERSION`, `indicoLedgerAbi` (`as const`, so
+  viem infers every argument and return type) and `indicoLedgerErrors` (selector to name and
+  message). No wrapper: viem's `encodeFunctionData`, `decodeErrorResult` and `decodeEventLog` take
+  the ABI directly.
+- New: `handover/errors.json`: 52 entries, selector, name, signature, arguments, message: the 50
+  ABI errors (`DivisionByZero` and `MathOverflow` are declared twice with one selector each) plus
+  `Error(string)` and `Panic(uint256)`, since Circle's USDC reverts with strings and a panic must be
+  reported, never shown.
+- New: `handover/events.json`: 28 events, topic0, indexed and data fields, read-model effect.
+- New: `handover/gas.md`: per-function gas from `forge test --gas-report`, median and worst seen,
+  with what those numbers do and do not mean (refused calls included; not an upper bound; always
+  `eth_estimateGas` before the user signs, U-11). Not covered by `--check`: fuzz inputs move it.
+- New: `handover/README.md`: version and freeze rule; how to use the client; deployment parameters
+  (Circle's native USDC on Base `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913` and Base Sepolia
+  `0x036CbD53842c5426634e7929541eC2318f3dCF7e`, checked on Circle's page 2026-10-09; the Safes
+  and ledger addresses at P3.1); the 3-day two-step admin transfer and what an unexpected
+  `DefaultAdminTransferScheduled` means (D-19); the views to call; the backend rules (random
+  `accountRef` O-041, opaque memo O-043, two-step merchant deposit, direct transfers lost D-38,
+  permanent roles, revocation never traps money, the account move D-64, merchant terms O-031);
+  what the pause blocks and the grace and late-extension dates from `PauseTimesSet` (D-54, D-58,
+  D-59); loan timing; the invariants I1 to I14 plus L1, L2 (the account link) and C1 (the credit
+  cap), for the indexer to check itself.
+- Changed: `.github/workflows/ci.yml`: step 2b, `python3 ../handover/build.py --check` after the
+  build, so a contract change without a regenerated handover fails CI.
+- Changed: `INSTRUCTION.md` P1.13: the freeze step's blockers settled; the handover's location.
+- Changed (local, not pushed): `docs/decisions.md` D-64, the D-30 line approved.
+Checks:
+- `build.py` then `--check`: current. Three negative checks, each exit 1 for its own reason: a
+  stale `errors.json` (one byte appended), a missing message (`WalletNotFresh` removed), a missing
+  effect (`AccountMoved` removed); restored and current again.
+- The CI step body run locally with `FOUNDRY_PROFILE=ci`: current. YAML parses.
+- Spot check: `NotAUser` selector `0x9c363e25` equals the revert bytes the tests see;
+  `AccountMoved` topic0 equals C-060's two computations.
+- Not done: the TypeScript file was not type-checked (no viem installed locally, and nothing was
+  downloaded for it); it is the ABI as a literal plus one record, and the backend's build checks it.
+- `forge fmt --check` exit 0; `contracts/` unchanged, so the D-64 gate (C-060) stands.
+Open items: closed O-041, O-043 (both in the README's backend rules). O-003 closes when the owner
+tags `interface-v1.0.0`.
+Commit: docs: backend handover for interface 1.0.0, generated from the ABI and checked in CI (P1.13 freeze)
+
 ---
 
 ## Open items
@@ -2460,6 +2525,6 @@ Commit: feat: admin moves a user account to a fresh wallet for a lost wallet, ol
 | O-038 | `repay` is `whenNotPaused` (contract-spec 6), so a pause that lasts past a loan's due date stops the borrower repaying, and at the unpause anyone may liquidate it. The same pause can span a loan's whole extension window, so `extend` is impossible too (C-047). Owner decides before P1.11: accept and say so in the terms and pause policy, exempt `repay` from the pause, or handle it in `liquidate` (D-48) | owner | Closed by C-050 |
 | O-039 | Forge starts every test's clock at 1 second, far below any real Base timestamp (about 1.8e9) and below the 7-day grace. It hid the first-pause case (a pause at time 1 sits inside a grace that "ends" at 7 days, so `lastPausedAt` is not set) until the dedicated P1.11 tests ran at a realistic time (C-050). Proposal for P1.13: `FixtureBase.setUp` warps to a realistic timestamp (1,800,000,000) so every test runs on a realistic clock. Expected cost: every test that pauses also writes `lastPausedAt` (one more storage write, so those snapshot lines rise, mostly under 10%); exact-write and value-snapshot tests that pause are re-checked, the `_expectPaused` model already covers them; tests that warp to an absolute time stay correct, those that warp relative to `block.timestamp` shift but keep their meaning. Measured and decided before the change, not done now | engineer, owner | Closed by C-056 |
 | O-040 | Account link (D-60): an app account is linked to exactly one wallet and a wallet to one account, permanently for now. **Under a permanent link, a lost wallet (a lost Tangem card, for example) leaves that user's credit and account stuck for good**, so an admin re-link (option B) will probably be needed. It is the client's open question "can a user's bound wallet ever be changed" (PRD U-05), kept open by the owner until the full contract is built and decided **before deployment** (P3.1), because the contract is immutable. The options presented then must cover: moving only a user with no active loan and no locked credit; how the credit moves with the account (one user's own wallets, so not a transfer between users, S-06, but it must be designed and tested); a time delay before the move takes effect; and an event the indexer reads | owner, client | Closed by C-060 |
-| O-041 | Backend handover (D-60): the `accountRef` passed to `setUserApproved` must be random, 32 random bytes or a UUIDv4, and never derived from the email or any personal data, since a hash of an email is reversed by hashing known emails. The contract cannot enforce it; the backend owns it. Goes into the P1.13 handover notes | backend | P1.13 handover |
+| O-041 | Backend handover (D-60): the `accountRef` passed to `setUserApproved` must be random, 32 random bytes or a UUIDv4, and never derived from the email or any personal data, since a hash of an email is reversed by hashing known emails. The contract cannot enforce it; the backend owns it. Goes into the P1.13 handover notes | backend | Closed by C-062 |
 | O-042 | Direct Payments (AD-10, AD-11): `adminIssueCredit(user, amount, memo)` already issues credit with no asset; `memo` is a 32-byte payment reference, emitted in `CreditMinted`. Limits: users only (approved or revoked, D-32), not while paused, the per-account cap (D-27). The memo is public, so it must be an opaque reference, never personal data. Client confirms this fits before the interface freeze | owner, client | Closed by C-056 |
-| O-043 | Backend handover (next to O-041): the `memo` passed to `adminIssueCredit` and `adminDebitCredit` is public on chain, in `CreditMinted` and `CreditBurned`. It must be an opaque reference, a random id or a hash of an internal record id with a secret salt, never a name, email, bank reference or description of the amount. The contract cannot enforce it; the backend owns it | backend | P1.13 handover |
+| O-043 | Backend handover (next to O-041): the `memo` passed to `adminIssueCredit` and `adminDebitCredit` is public on chain, in `CreditMinted` and `CreditBurned`. It must be an opaque reference, a random id or a hash of an internal record id with a secret salt, never a name, email, bank reference or description of the amount. The contract cannot enforce it; the backend owns it | backend | Closed by C-062 |

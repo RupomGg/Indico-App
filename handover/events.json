@@ -1,0 +1,345 @@
+[
+  {
+    "topic0": "0x665a0aa1ae60afd89772604854caec2b29731be5cd08d00f66cdd7e7c6a25d09",
+    "name": "AccountMoved",
+    "signature": "AccountMoved(address,address,bytes32,uint256)",
+    "indexed": [
+      "oldWallet",
+      "newWallet",
+      "accountRef"
+    ],
+    "data": [
+      "creditMoved"
+    ],
+    "effect": "credit[newWallet] = creditMoved, credit[oldWallet] = 0 (totalCredit unchanged); newWallet approved user, linked to accountRef both ways; oldWallet unapproved, unlinked, retired for good. No UserApprovalSet is emitted for either wallet. newWallet has not signed the terms unless it signed on its own."
+  },
+  {
+    "topic0": "0xb8fc4f3d38ac06090fdde949d682152e0fd3a52b9e0cbf43ef38e6c41946a445",
+    "name": "AssetRegistered",
+    "signature": "AssetRegistered(address,bytes32,uint8,uint256)",
+    "indexed": [
+      "user",
+      "docHash"
+    ],
+    "data": [
+      "assetType",
+      "value"
+    ],
+    "effect": "New asset row. Always followed by CreditMinted in the same transaction."
+  },
+  {
+    "topic0": "0xaff82f4178df227ea409be11c927e414a908fb01481236913cec80ea866b2468",
+    "name": "CollateralLocked",
+    "signature": "CollateralLocked(address,uint256,uint256)",
+    "indexed": [
+      "user",
+      "loanId"
+    ],
+    "data": [
+      "amount"
+    ],
+    "effect": "Same transaction as LoanOpened; apply the lock from one of them only. Lets reconciliation check lockedCredit from events alone."
+  },
+  {
+    "topic0": "0x0e87599d50b2d37d144e41413e648b91573fb4fe230313a0bd74cc2487ea0d76",
+    "name": "CollateralReleased",
+    "signature": "CollateralReleased(address,uint256,uint256)",
+    "indexed": [
+      "user",
+      "loanId"
+    ],
+    "data": [
+      "amount"
+    ],
+    "effect": "lockedCredit[user] -= amount (same transaction as LoanRepaid)."
+  },
+  {
+    "topic0": "0xc36489fa59f838ddcb34c011e9737a12fde97dd70cb713486310cb3bbb43ceef",
+    "name": "CreditBurned",
+    "signature": "CreditBurned(address,uint256,bytes32)",
+    "indexed": [
+      "user"
+    ],
+    "data": [
+      "amount",
+      "reason"
+    ],
+    "effect": "credit[user] -= amount, totalCredit -= amount. Never touches locked credit. user may be a user or a merchant (D-63)."
+  },
+  {
+    "topic0": "0xadd38b891a28583714429f0e8462123217a42cca018dc41e90bbc8c1d6fa2f52",
+    "name": "CreditMinted",
+    "signature": "CreditMinted(address,uint256,bytes32)",
+    "indexed": [
+      "user"
+    ],
+    "data": [
+      "amount",
+      "reason"
+    ],
+    "effect": "credit[user] += amount, totalCredit += amount. reason is the docHash for an asset, the admin's opaque memo otherwise."
+  },
+  {
+    "topic0": "0x2b1fa2edafe6f7b9e97c1a9e0c3660e645beb2dcaa2d45bdbf9beaf5472e1ec5",
+    "name": "DefaultAdminDelayChangeCanceled",
+    "signature": "DefaultAdminDelayChangeCanceled()",
+    "indexed": [],
+    "data": [],
+    "effect": "The pending delay change is gone."
+  },
+  {
+    "topic0": "0xf1038c18cf84a56e432fdbfaf746924b7ea511dfe03a6506a0ceba4888788d9b",
+    "name": "DefaultAdminDelayChangeScheduled",
+    "signature": "DefaultAdminDelayChangeScheduled(uint48,uint48)",
+    "indexed": [],
+    "data": [
+      "newDelay",
+      "effectSchedule"
+    ],
+    "effect": "The 3-day transfer delay becomes newDelay at effectSchedule."
+  },
+  {
+    "topic0": "0x8886ebfc4259abdbc16601dd8fb5678e54878f47b3c34836cfc51154a9605109",
+    "name": "DefaultAdminTransferCanceled",
+    "signature": "DefaultAdminTransferCanceled()",
+    "indexed": [],
+    "data": [],
+    "effect": "The pending top admin transfer is gone."
+  },
+  {
+    "topic0": "0x3377dc44241e779dd06afab5b788a35ca5f3b778836e2990bdb26a2a4b2e5ed6",
+    "name": "DefaultAdminTransferScheduled",
+    "signature": "DefaultAdminTransferScheduled(address,uint48)",
+    "indexed": [
+      "newAdmin"
+    ],
+    "data": [
+      "acceptSchedule"
+    ],
+    "effect": "newAdmin may accept the top role after acceptSchedule (3 days). One the Safe signers did not start means act at once. newAdmin 0 is a scheduled renounce."
+  },
+  {
+    "topic0": "0x73a19dd210f1a7f902193214c0ee91dd35ee5b4d920cba8d519eca65a7b488ca",
+    "name": "Deposited",
+    "signature": "Deposited(address,uint256,uint256)",
+    "indexed": [
+      "merchant"
+    ],
+    "data": [
+      "assets",
+      "shares"
+    ],
+    "effect": "shares[merchant] += shares, totalShares += shares, poolUsdc += assets (the amount actually received)."
+  },
+  {
+    "topic0": "0x5464b0b86763d92db7e0b0c464350ced59692ff69ce33414178a486c93122158",
+    "name": "LoanDefaulted",
+    "signature": "LoanDefaulted(uint256,address,uint256,uint256,address)",
+    "indexed": [
+      "loanId",
+      "borrower"
+    ],
+    "data": [
+      "principal",
+      "collateral",
+      "caller"
+    ],
+    "effect": "Status Defaulted. lockedCredit[borrower] and credit[borrower] -= collateral, totalCredit -= collateral, poolCredit += collateral, totalLent -= principal. No USDC moves."
+  },
+  {
+    "topic0": "0x6027ac324f6ff123cb9bfc9e065eb096f60966de89c9fc91f466a101ceb27185",
+    "name": "LoanExtended",
+    "signature": "LoanExtended(uint256,uint64,uint16)",
+    "indexed": [
+      "loanId"
+    ],
+    "data": [
+      "newDueDate",
+      "extensionCount"
+    ],
+    "effect": "Set the due date and the rollover count (the count includes this extension)."
+  },
+  {
+    "topic0": "0xe6db2723aa64320dfa117204c27a38cfb9561b42d65b03dcc221e5bb324555ad",
+    "name": "LoanOpened",
+    "signature": "LoanOpened(uint256,address,uint256,uint256,uint64)",
+    "indexed": [
+      "loanId",
+      "borrower"
+    ],
+    "data": [
+      "principal",
+      "collateral",
+      "dueDate"
+    ],
+    "effect": "New Active loan. lockedCredit[borrower] += collateral, totalLent += principal, poolUsdc -= principal."
+  },
+  {
+    "topic0": "0x512d3e65b3e58c2187bb1872aa435dba5bd09c1c03823ba56ab70aac411e4a21",
+    "name": "LoanRepaid",
+    "signature": "LoanRepaid(uint256,address,uint256)",
+    "indexed": [
+      "loanId",
+      "borrower"
+    ],
+    "data": [
+      "principal"
+    ],
+    "effect": "Status Repaid. totalLent -= principal, poolUsdc += principal."
+  },
+  {
+    "topic0": "0xc92ad2efa0fe33d8bedcd697a50900ee8f215df60d7b0e94f16b3b8cc931c0ea",
+    "name": "MerchantApprovalSet",
+    "signature": "MerchantApprovalSet(address,bool)",
+    "indexed": [
+      "merchant"
+    ],
+    "data": [
+      "approved"
+    ],
+    "effect": "Set approval. A revoked merchant can still withdraw."
+  },
+  {
+    "topic0": "0xe1020578003a96cb462dcf013f817a631d841147a2603301d88ebf33d1a49b42",
+    "name": "MerchantReceipt",
+    "signature": "MerchantReceipt(address,address,uint256,uint256)",
+    "indexed": [
+      "merchant",
+      "payer"
+    ],
+    "data": [
+      "amount",
+      "at"
+    ],
+    "effect": "The merchant's receipt for the Spent in the same transaction; do not apply the balance change twice."
+  },
+  {
+    "topic0": "0x32ecd025ea73148d1711a874da3d1d2c21005067b181a116d79fab43bacb6831",
+    "name": "PauseTimesSet",
+    "signature": "PauseTimesSet(uint64,uint64)",
+    "indexed": [],
+    "data": [
+      "lastPausedAt",
+      "lastUnpausedAt"
+    ],
+    "effect": "Store both. No liquidation until lastUnpausedAt + 7 days; a loan due on or after lastPausedAt may still be extended until then. lastPausedAt is the start of the merged disruption: never derive it from Paused events."
+  },
+  {
+    "topic0": "0x62e78cea01bee320cd4e420270b5ea74000d11b0c9f74754ebdbfc544b05a258",
+    "name": "Paused",
+    "signature": "Paused(address)",
+    "indexed": [],
+    "data": [
+      "account"
+    ],
+    "effect": "Every user and pool function stops; admin setters and adminMoveAccount still work."
+  },
+  {
+    "topic0": "0xbd79b86ffe0ab8e8776151514217cd7cacd52c909f66475c3af44e129f0b00ff",
+    "name": "RoleAdminChanged",
+    "signature": "RoleAdminChanged(bytes32,bytes32,bytes32)",
+    "indexed": [
+      "role",
+      "previousAdminRole",
+      "newAdminRole"
+    ],
+    "data": [],
+    "effect": "Not emitted after deployment in practice; log it if seen."
+  },
+  {
+    "topic0": "0x2f8788117e7eff1d82e926ec794901d17c78024a50270940304540a733656f0d",
+    "name": "RoleGranted",
+    "signature": "RoleGranted(bytes32,address,address)",
+    "indexed": [
+      "role",
+      "account",
+      "sender"
+    ],
+    "data": [],
+    "effect": "Role given (admin action log). An accepted top admin transfer is RoleRevoked(0x00, old) then RoleGranted(0x00, new)."
+  },
+  {
+    "topic0": "0xf6391f5c32d9c69d2a47ea670b442974b53935d1edc7fd64eb21e047a839171b",
+    "name": "RoleRevoked",
+    "signature": "RoleRevoked(bytes32,address,address)",
+    "indexed": [
+      "role",
+      "account",
+      "sender"
+    ],
+    "data": [],
+    "effect": "Role removed (admin action log)."
+  },
+  {
+    "topic0": "0xc18352ae46a2296c951b2256c5ebc5b4546e6222fea2e4f36e824db9d44eb7ec",
+    "name": "Spent",
+    "signature": "Spent(address,address,uint256)",
+    "indexed": [
+      "user",
+      "merchant"
+    ],
+    "data": [
+      "amount"
+    ],
+    "effect": "credit[user] -= amount, credit[merchant] += amount. No fee."
+  },
+  {
+    "topic0": "0x91bc6b48b6ca0137e6ddec5ce745905648e8c70ef615caed3b51167ce347dabc",
+    "name": "TermsHashSet",
+    "signature": "TermsHashSet(bytes32)",
+    "indexed": [
+      "termsHash"
+    ],
+    "data": [],
+    "effect": "Current terms version. Existing signatures are not cleared."
+  },
+  {
+    "topic0": "0xad426f0d827393d18895e52b96f6e1095cfe3427c720a7e573218c9ce05c4a31",
+    "name": "TermsSigned",
+    "signature": "TermsSigned(address,bytes32,uint256)",
+    "indexed": [
+      "signer",
+      "termsHash"
+    ],
+    "data": [
+      "at"
+    ],
+    "effect": "Signer accepted this terms version at `at`. One address may sign several versions (D-25): keep every one, never overwrite."
+  },
+  {
+    "topic0": "0x5db9ee0a495bf2e6ff9c91a7834c1ba4fdd244a5e8aa4e537bd38aeae4b073aa",
+    "name": "Unpaused",
+    "signature": "Unpaused(address)",
+    "indexed": [],
+    "data": [
+      "account"
+    ],
+    "effect": "Functions work again. Followed by PauseTimesSet."
+  },
+  {
+    "topic0": "0x813b7aca89556c5c342506e8b0d03b31ddf51fe9ac7f2b76de084c121324f3ce",
+    "name": "UserApprovalSet",
+    "signature": "UserApprovalSet(address,bool,bytes32)",
+    "indexed": [
+      "user",
+      "accountRef"
+    ],
+    "data": [
+      "approved"
+    ],
+    "effect": "Set approval. On the first approval store the wallet-account link both ways; it never changes except by AccountMoved. Revocation blocks new actions only; balances and loans are untouched."
+  },
+  {
+    "topic0": "0x92ccf450a286a957af52509bc1c9939d1a6a481783e142e41e2499f0bb66ebc6",
+    "name": "Withdrawn",
+    "signature": "Withdrawn(address,uint256,uint256)",
+    "indexed": [
+      "merchant"
+    ],
+    "data": [
+      "assets",
+      "shares"
+    ],
+    "effect": "shares[merchant] -= shares, totalShares -= shares, poolUsdc -= assets. Emitted by withdraw and withdrawAll."
+  }
+]

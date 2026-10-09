@@ -356,17 +356,10 @@ pause matrix (IT §2.3) and the participant matrix (IT §2.2) with its own funct
   deposit is two transactions, `approve` then `deposit`; USDC sent straight to the ledger is stuck
   for good, D-38; what the pause blocks; grace and late-extension dates come from `PauseTimesSet`,
   D-58, D-59); the invariants list (CS 9), so the indexer can check itself.
-- **Freeze step, blocked.** Everything above is built and gated now. The freeze (the tag and the
-  handover sent) waits until each of these has the client's answer, because after the freeze a new
-  function means a new contract:
-  - O-040: moving an account to a new wallet (the lost-wallet case);
-  - O-008: what a merchant does with credit received, and whether Cash Reconciliation needs to
-    reduce a merchant's credit (`adminDebitCredit` reduces a user's available credit only, D-32;
-    nothing can reduce a merchant's);
-  - O-042: Direct Payments: confirm `adminIssueCredit(user, amount, memo)` fits (credit with no
-    asset, a 32-byte payment reference, approved or revoked users only).
-  Any answer that needs a new function is built as its own change, with the full gate, before the
-  freeze.
+- **Freeze step.** Its three blockers are settled: O-040 by `adminMoveAccount` (D-64, C-060), O-008
+  by the merchant debit (D-63, C-058), O-042 by `adminIssueCredit` with a payment memo (C-056). The
+  handover is `handover/`, generated from the ABI by `handover/build.py`; CI step 2b fails if it is
+  stale.
 - Manual check, at the freeze: owner tags `interface-v1.0.0` (this replaces the lost
   `interface-v0.2.0`, closing O-003) and sends the handover to the backend. From here the
   interface is frozen; a change needs a decision entry and a version bump.

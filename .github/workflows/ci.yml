@@ -28,6 +28,11 @@ jobs:
       - name: 2. forge build --sizes (fails over 24576 bytes)
         run: forge build --sizes
 
+      # The backend handover is generated from the ABI; this fails if the contract changed and
+      # handover/ was not regenerated (python handover/build.py).
+      - name: 2b. handover matches the compiled contract
+        run: python3 ../handover/build.py --check
+
       - name: 3. forge test
         run: forge test -vvv
 
