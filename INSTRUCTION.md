@@ -339,7 +339,7 @@ pause matrix (IT §2.3) and the participant matrix (IT §2.2) with its own funct
   re-entry targets) as one loop; Slither on `src/` clean or triaged in writing;
   `grep -rnE "forge-lint: disable|slither-disable" src/` returns nothing (any suppression still
   there fails the gate unless it has its own written decision that says it may survive: so far
-  D-30's two linter lines, D-40's `Deposited`, `Withdrawn` and two `incorrect-equality` lines,
+  D-30's three linter lines (`setUserApproved`, `setMerchantApproved`, `adminMoveAccount`, D-64), D-40's `Deposited`, `Withdrawn` and two `incorrect-equality` lines,
   D-46's `LoanOpened` and `CollateralLocked` lines (D-47), and D-53's six `block-timestamp`
   lines (two in `extend`, one in `_lateExtensionAllowed`, one in `pause`, two in `liquidate`);
   D-34's and D-40's `totalLent` lines are gone since P1.8, D-18's `poolCredit` line since P1.11;

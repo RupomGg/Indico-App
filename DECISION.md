@@ -2321,6 +2321,99 @@ Open items: closed O-008 (for this contract: the admin may debit a merchant's cr
 redemption path is built).
 Commit: feat: adminDebitCredit may debit a merchant for cash reconciliation, issuing stays users only (D-63, P1.5 reopen)
 
+### C-059 · D-63 done · CI and Deep fuzz green on the merchant debit · 2026-10-09
+Type: chore
+Files: none changed in code.
+- G10: CI run 37745111746 on `68ea7d3` (`main`, signed) green.
+- Deep fuzz pass: run 37745144839 on `68ea7d3`, dispatched by the owner: **25 of 25 shards
+  green**, each shard's D-42 guard passed. D-63 and the P1.5 reopen are done. Longest
+  `Pool.t.sol` 101.8 minutes (28% of 360).
+- The scheduled run 37747914866 also ran in full on the same commit and passed: it started while
+  the dispatched run was still going, so no green run existed yet for D-31 to skip on.
+- Correction to C-058: closing O-008 dropped its owner column in the open-items table; restored.
+Commit: part of the D-64 commit.
+
+### C-060 · D-64 · The admin can move a user's account to a new wallet · 2026-10-09
+Type: feature
+Decisions: D-64 (owner decided, O-040: option B, no delay); D-22, D-23, D-24, D-30, D-32, D-60,
+D-63 applied
+Built on `main` after D-63's Deep fuzz run went green (C-059). The last freeze blocker
+(INSTRUCTION P1.13).
+Files:
+- Changed: `contracts/src/IndicoLedger.sol`: `adminMoveAccount(oldWallet, newWallet,
+  accountRef)`, `ADMIN_ROLE`, not `whenNotPaused` (D-24). Reverts, in order, `ZeroAddress` (either
+  wallet), `NotAUser(oldWallet)` (not a user, approved or revoked), `AccountRefMismatch(oldWallet,
+  linkedRef)`, `AccountHasLockedCredit(oldWallet, locked)`, `InvalidParticipant(newWallet)` (the
+  ledger or USDC), `WalletNotFresh(newWallet)` (ever approved in any role). Moves the whole credit
+  balance (`totalCredit` unchanged), the link both ways and the approval; the old wallet loses all
+  three and its role becomes `ROLE_RETIRED`, so `_admit` refuses every later approval of it with
+  `ParticipantRoleConflict` and `_checkCreditTarget` refuses it with `NotAUser`. No terms
+  signature moves. Emits `AccountMoved(oldWallet, newWallet, accountRef, creditMoved)`. One D-30
+  `missing-events-access-control` suppression on `approvedUser[oldWallet] = false`, for the
+  owner's approval (D-64 "as built").
+- Changed: `contracts/src/lib/Constants.sol`: `ROLE_RETIRED = 3`.
+- Changed: `contracts/src/interfaces/IIndicoLedger.sol`: the function and its comment; event
+  `AccountMoved(address indexed, address indexed, bytes32 indexed, uint256)`; errors
+  `AccountHasLockedCredit(address, uint256)`, `WalletNotFresh(address)`.
+- New: `contracts/test/unit/AccountMove.t.sol`: partition table, 29 tests: exact net writes of a
+  move (nine slots with credit, seven without; `approvedUser[old]` not written when already
+  revoked), exactly one exact `AccountMoved`; credit at the cap; revoked old wallet; while paused;
+  after a repaid loan (the old loan keeps its borrower) and after a default (the rest moves); a
+  second move; zero on either side; five non-users as the old wallet, a retired one included;
+  zero, another user's and a random reference; locked credit, then the same move once repaid; the
+  ledger and USDC as the new wallet; six non-fresh new wallets (user, revoked user, merchant,
+  revoked merchant, retired, the old wallet itself); six non-admins; five check-order tests; the
+  retired wallet can never be approved (either role, any reference), credited or debited, can
+  still be revoked with its empty link, and cannot spend or borrow; the reference cannot link a
+  third wallet; the new wallet cannot spend or borrow before signing, can after, and a signature
+  it made on its own stands; the new wallet can be revoked and re-approved with the reference;
+  fuzz: any balance up to the cap and any fresh wallet, exact writes and `totalCredit` unchanged.
+- Changed: `contracts/test/unit/ParticipantMatrix.t.sol`: `adminMoveAccount` column, 14 x 9 = 126
+  cells: only Admin moves bob's account, everyone else is denied `ADMIN_ROLE`.
+- Changed: `contracts/test/unit/Pause.t.sol`: pause matrix 17 x 3 with `adminMoveAccount`, which
+  works while paused (D-24).
+- Changed: `contracts/test/unit/Constructor.t.sol`: the no-USDC sweep gains `adminMoveAccount`
+  (28 calls).
+- Changed: `contracts/test/unit/NegativeSpace.t.sol`: the call list has 69 functions (the ABI check
+  forces it); the re-entry cross product is 5 x 19, the token re-entering `adminMoveAccount`
+  denied `ADMIN_ROLE`.
+- Changed: `INSTRUCTION.md` P1.13: D-30's allowed lines are three (`setUserApproved`,
+  `setMerchantApproved`, `adminMoveAccount`).
+- Changed: `contracts/.gas-snapshot`: 28 new `AccountMoveTest` lines (its 28 non-fuzz tests); 399
+  changed; none removed; none over 10% (dispatch, the two larger matrices and the
+  longer sweep).
+- Changed (local, not pushed): `docs/decisions.md` D-64 "as built"; `docs/event-catalogue.md`
+  `AccountMoved(address,address,bytes32,uint256)`, topic0
+  `0x665a0aa1ae60afd89772604854caec2b29731be5cd08d00f66cdd7e7c6a25d09` (`cast keccak` and
+  `forge inspect ... events`), with what it changes in state.
+Suppressions: 15 lines in `src/`, the allowed list: D-30 (3), D-40 (4), D-46 (2), D-53 (6).
+Size: `IndicoLedger` runtime 12,495 B to 13,042 B (+547 B), margin 11,534 B.
+Slither, CI step 7 body on a scratch copy: exit 0, no IR error, 7 findings, unchanged.
+Gate (logs in `docs/gate-logs/D-64/`, Forge 1.8.3; red phase `red.log`: 29 of 29 failing against a
+reverting stub, the only way to compile now that the ledger inherits the interface):
+- G1 pass: 582 passed, 0 failed, 0 skipped, exit 0.
+- G2 pass: src lines 283/283, branches 82/82.
+- G3 pass, G4 pass (with the D-30 line): exit 0 each.
+- G5 pass: seeds 1 and 2, 582 passed each.
+- G6 pass: three runs, 582 passed each.
+- G7 pass: `ci` profile, 582 passed.
+- G8 pass: `IndicoLedger` 13,042 B; snapshot check 528 passed.
+- G9 pass, `G9.log`: 18 of 18 caught, on a scratch copy, then byte-identical to the real source.
+- G13 pass.
+- G10 pending: owner pushes.
+Incident (INSTRUCTION 2, crash rule): the session ended while G9 ran, after X8. The real source
+matched its backup by SHA-256 (mutations run only on a scratch copy); no blank files; no forge
+process left. The scratch copy still held X9 and was restored from the backup and checked before
+G9 ran again from the start; the interrupted log is kept as `G9-interrupted.log` (8 of 8 caught).
+Mutations (G9): X1 open to anyone; X2 zero new wallet accepted; X3 old wallet need not be a user;
+X4 reference not checked; X5 locked credit not checked; X6 the ledger or USDC accepted; X7 USDC
+accepted; X8 new wallet need not be fresh; X9 old credit not zeroed; X10 credit not moved; X11 old
+wallet stays approved; X12 old wallet not retired; X13 old link not cleared; X14 the account still
+points at the old wallet; X15 new wallet gets no role; X16 event carries no amount; X17 retired
+means none (the old wallet approvable again); X18 blocked while paused. All caught.
+Open items: closed O-040. With O-008 (C-058) and O-042 (C-056) closed, nothing blocks the freeze.
+Commit: feat: admin moves a user account to a fresh wallet for a lost wallet, old wallet retired for good (D-64)
+
 ---
 
 ## Open items
@@ -2334,7 +2427,7 @@ Commit: feat: adminDebitCredit may debit a merchant for cash reconciliation, iss
 | O-005 | Foundry was not on PATH on 2026-09-29 | owner | Closed by C-009 |
 | O-006 | Backend stack: NestJS container, or Next.js + Supabase + a committed worker. The backend owner decides before Level 4 | backend | |
 | O-007 | Client: what defaulted collateral held by the pool is for. Until answered it is inert and a default is a straight USDC loss to depositors | owner, client | |
-| O-008 | Client: what merchants do with credit they receive. No redemption path is built until answered | Closed by C-058 |
+| O-008 | Client: what merchants do with credit they receive. No redemption path is built until answered | owner, client | Closed by C-058 |
 | O-009 | Client: arbitration wording. Clause 5 makes a merchant bound after 72 hours of silence; the confirmed admin flow has only not sent / sent / signed and cannot record that | owner, client | |
 | O-010 | Client: written acknowledgement that no external audit was bought, before any real money | owner, client | before P3.3 |
 | O-011 | Decisions due inside portions: duplicate approvals, zero terms hash, one address as user and merchant (P1.2); maximum declared asset value so `totalCredit` cannot overflow, zero document hash (P1.4); issuing credit to an unapproved address (P1.5); first-deposit inflation mitigation (P1.7) | engineer proposes, owner approves | P1.2, P1.4, P1.5, P1.7 |
@@ -2366,7 +2459,7 @@ Commit: feat: adminDebitCredit may debit a merchant for cash reconciliation, iss
 | O-037 | Build D-43 (state-diff assertions instead of the full re-read snapshot) as its own change with the full gate: every G9 mutation from P1.1 to P1.7 still caught plus one new unexpected-slot mutation, gas per run before and after on the three heaviest fuzz tests, new Deep estimate per shard. After P1.7 merges, before P1.8 | engineer | Closed by C-041 |
 | O-038 | `repay` is `whenNotPaused` (contract-spec 6), so a pause that lasts past a loan's due date stops the borrower repaying, and at the unpause anyone may liquidate it. The same pause can span a loan's whole extension window, so `extend` is impossible too (C-047). Owner decides before P1.11: accept and say so in the terms and pause policy, exempt `repay` from the pause, or handle it in `liquidate` (D-48) | owner | Closed by C-050 |
 | O-039 | Forge starts every test's clock at 1 second, far below any real Base timestamp (about 1.8e9) and below the 7-day grace. It hid the first-pause case (a pause at time 1 sits inside a grace that "ends" at 7 days, so `lastPausedAt` is not set) until the dedicated P1.11 tests ran at a realistic time (C-050). Proposal for P1.13: `FixtureBase.setUp` warps to a realistic timestamp (1,800,000,000) so every test runs on a realistic clock. Expected cost: every test that pauses also writes `lastPausedAt` (one more storage write, so those snapshot lines rise, mostly under 10%); exact-write and value-snapshot tests that pause are re-checked, the `_expectPaused` model already covers them; tests that warp to an absolute time stay correct, those that warp relative to `block.timestamp` shift but keep their meaning. Measured and decided before the change, not done now | engineer, owner | Closed by C-056 |
-| O-040 | Account link (D-60): an app account is linked to exactly one wallet and a wallet to one account, permanently for now. **Under a permanent link, a lost wallet (a lost Tangem card, for example) leaves that user's credit and account stuck for good**, so an admin re-link (option B) will probably be needed. It is the client's open question "can a user's bound wallet ever be changed" (PRD U-05), kept open by the owner until the full contract is built and decided **before deployment** (P3.1), because the contract is immutable. The options presented then must cover: moving only a user with no active loan and no locked credit; how the credit moves with the account (one user's own wallets, so not a transfer between users, S-06, but it must be designed and tested); a time delay before the move takes effect; and an event the indexer reads | owner, client | before P3.1 |
+| O-040 | Account link (D-60): an app account is linked to exactly one wallet and a wallet to one account, permanently for now. **Under a permanent link, a lost wallet (a lost Tangem card, for example) leaves that user's credit and account stuck for good**, so an admin re-link (option B) will probably be needed. It is the client's open question "can a user's bound wallet ever be changed" (PRD U-05), kept open by the owner until the full contract is built and decided **before deployment** (P3.1), because the contract is immutable. The options presented then must cover: moving only a user with no active loan and no locked credit; how the credit moves with the account (one user's own wallets, so not a transfer between users, S-06, but it must be designed and tested); a time delay before the move takes effect; and an event the indexer reads | owner, client | Closed by C-060 |
 | O-041 | Backend handover (D-60): the `accountRef` passed to `setUserApproved` must be random, 32 random bytes or a UUIDv4, and never derived from the email or any personal data, since a hash of an email is reversed by hashing known emails. The contract cannot enforce it; the backend owns it. Goes into the P1.13 handover notes | backend | P1.13 handover |
 | O-042 | Direct Payments (AD-10, AD-11): `adminIssueCredit(user, amount, memo)` already issues credit with no asset; `memo` is a 32-byte payment reference, emitted in `CreditMinted`. Limits: users only (approved or revoked, D-32), not while paused, the per-account cap (D-27). The memo is public, so it must be an opaque reference, never personal data. Client confirms this fits before the interface freeze | owner, client | Closed by C-056 |
 | O-043 | Backend handover (next to O-041): the `memo` passed to `adminIssueCredit` and `adminDebitCredit` is public on chain, in `CreditMinted` and `CreditBurned`. It must be an opaque reference, a random id or a hash of an internal record id with a secret salt, never a name, email, bank reference or description of the amount. The contract cannot enforce it; the backend owns it | backend | P1.13 handover |

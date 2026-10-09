@@ -19,7 +19,7 @@ import {Actors} from "../helpers/Actors.sol";
 /// | 20 the admin's address                        | trailing bytes never change who acts            |
 /// | every function sent 1 wei of ETH              | reverts (nothing is payable), no change         |
 /// | a stray ERC-20 sent to the ledger             | no ledger slot written; no function moves it    |
-/// | the token re-enters, 5 USDC functions x 18    | the guard, or the target's own refusal as the   |
+/// | the token re-enters, 5 USDC functions x 19    | the guard, or the target's own refusal as the   |
 /// | targets                                       | token address; the outer call rolls back whole  |
 ///
 /// The list of calls is checked against the compiled ABI (`methodIdentifiers`), so a function
@@ -45,7 +45,7 @@ contract NegativeSpaceTest is Actors {
     // ================================================================== the call list
 
     function _calls() internal view returns (Call[] memory c) {
-        c = new Call[](68);
+        c = new Call[](69);
         uint256 i;
         // views, by a stranger
         c[i++] = Call(stranger, abi.encodeWithSignature("ADMIN_ROLE()"));
@@ -107,6 +107,9 @@ contract NegativeSpaceTest is Actors {
         c[i++] = Call(alice, abi.encodeCall(IIndicoLedger.registerAsset, (bytes32("d"), 0, 1e6)));
         c[i++] = Call(admin, abi.encodeCall(IIndicoLedger.adminIssueCredit, (alice, 1e6, "m")));
         c[i++] = Call(admin, abi.encodeCall(IIndicoLedger.adminDebitCredit, (alice, 1e6, "m")));
+        c[i++] = Call(
+            admin, abi.encodeCall(IIndicoLedger.adminMoveAccount, (bob, stranger, _accountRef(bob)))
+        );
         c[i++] = Call(alice, abi.encodeCall(IIndicoLedger.spend, (merchantA, 1e6)));
         c[i++] = Call(merchantA, abi.encodeCall(IIndicoLedger.deposit, (1e6)));
         c[i++] = Call(merchantA, abi.encodeCall(IIndicoLedger.withdraw, (1e6)));
@@ -300,8 +303,8 @@ contract NegativeSpaceTest is Actors {
         bytes memory notAdmin = _unauthorized(tok, keccak256("ADMIN_ROLE"));
         bytes memory notGuardian = _unauthorized(tok, keccak256("GUARDIAN_ROLE"));
         bytes memory notActive = abi.encodeWithSelector(IIndicoLedger.LoanNotActive.selector);
-        t = new bytes[](18);
-        e = new bytes[](18);
+        t = new bytes[](19);
+        e = new bytes[](19);
         uint256 i;
         (t[i], e[i++]) = (abi.encodeCall(IIndicoLedger.deposit, (1)), guard);
         (t[i], e[i++]) = (abi.encodeCall(IIndicoLedger.withdraw, (1)), guard);
@@ -314,6 +317,8 @@ contract NegativeSpaceTest is Actors {
         (t[i], e[i++]) = (abi.encodeCall(IIndicoLedger.setMerchantApproved, (tok, true)), notAdmin);
         (t[i], e[i++]) = (abi.encodeCall(IIndicoLedger.adminIssueCredit, (alice, 1, "m")), notAdmin);
         (t[i], e[i++]) = (abi.encodeCall(IIndicoLedger.adminDebitCredit, (alice, 1, "m")), notAdmin);
+        (t[i], e[i++]) =
+        (abi.encodeCall(IIndicoLedger.adminMoveAccount, (alice, tok, _accountRef(alice))), notAdmin);
         (t[i], e[i++]) =
         (
             abi.encodeWithSignature("grantRole(bytes32,address)", keccak256("ADMIN_ROLE"), tok),

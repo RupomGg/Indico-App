@@ -328,7 +328,7 @@ contract ConstructorTest is StateSnapshot {
     function _calls(address caller) internal view returns (bytes[] memory c) {
         bytes32 adminRole = ledger.ADMIN_ROLE();
         bytes32 guardianRole = ledger.GUARDIAN_ROLE();
-        c = new bytes[](27);
+        c = new bytes[](28);
         c[0] = abi.encodeCall(IIndicoLedger.pause, ());
         c[1] = abi.encodeCall(IIndicoLedger.unpause, ());
         c[2] = abi.encodeCall(IAccessControl.grantRole, (adminRole, caller));
@@ -356,6 +356,10 @@ contract ConstructorTest is StateSnapshot {
         c[24] = abi.encodeCall(IIndicoLedger.repay, (1));
         c[25] = abi.encodeCall(IIndicoLedger.extend, (1));
         c[26] = abi.encodeCall(IIndicoLedger.liquidate, (1));
+        c[27] = abi.encodeCall(
+            IIndicoLedger.adminMoveAccount,
+            (caller, address(uint160(uint256(keccak256("sweepTo")))), _accountRef(caller))
+        );
     }
 
     function _everyone() internal returns (address[] memory w) {

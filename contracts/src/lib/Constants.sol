@@ -9,6 +9,8 @@ uint48 constant ADMIN_TRANSFER_DELAY = 3 days;
 uint8 constant ROLE_NONE = 0;
 uint8 constant ROLE_USER = 1;
 uint8 constant ROLE_MERCHANT = 2;
+/// @dev A user wallet whose account moved to another wallet (D-64); never approved again.
+uint8 constant ROLE_RETIRED = 3;
 /// @dev Highest balance a mint may produce for one account (D-27): a technical bound so loan
 ///      fields (`uint128`) and `collateralFor` can never overflow, not a business limit.
 uint256 constant CREDIT_CAP = type(uint128).max;

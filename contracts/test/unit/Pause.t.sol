@@ -4,7 +4,7 @@ pragma solidity 0.8.26;
 import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {IIndicoLedger} from "../../src/interfaces/IIndicoLedger.sol";
-import {TERM, LIQUIDATION_GRACE} from "../../src/lib/Constants.sol";
+import {TERM, LIQUIDATION_GRACE, ROLE_RETIRED} from "../../src/lib/Constants.sol";
 import {StateSnapshot} from "../helpers/StateSnapshot.sol";
 import {Matrix} from "../helpers/Matrix.sol";
 
@@ -248,6 +248,7 @@ contract PauseTest is StateSnapshot, Matrix {
     /// | repay               | succeeds      | EnforcedPause               |
     /// | extend              | succeeds      | EnforcedPause               |
     /// | liquidate           | succeeds      | EnforcedPause               |
+    /// | adminMoveAccount    | succeeds      | succeeds, works while paused (D-24, D-64) |
     /// Rows from registerAsset on onboard alice (terms set, approved, signed) before pausing; the
     /// debit and spend rows issue her credit first. The spend and pool rows approve and sign
     /// merchantA, and the two withdraw rows have merchantA deposit 2e6 first, so each paused cell
@@ -256,8 +257,9 @@ contract PauseTest is StateSnapshot, Matrix {
     /// paused-then-unpaused column is the one cell that differs from unpaused: the unpause just
     /// happened, so liquidate reverts LiquidationGracePeriod(now + 7 days) (D-54). The pool rows follow contract-spec 6: every 6.5 function is
     /// `whenNotPaused`, and none is stated otherwise (D-39).
+    ///      The adminMoveAccount row approves bob first and moves his account to a fresh wallet.
     function test_pauseMatrix_everyCell() public {
-        _crossProduct(_dims(16, 3), _pauseCell);
+        _crossProduct(_dims(17, 3), _pauseCell);
     }
 
     function _pauseCell(uint256[] memory c) internal {
@@ -291,13 +293,17 @@ contract PauseTest is StateSnapshot, Matrix {
             (, uint64 due,,,,) = ledger.loans(1);
             vm.warp(c[0] == 14 ? uint256(due) : uint256(due) + 1);
         }
+        if (c[0] == 16) {
+            vm.prank(admin);
+            ledger.setUserApproved(bob, true, _accountRef(bob));
+        }
         if (c[1] >= 1) _pause();
         if (c[1] == 2) {
             vm.prank(guardian);
             ledger.unpause();
         }
 
-        uint8[2][16] memory expected = [
+        uint8[2][17] memory expected = [
             [uint8(0), 1],
             [uint8(2), 0],
             [uint8(0), 0],
@@ -313,7 +319,8 @@ contract PauseTest is StateSnapshot, Matrix {
             [uint8(0), 1],
             [uint8(0), 1],
             [uint8(0), 1],
-            [uint8(0), 1]
+            [uint8(0), 1],
+            [uint8(0), 0]
         ];
         uint8 e = expected[c[0]][c[1] == 2 ? 0 : c[1]];
         if (c[0] == 15 && c[1] == 2) e = 3; // the grace after the unpause (D-54)
@@ -429,6 +436,15 @@ contract PauseTest is StateSnapshot, Matrix {
                 assertEq(n, 1);
                 s.loansHash = _snapshot().loansHash; // loan 1's new due date asserted just above
             }
+        } else if (c[0] == 16) {
+            address to = makeAddr("matrixMoveTo");
+            vm.prank(admin);
+            ledger.adminMoveAccount(bob, to, _accountRef(bob));
+            assertEq(ledger.walletOfAccount(_accountRef(bob)), to);
+            assertTrue(ledger.approvedUser(to));
+            s.approvedUser[3] = false; // bob is actors[3]
+            s.participantRole[3] = ROLE_RETIRED;
+            s.accountRef[3] = bytes32(0);
         } else {
             vm.prank(bob);
             ledger.liquidate(1);

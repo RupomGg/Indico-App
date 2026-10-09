@@ -31,6 +31,13 @@ interface IIndicoLedger {
     /// @notice The admin approved or revoked a user, linked to the app account `accountRef`
     ///         (an opaque random id, never personal data, D-60).
     event UserApprovalSet(address indexed user, bool approved, bytes32 indexed accountRef);
+    /// @notice An app account moved from a lost wallet to a new one, with its whole credit (D-64).
+    event AccountMoved(
+        address indexed oldWallet,
+        address indexed newWallet,
+        bytes32 indexed accountRef,
+        uint256 creditMoved
+    );
     /// @notice The admin approved or revoked a merchant.
     event MerchantApprovalSet(address indexed merchant, bool approved);
 
@@ -155,6 +162,8 @@ interface IIndicoLedger {
     error AccountAlreadyLinked(bytes32 accountRef, address linkedWallet);
     /// @notice A revoke named a reference other than the wallet's link `linkedRef` (D-60).
     error AccountRefMismatch(address wallet, bytes32 linkedRef);
+    error AccountHasLockedCredit(address wallet, uint256 locked);
+    error WalletNotFresh(address wallet);
 
     // ---------------------------------------------------------------------------------------
     // Administration (spec 6.1)
@@ -228,6 +237,17 @@ interface IIndicoLedger {
     ///      `ZeroAmount`, then `InsufficientAvailableCredit` if `amount > available(user)`; never
     ///      reaches locked collateral. Emits `CreditBurned(user, amount, memo)`.
     function adminDebitCredit(address user, uint256 amount, bytes32 memo) external;
+
+    /// @notice Move a user's app account to a new wallet, for a lost wallet (D-64).
+    /// @dev ADMIN_ROLE; works while paused (D-24). Reverts, in order, `ZeroAddress` (either
+    ///      wallet), `NotAUser(oldWallet)`, `AccountRefMismatch(oldWallet, linkedRef)`,
+    ///      `AccountHasLockedCredit(oldWallet, locked)`, `InvalidParticipant(newWallet)` (the
+    ///      ledger or USDC), `WalletNotFresh(newWallet)` (ever approved in any role). Moves the
+    ///      whole credit balance, the link both ways and the approval; `totalCredit` unchanged.
+    ///      The old wallet is retired for good. No terms signature moves: the new wallet signs
+    ///      before it spends or borrows. Emits `AccountMoved(oldWallet, newWallet, accountRef,
+    ///      creditMoved)`.
+    function adminMoveAccount(address oldWallet, address newWallet, bytes32 accountRef) external;
 
     // ---------------------------------------------------------------------------------------
     // Spending (spec 6.4)

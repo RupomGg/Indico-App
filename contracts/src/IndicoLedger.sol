@@ -18,6 +18,7 @@ import {
     ROLE_NONE,
     ROLE_USER,
     ROLE_MERCHANT,
+    ROLE_RETIRED,
     CREDIT_CAP,
     MAX_ASSET_TYPE,
     VIRTUAL_SHARES,
@@ -272,6 +273,46 @@ contract IndicoLedger is IIndicoLedger, AccessControlDefaultAdminRules, Pausable
         credit[user] -= amount;
         totalCredit -= amount;
         emit IIndicoLedger.CreditBurned(user, amount, memo);
+    }
+
+    /// @notice Move a user's app account, with its whole credit, from a lost wallet to a new
+    ///         one (D-64). The old wallet is retired for good.
+    /// @dev Not `whenNotPaused` (D-24). Adds no power: the admin can already issue credit to any
+    ///      user and revoke any user; the Safe is the control. A user is always linked (D-60), so
+    ///      a matching reference is never zero; a never-approved wallet is never linked, so the
+    ///      role check covers both "ever approved" and "linked". No signature moves.
+    function adminMoveAccount(address oldWallet, address newWallet, bytes32 accountRef)
+        external
+        onlyRole(ADMIN_ROLE)
+    {
+        if (oldWallet == address(0) || newWallet == address(0)) {
+            revert IIndicoLedger.ZeroAddress();
+        }
+        if (participantRole[oldWallet] != ROLE_USER) revert IIndicoLedger.NotAUser(oldWallet);
+        bytes32 linked = accountRefOf[oldWallet];
+        if (accountRef != linked) revert IIndicoLedger.AccountRefMismatch(oldWallet, linked);
+        uint256 locked = lockedCredit[oldWallet];
+        if (locked != 0) revert IIndicoLedger.AccountHasLockedCredit(oldWallet, locked);
+        if (newWallet == address(this) || newWallet == address(usdc)) {
+            revert IIndicoLedger.InvalidParticipant(newWallet);
+        }
+        if (participantRole[newWallet] != ROLE_NONE) {
+            revert IIndicoLedger.WalletNotFresh(newWallet);
+        }
+
+        uint256 amount = credit[oldWallet];
+        credit[oldWallet] = 0;
+        credit[newWallet] = amount; // a never-approved wallet holds no credit
+        // Linter cannot match an event to a mapping write; AccountMoved follows (D-30, D-64).
+        // forge-lint: disable-next-line(missing-events-access-control)
+        approvedUser[oldWallet] = false;
+        approvedUser[newWallet] = true;
+        participantRole[oldWallet] = ROLE_RETIRED;
+        participantRole[newWallet] = ROLE_USER;
+        accountRefOf[oldWallet] = bytes32(0);
+        accountRefOf[newWallet] = accountRef;
+        walletOfAccount[accountRef] = newWallet;
+        emit IIndicoLedger.AccountMoved(oldWallet, newWallet, accountRef, amount);
     }
 
     /// @dev Same order as `_admit`: zero address first, then the role, then the amount. A
