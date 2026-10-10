@@ -141,8 +141,8 @@ mismatch is an alert, never something to correct silently: the contract is the s
 | I8 | A user's credit falls only through `spend`, `adminDebitCredit`, `liquidate`, or `adminMoveAccount` (to its new wallet). |
 | I9 | `spend` and `adminDebitCredit` never take credit below `lockedCredit`. |
 | I10 | No withdrawal pays more than `poolUsdc`. |
-| I11 | `deposit` and `withdraw` never change the share price. |
-| I12 | Nobody but the admin changes another address's credit, except `spend` raising a merchant's. |
+| I11 | `deposit`, `withdraw` and `withdrawAll` never lower the share price and cost the caller at most 1 wei of rounding; `liquidate` lowers pool assets by exactly the principal; every other call leaves pool assets and shares unchanged. |
+| I12 | Nobody but the admin changes another address's credit, except `spend` raising a merchant's and `liquidate` burning a defaulted borrower's collateral. |
 | I13 | `sum(credit) + poolCredit == total minted - total burned` (from events). |
 | I14 | `usdc.balanceOf(ledger) >= poolUsdc`. |
 | L1 | `walletOfAccount[accountRefOf[w]] == w` for every linked wallet, and the reverse: the link is one to one. |

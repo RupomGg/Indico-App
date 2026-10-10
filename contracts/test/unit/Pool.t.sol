@@ -683,6 +683,25 @@ contract PoolTest is Actors {
         _assertBooks();
     }
 
+    /// @dev Short of cash after a loss, so the division is inexact: the burn for the cash paid
+    ///      rounds up, against the withdrawer (D-38). Found by P2.1's deliberate-bug check: no
+    ///      test failed when this burn rounded down.
+    function test_withdrawAll_shortOfCash_afterLoss_burnRoundsUp() public {
+        _deposit(merchantA, DEP);
+        _lendOut(700e6, 3); // 3 wei defaulted: A + 1 = 1000e6 - 2, an inexact price
+        uint256 a = ledger.poolUsdc() + ledger.totalLent() + 1;
+        uint256 s = ledger.totalShares() + 1e6;
+        uint256 cash = ledger.poolUsdc();
+        uint256 up = LedgerMath.mulDivUp(cash, s, a);
+        assertEq(up, LedgerMath.mulDivDown(cash, s, a) + 1, "the case must be inexact");
+
+        uint256 held = ledger.shares(merchantA);
+        _withdrawAll(merchantA);
+        assertEq(held - ledger.shares(merchantA), up, "burn rounded up");
+        assertEq(ledger.poolUsdc(), 0);
+        _assertBooks();
+    }
+
     /// @dev Same, with another holder and a loss making every division inexact: the two
     ///      payments add up to the full claim minus at most 2 wei, never more than it. If the
     ///      first payment's rounded-up burn leaves shares worth under 1 wei, the second

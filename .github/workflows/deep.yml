@@ -41,9 +41,16 @@ jobs:
 
       # One deep shard per test file, so no single job holds the whole suite against the
       # 360-minute limit. Built from the files on disk, so a new test file is never left out.
+      # Invariant files run as two shards with different seeds, "<file>@1" and "<file>@2", each
+      # 5,000 runs at depth 256 (foundry.toml deep profile): 10,000 runs in all, depth unchanged.
       - id: shards
         working-directory: contracts
-        run: echo "files=$(find test -name '*.t.sol' | sort | jq -R . | jq -cs .)" >> "$GITHUB_OUTPUT"
+        run: |
+          {
+            find test -name '*.t.sol' -not -path 'test/invariant/*'
+            for seed in 1 2; do find test/invariant -name '*.t.sol' | sed "s/$/@$seed/"; done
+          } | sort > shards.txt
+          echo "files=$(jq -R . < shards.txt | jq -cs .)" >> "$GITHUB_OUTPUT"
 
       - name: deep-runs-guard self-check
         run: bash .github/scripts/deep-runs-guard.test.sh
@@ -72,8 +79,19 @@ jobs:
 
       - name: forge test --profile deep (5,000,000 fuzz runs), this file only
         shell: bash
-        run: forge test --profile deep --match-path "${{ matrix.file }}" 2>&1 | tee deep.log
+        env:
+          ENTRY: ${{ matrix.file }}
+        run: |
+          path="${ENTRY%@*}"
+          if [ "$path" != "$ENTRY" ]; then seed=(--fuzz-seed "${ENTRY#*@}"); else seed=(); fi
+          forge test --profile deep --match-path "$path" "${seed[@]}" 2>&1 | tee deep.log
 
-      # Fails the shard if any fuzz test ran fewer than the deep profile's runs (O-036).
-      - name: every fuzz test ran 5,000,000 times
-        run: bash ../.github/scripts/deep-runs-guard.sh deep.log 5000000
+      # Fails the shard if any fuzz test ran fewer than the deep profile's runs (O-036), or, on an
+      # invariant shard, if the campaign ran under 5,000 runs or under runs x 256 calls (P2.1).
+      - name: every fuzz test ran 5,000,000 times, every invariant campaign in full
+        shell: bash
+        env:
+          ENTRY: ${{ matrix.file }}
+        run: |
+          if [ "${ENTRY%@*}" != "$ENTRY" ]; then inv=(5000 256); else inv=(); fi
+          bash ../.github/scripts/deep-runs-guard.sh deep.log 5000000 "${inv[@]}"

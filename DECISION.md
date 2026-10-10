@@ -2511,6 +2511,90 @@ warnings` exit 0; `handover/build.py --check` current. `contracts/` unchanged, s
 Open items: closed O-012.
 Commit: ci: actions/checkout v5 and runners pinned to ubuntu-24.04 (O-012)
 
+### C-065 · P2.1 · Invariant handler and permissive invariants · 2026-10-10
+Type: feature (tests, Deep workflow and guard; `src/` unchanged)
+Decisions: D-65 (owner decided: I11 stated exactly), D-66 (proposed: I12 includes liquidation, for
+approval at this gate); D-38, D-42 applied
+Session start (INSTRUCTION 1.2): G10 for C-064, CI run 37994095680 on `498278f` green, on the
+`ubuntu-24.04` runner. Last finished Deep fuzz run 37903112682 on `de1984d` green; `contracts/` is
+unchanged since, apart from this change.
+Files:
+- New: `contracts/test/invariant/Handler.sol`: 20 actions over 5 app accounts, 3 merchants, 2
+  outsiders and 10 fresh wallets: `registerAsset` (types 0 to 7, the cap, a reused hash),
+  `adminIssue`, `adminDebit` (users and merchants, D-63), `spend`, `deposit`, `withdraw`,
+  `withdrawAll`, `donate` (a direct USDC transfer, D-38), `requestLoan`, `repay`, `extend`,
+  `liquidate` (any caller), `setUser` and `setMerchant` (approve or revoke, sometimes the wrong
+  reference or address), `newTermsVersion`, `signTerms`, `moveAccount` (D-64), `togglePause`, `warp`
+  (up to 120 days) and `warpToEdge` (a loan's window opening, due date, due date + 1, grace end, grace
+  end + 1, due date + 90 days). Callers come mostly from the right set and 1 time in 8 from anyone;
+  amounts are tilted to the edges (exactly available, available + 1, the whole credit, maxBorrow,
+  the pool's cash). Refused calls are not swallowed: the revert reaches Forge, which counts it per
+  action. After every successful call the handler records, never asserts (an assert would be an
+  ignored revert): every tracked address's credit changed by exactly the action's own amount and
+  nothing else (I8, I12, D-66); spend and debit never below locked credit (I9); no withdrawal above
+  `poolUsdc` (I10); the share-price rules of D-65 (I11).
+- New: `contracts/test/invariant/Invariants.t.sol`: I1, I2, I3, I4 with I5, I6 with I13, I7, the
+  per-call rules (I8 to I12), I14, L1, L2, C1, one `invariant_` function each (I4/I5 and I6/I13
+  share a loop).
+- Changed: `contracts/test/unit/Pool.t.sol`: `test_withdrawAll_shortOfCash_afterLoss_burnRoundsUp`,
+  found by this gate's G9: with the burn for a short-of-cash `withdrawAll` rounded down (P7), no
+  test failed, unit or invariant. Now an inexact case asserts the burn is exactly `mulDivUp`.
+- Changed: `contracts/foundry.toml`: `[profile.deep.invariant] runs = 5_000`, depth 256: Deep runs
+  the invariant file as two shards of 5,000 with different seeds, 10,000 runs in all.
+- Changed: `.github/workflows/deep.yml`: the shard list gives each `test/invariant/` file twice,
+  `<file>@1` and `<file>@2`; the deep step runs such an entry with `--fuzz-seed`, and its guard step
+  passes the invariant minimums.
+- Changed: `.github/scripts/deep-runs-guard.sh`: optional `<minimum invariant runs> <depth>`; with
+  them, each invariant campaign line must show at least those runs and runs x depth calls, and a
+  missing one fails. Without them, unchanged.
+- Changed: `.github/scripts/deep-runs-guard.test.sh`: 5 new cases, 14 in all, all `ok`. On the real
+  measurement log the guard passes at `100 256` and fails at `101 256`, naming the campaign.
+- Changed: `.github/workflows/ci.yml` step 6 and its comment: the gas snapshot excludes invariant
+  tests (`--no-match-test 'testFuzz|invariant'`), whose revert counts change from run to run;
+  without this, CI's gas check would fail on every run.
+- Changed: `handover/README.md`: the I11 and I12 rows (D-65, D-66).
+- Changed: `contracts/.gas-snapshot`: one new line (the Pool test); 26 Pool lines +22 gas each, the
+  test contract has one more function. Nothing else.
+- Changed (local, not pushed): `docs/decisions.md` D-65, D-66; `docs/contract-spec.md` section 9
+  (I8, I11, I12).
+Measured (`docs/gate-logs/P2.1/measure-*.log`), local, depth 256: 50 runs 75.9 s, 100 runs
+124.6 s, so about 1 s a run once warm and about 2.7 hours for 10,000 runs in one process (each
+campaign is single-threaded: CPU time equals wall time). Two seed shards of 5,000 are about 1.4
+hours each locally, the D-42 estimate with CI margin under 40% of 360 minutes each; one shard of
+10,000 could reach 70% to 80%.
+Per-action calls and refusals (`G1-rerun.log`, 256 runs x depth 128, 32,768 calls): registerAsset
+1,570 / 1,008; adminIssue 1,631 / 479; adminDebit 1,590 / 1,358; spend 1,606 / 1,438; deposit
+1,636 / 604; withdraw 1,627 / 1,407; withdrawAll 1,626 / 1,302; donate 1,645 / 0; requestLoan 1,652
+/ 1,500; repay 1,608 / 1,541; extend 1,644 / 1,634; liquidate 1,638 / 1,607; setUser 1,720 / 657;
+setMerchant 1,608 / 332; newTermsVersion 1,658 / 0; signTerms 1,679 / 590; moveAccount 1,661 / 850;
+togglePause 1,715 / 52; warp 1,625 / 0; warpToEdge 1,629 / 0. Every action succeeds; extend
+(10) and liquidate (31) are the rarest, so time does cross the 90-day term and the grace. A probe
+of 6,000 calls showed the refusals are the intended ones (pause, closed loans, missing approval,
+credit or cash).
+Gate (logs in `docs/gate-logs/P2.1/`, Forge 1.8.3):
+- G1 pass: 583 passed, 0 failed, 0 skipped, exit 0; after the Pool test, `G1-rerun.log` 584 passed.
+- G2 pass: src lines 283/283, branches 82/82.
+- G3 pass, G4 pass: exit 0 each (G3 rerun after the Pool test, exit 0).
+- G5 pass: seeds 1 and 2, 583 passed each.
+- G6 pass: three runs, 583 passed each.
+- G7 pass: `ci` profile, 583 passed.
+- G8 pass: `IndicoLedger` 13,042 B, unchanged; snapshot check 529 passed after regeneration.
+- G9 pass, `G9.log`: 11 mutations of `src/IndicoLedger.sol`, run against `test/invariant/` only at
+  64 runs: P1 repay forgets `totalLent` (I2); P2 liquidate does not burn credit (I6, credit delta);
+  P3 liquidate forgets `totalLent` (I2, I11); P4 locks the principal (I4); P5 spend ignores the lock
+  (I3, I9); P8 move leaves the old link (L1, L2); P9 deposit books 1 wei extra (I14, I11); P10 debit
+  forgets `totalCredit` (I6); P11 withdrawal leaves `poolUsdc` (I14). All caught. P6 (withdraw burns
+  rounded down) was caught at 256 runs (`G9-p67`); P7 (short-of-cash burn rounded down) was missed by
+  every test, hence the new Pool test, which catches both (`P2.1-p7unit/G9.log`). P5 was missed on
+  the first run and caught once the handler tried available + 1. Scratch copies restored
+  byte-identical to the real source each time.
+- G13 pass. Handover `--check` current. Slither (scratch copy): exit 0, 7 findings, no IR error,
+  unchanged.
+- G10 pending: owner pushes. Deep: the next run includes the two invariant shards; P2.1 is done when
+  it is green.
+Open items: none raised.
+Commit: test: invariant handler and permissive invariants I1 to I14, L1, L2, C1; deep invariant shards by seed (P2.1)
+
 ---
 
 ## Open items

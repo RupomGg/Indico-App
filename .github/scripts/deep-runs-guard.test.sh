@@ -6,9 +6,9 @@ tmp=$(mktemp)
 trap 'rm -f "$tmp"' EXIT
 fails=0
 
-check() { # check <name> <expected exit 0|1> <forge output>
+check() { # check <name> <expected exit 0|1> <forge output> [<invariant runs> <depth>]
   printf '%s\n' "$3" > "$tmp"
-  bash "$guard" "$tmp" 5000000 > /dev/null 2>&1
+  bash "$guard" "$tmp" 5000000 ${4:-} ${5:-} > /dev/null 2>&1
   local got=$?
   [ "$got" -ne 0 ] && got=1
   if [ "$got" -eq "$2" ]; then echo "ok   $1"; else echo "FAIL $1 (exit $got, expected $2)"; fails=1; fi
@@ -36,5 +36,18 @@ check "several suites summary" 0 "$PASS5M
 Ran 3 test suites in 9.1s (9.1s CPU time): 2 tests passed, 0 failed, 0 skipped (2 total tests)"
 check "failed fuzz with counterexample, low runs" 1 "[FAIL: x; counterexample: calldata=0x args=[1]] testFuzz_c(uint256) (runs: 4, μ: 1, ~: 1)
 $SUM"
+
+INV='[PASS] invariant_a
+ InvariantsTest invariants (runs: 5000, calls: 1280000, reverts: 600000)'
+check "invariant at full runs and calls" 0 "$INV
+$SUM" 5000 256
+check "invariant runs short" 1 "$INV
+$SUM" 6000 256
+check "invariant calls short" 1 " InvariantsTest invariants (runs: 5000, calls: 640000, reverts: 1)
+$SUM" 5000 256
+check "invariant expected but missing" 1 "$PASS5M
+$SUM" 5000 256
+check "invariant failed" 1 "$INV
+Ran 1 test suite in 9.1s (9.1s CPU time): 0 tests passed, 1 failed, 0 skipped (1 total tests)" 5000 256
 
 exit $fails
