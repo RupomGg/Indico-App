@@ -2649,6 +2649,66 @@ Gate (logs in `docs/gate-logs/P2.2/`, Forge 1.8.3):
 Open items: none raised.
 Commit: test: strict invariant suite, valid calls only, any refusal fails; deep invariant shards per file (P2.2)
 
+### C-067 · P2.3 · Differential model · 2026-10-10
+Type: feature (tests, Deep workflow; `src/` unchanged)
+Decisions: none new
+Session start (INSTRUCTION 1.2): Deep fuzz run 38035955376 on `fc55903` green, 28 of 28 shards,
+both invariant shards included (5,000 runs at depth 256 each, the first in 29 minutes): **P2.1 is
+done**. G10 for P2.2, CI run 38036701674 on `6447919` (branch `p2.2`) green. P2.2 merges once its own
+Deep run is green; P2.3 goes on a branch after it.
+Files:
+- New: `contracts/test/model/LedgerModel.sol`: a second ledger written from the rules (CS 6 and the
+  decisions), not from the contract: plain mappings and arithmetic, each action taking the caller and
+  returning the exact revert data the real ledger must give (empty on success), state changed only on
+  success. Share maths uses OpenZeppelin's full-width `mulDiv`, not the ledger's `LedgerMath`, and
+  reports `MathOverflow` when a result does not fit: the first version used plain multiplication and
+  overflowed where the real ledger, correctly, did not (after repeated defaults the share count grows
+  very large, D-38).
+- New: `contracts/test/model/Differential.t.sol`: 12 actors, 6 account references, onboarding through
+  the same comparison path. `testFuzz_realAndModelAgreeAfterEveryCall`: 1 to 40 random calls per
+  sequence over every action (assets, admin credit and debit, spend, deposit, withdraw, withdrawAll,
+  loans, repay, extend, liquidate, approvals with right and wrong references, terms versions and
+  signatures, account moves, pause and unpause in the right and wrong state, direct USDC transfers,
+  time jumps and loan-edge jumps), callers mostly of the right role and 1 in 6 anyone, amounts tilted
+  to the edges. After every call: the same revert decision and the exact same revert data, then every
+  tracked address's flags, terms, role, credit, lock, shares and link, every loan, every total, the
+  pause times and the USDC held. `test_mix_everyActionAcceptedAndRefused`: over 2,000 seeded steps
+  every action is both accepted and refused (accepted 7 to 68 times each), so agreement is never only
+  on refusals. `test_graceEdges_agree`: the grace's last second and the next for liquidation (D-54)
+  and for a pause (D-58), scripted, since random clocks rarely land on them.
+- Changed: `.github/workflows/deep.yml`: `test/model/` files run as 8 seed shards like the strict
+  suite; their guard checks 125,000 runs. 43 shards in all.
+- Changed: `contracts/.gas-snapshot`: two new lines (the mix test reports metering paused).
+- Changed: `.gitignore`: `.env` at any level, so a local RPC URL or key can never be committed from
+  the repository root (`contracts/.gitignore` already covered `contracts/.env`, where Forge reads it).
+Runs: default 200 and `ci` 2,000 sequences (inline); Deep 125,000 per shard, 8 shards with
+different seeds, 1,000,000 sequences in all (IT 4). The inline `deep` line is needed: an inline
+`default` pin applies to every profile (O-036); checked by setting it to 300 and running under
+`--profile deep`, which ran 300 (`deep-inline-probe.log`). Measured: about 27 ms a sequence locally,
+so about 56 minutes a shard.
+Result: no disagreement in any run, on state or on any refusal.
+Gate (logs in `docs/gate-logs/P2.3/`, Forge 1.8.3):
+- G1 pass: 589 passed, 0 failed, 0 skipped, exit 0.
+- G2 pass: src lines 283/283, branches 82/82.
+- G3 pass, G4 pass: exit 0 each.
+- G5 pass: seeds 1 and 2, 589 passed each.
+- G6 pass: three runs, 589 passed each.
+- G7 pass: `ci` profile, 589 passed (2,000 sequences).
+- G8 pass: `IndicoLedger` 13,042 B, unchanged; snapshot check 532 passed.
+- G9 pass: 9 mutations, each caught by `test/model/` alone: D1 extend from now (loan due date
+  differs); D4 deposit rounds up (`totalShares` differs); D5 move leaves the old account link; D6
+  re-approval with another reference accepted (real accepts, model refuses); D7 registerAsset checks
+  the hash before the amount (a different refusal); D8 a refused loan reports the wrong cash (a
+  different refusal argument); D9 the whole claim leaves one share (`G9.log`, 7 of 9); D2 the grace
+  one second short and D3 the pause merge at `>=` were missed by random sequences and caught once the
+  scripted grace test existed (`P2.3-grace/G9.log`, 2 of 2). Scratch copies byte-identical to the real
+  source.
+- G13 pass. Handover `--check` current. Slither (scratch copy): exit 0, 7 findings, no IR error,
+  unchanged.
+- G10 pending: owner pushes. Deep: P2.3 is done when a Deep run on its code is green.
+Open items: none raised.
+Commit: test: differential model, a naive second ledger agreeing on every state and refusal after every call (P2.3)
+
 ---
 
 ## Open items
