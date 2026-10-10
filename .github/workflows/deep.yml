@@ -41,14 +41,18 @@ jobs:
 
       # One deep shard per test file, so no single job holds the whole suite against the
       # 360-minute limit. Built from the files on disk, so a new test file is never left out.
-      # Invariant files run as two shards with different seeds, "<file>@1" and "<file>@2", each
-      # 5,000 runs at depth 256 (foundry.toml deep profile): 10,000 runs in all, depth unchanged.
+      # Each invariant file runs as N shards with different seeds, "<file>@<seed>@<N>", each
+      # 10,000 / N runs at depth 256: 10,000 runs per file in all, depth unchanged. N is 2, and 8
+      # for the strict suite, whose runs take about four times as long (P2.1, P2.2).
       - id: shards
         working-directory: contracts
         run: |
           {
             find test -name '*.t.sol' -not -path 'test/invariant/*'
-            for seed in 1 2; do find test/invariant -name '*.t.sol' | sed "s/$/@$seed/"; done
+            for f in $(find test/invariant -name '*.t.sol'); do
+              case "$f" in *Strict*) n=8 ;; *) n=2 ;; esac
+              for seed in $(seq 1 "$n"); do echo "$f@$seed@$n"; done
+            done
           } | sort > shards.txt
           echo "files=$(jq -R . < shards.txt | jq -cs .)" >> "$GITHUB_OUTPUT"
 
@@ -82,16 +86,22 @@ jobs:
         env:
           ENTRY: ${{ matrix.file }}
         run: |
-          path="${ENTRY%@*}"
-          if [ "$path" != "$ENTRY" ]; then seed=(--fuzz-seed "${ENTRY#*@}"); else seed=(); fi
+          path="${ENTRY%%@*}"
+          if [ "$path" != "$ENTRY" ]; then
+            rest="${ENTRY#*@}"
+            seed=(--fuzz-seed "${rest%@*}")
+            export FOUNDRY_INVARIANT_RUNS=$((10000 / ${rest#*@}))
+          else
+            seed=()
+          fi
           forge test --profile deep --match-path "$path" "${seed[@]}" 2>&1 | tee deep.log
 
       # Fails the shard if any fuzz test ran fewer than the deep profile's runs (O-036), or, on an
-      # invariant shard, if the campaign ran under 5,000 runs or under runs x 256 calls (P2.1).
+      # invariant shard, if the campaign ran under 10,000 / N runs or under runs x 256 calls.
       - name: every fuzz test ran 5,000,000 times, every invariant campaign in full
         shell: bash
         env:
           ENTRY: ${{ matrix.file }}
         run: |
-          if [ "${ENTRY%@*}" != "$ENTRY" ]; then inv=(5000 256); else inv=(); fi
+          if [ "${ENTRY%%@*}" != "$ENTRY" ]; then inv=($((10000 / ${ENTRY##*@})) 256); else inv=(); fi
           bash ../.github/scripts/deep-runs-guard.sh deep.log 5000000 "${inv[@]}"

@@ -2595,6 +2595,60 @@ Gate (logs in `docs/gate-logs/P2.1/`, Forge 1.8.3):
 Open items: none raised.
 Commit: test: invariant handler and permissive invariants I1 to I14, L1, L2, C1; deep invariant shards by seed (P2.1)
 
+### C-066 · P2.2 · Strict invariants · 2026-10-10
+Type: feature (tests, Deep workflow; `src/` unchanged)
+Decisions: none new. A strict action with no valid call in the current state returns without
+calling (a skip); the reachability test below shows no action always skips.
+Session start (INSTRUCTION 1.2): G10 for P2.1, CI run 38026936981 on `fc55903` green, step 4 (the
+invariant suite) run for the first time. Its Deep run is the next nightly; P2.2 merges only after it
+is green (branch rule).
+Files:
+- New: `contracts/test/invariant/StrictHandler.sol`: extends `Handler` with 17 strict actions
+  (`s_registerAsset` ... `s_togglePause`) plus the two warps. Each works out from the written rules
+  (CS 6 and the decisions: approval and terms, roles, caps, available credit, pool cash and shares,
+  the loan window, D-58's late extension, the grace, the account link) whether its call must
+  succeed, then makes it or skips. The same per-call rules as `Handler` are recorded.
+- New: `contracts/test/invariant/StrictInvariants.t.sol`: the same 11 invariant functions, run on the
+  strict handler with `fail-on-revert` set inline for the default, `ci` and `deep` profiles, so a
+  valid call refused fails the run; and `test_everyStrictActionMakesValidCalls`, 4,000 seeded random
+  strict actions, none reverting, every ledger action making at least one call.
+- Changed: `contracts/test/invariant/Invariants.t.sol`: the invariant functions move into
+  `abstract InvariantsBase`; `InvariantsTest` supplies the permissive handler. No rule changed.
+- Changed: `contracts/test/invariant/Handler.sol`: fix, `_loan` computed `seed + k`, which overflows
+  for a seed near 2^256; the strict suite failed on it (a test error, not the contract), the
+  permissive one had counted it as a refusal. Now `seed % n + k`. Also `made[selector]`, successful
+  ledger calls per action, for the reachability test.
+- Changed: `.github/workflows/deep.yml`: each invariant file is N shards with different seeds,
+  `<file>@<seed>@<N>`, each run with `FOUNDRY_INVARIANT_RUNS = 10,000 / N` and guarded at that many
+  runs and runs x 256 calls; N is 8 for the strict suite, 2 otherwise. 35 shards in all.
+- Changed: `contracts/foundry.toml`: `[profile.deep.invariant] runs = 10_000` again (per file; the
+  workflow sets each shard's share). Checked: the environment variable overrides the deep profile
+  (3 runs, 768 calls at depth 256, `env-override.log`).
+- Changed: `contracts/.gas-snapshot`: one new line, the reachability test (deterministic seed).
+Measured (`docs/gate-logs/P2.2/measure-*.log`), depth 256: strict 20 runs 82.9 s, 40 runs 157.9 s,
+about 3.75 s a run (every call succeeds, so more state per run than the permissive suite); 10,000
+runs would take about 10.4 hours in one process, so 8 shards of 1,250, about 1.3 hours each locally.
+Strict suite at 256 runs x depth 128 (`G1.log`): 32,768 calls, 0 reverts; every strict action made
+between 1,633 and 1,775 calls.
+Gate (logs in `docs/gate-logs/P2.2/`, Forge 1.8.3):
+- G1 pass: 586 passed, 0 failed, 0 skipped, exit 0.
+- G2 pass: src lines 283/283, branches 82/82.
+- G3 pass, G4 pass: exit 0 each.
+- G5 pass: seeds 1 and 2, 586 passed each.
+- G6 pass: three runs, 586 passed each.
+- G7 pass: `ci` profile, 586 passed.
+- G8 pass: `IndicoLedger` 13,042 B, unchanged; snapshot check 530 passed.
+- G9 pass, `G9.log`: 7 of 7 caught by the strict suite at 64 runs, each a valid call wrongly
+  refused: S1 spend of exactly available; S2 debit of exactly available; S3 a loan whose collateral
+  is exactly available; S4 withdraw of exactly the cash; S5 extend at the due date; S6 withdraw of
+  exactly the shares held; and S7, the strict handler itself spending 1 wei above available, which
+  proves `fail-on-revert` is in force. Scratch copies restored byte-identical to the real files.
+- G13 pass. Handover `--check` current. Slither (scratch copy): exit 0, 7 findings, no IR error,
+  unchanged.
+- G10 pending: owner pushes. Deep: P2.2 is done when a Deep run on its code is green.
+Open items: none raised.
+Commit: test: strict invariant suite, valid calls only, any refusal fails; deep invariant shards per file (P2.2)
+
 ---
 
 ## Open items

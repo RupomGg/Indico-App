@@ -41,6 +41,8 @@ contract Handler is Test {
     address[] public outsiders;
     address[] public fresh;
 
+    /// @dev Successful ledger calls per handler action, by its selector.
+    mapping(bytes4 => uint256) public made;
     uint256 public ghostMinted;
     uint256 public ghostBurned;
     uint256 public violations;
@@ -396,6 +398,7 @@ contract Handler is Test {
         } else if (poolRule == PRICE) {
             _check((a + 1) * (sBefore + VS) >= (aBefore + 1) * (s + VS), "I11 price fell");
         }
+        made[msg.sig]++;
     }
 
     function _check(bool ok, string memory why) internal {
@@ -435,7 +438,7 @@ contract Handler is Test {
         id = 1 + seed % n;
         if (seed % 4 != 0) {
             for (uint256 k; k < n; k++) {
-                uint256 c = 1 + (seed + k) % n;
+                uint256 c = 1 + (seed % n + k) % n; // never `seed + k`: seeds reach 2^256 - 1
                 (,,, uint8 status,,) = ledger.loans(c);
                 if (status == 0) {
                     id = c;

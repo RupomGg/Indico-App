@@ -5,16 +5,18 @@ import {Fixture} from "../helpers/Fixture.sol";
 import {Handler} from "./Handler.sol";
 import {CREDIT_CAP, ROLE_USER, ROLE_RETIRED, BPS, LTV_BPS} from "../../src/lib/Constants.sol";
 
-/// @notice Permissive invariant suite (P2.1, CS 9, TS 2.3): any sequence of handler actions, valid
-///         or refused, and after every call each rule below must hold. One function per rule.
-contract InvariantsTest is Fixture {
+/// @notice The rules every invariant suite checks after every call (CS 9, TS 2.3), one function
+///         per rule. Each suite supplies its own handler.
+abstract contract InvariantsBase is Fixture {
     Handler internal h;
 
-    function setUp() public override {
+    function setUp() public virtual override {
         super.setUp();
-        h = new Handler(ledger, usdc, admin, guardian);
+        h = _deployHandler();
         targetContract(address(h));
     }
+
+    function _deployHandler() internal virtual returns (Handler);
 
     /// I1: the pool never owes more than it holds plus what is out:
     ///     sum(sharesToAssets(shares[m])) <= poolUsdc + totalLent.
@@ -125,5 +127,12 @@ contract InvariantsTest is Fixture {
             address w = h.tracked(i);
             if (ledger.participantRole(w) == ROLE_USER) assertLe(ledger.credit(w), CREDIT_CAP);
         }
+    }
+}
+
+/// @notice Permissive suite (P2.1): any sequence of handler actions, valid or refused.
+contract InvariantsTest is InvariantsBase {
+    function _deployHandler() internal override returns (Handler) {
+        return new Handler(ledger, usdc, admin, guardian);
     }
 }
