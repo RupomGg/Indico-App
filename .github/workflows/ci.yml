@@ -95,8 +95,14 @@ jobs:
           lows=$(jq '.issue_count.low' aderyn.json)
           echo "aderyn: $highs high, $lows low"
           jq -r '(.high_issues.issues[] | "HIGH " + .detector_name + ": " + .title, (.instances[] | "     " + .contract_path + ":" + (.line_no | tostring))), (.low_issues.issues[] | "low  " + .detector_name + ": " + .title, (.instances[] | "     " + .contract_path + ":" + (.line_no | tostring)))' aderyn.json
-          if [ "$highs" != "0" ]; then
-            echo "::error::Aderyn reports $highs high-severity finding(s); the report is in the job summary"
+          # Highs triaged in writing (D-67) are listed, by detector, file and line, in
+          # .github/aderyn-allowed-highs.txt. Any other high fails, and a listed one that moves
+          # stops matching and fails too, so it is reviewed again.
+          jq -r '.high_issues.issues[] | .detector_name as $d | .instances[] | $d + " " + .contract_path + ":" + (.line_no | tostring)' aderyn.json | sort > aderyn-highs.txt
+          new=$(comm -23 aderyn-highs.txt <(grep -v '^#' ../.github/aderyn-allowed-highs.txt | sort))
+          if [ -n "$new" ]; then
+            echo "::error::Aderyn high-severity finding(s) not triaged in D-67; the report is in the job summary:"
+            echo "$new"
             exit 1
           fi
 

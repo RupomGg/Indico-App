@@ -2811,6 +2811,32 @@ Result: pending, the first CI run on this commit. Every finding is fixed or tria
 entry that follows; a high-severity finding fails CI until then.
 Commit: ci: aderyn v0.6.8 as a second analyser on src/, checksum-verified, fails on a high finding (P2.5)
 
+### C-071 · P2.5 · Aderyn's findings triaged; Level 2 complete · 2026-10-11
+Type: chore (CI; `src/` and `test/` unchanged)
+Decisions: D-67 (for the owner's approval at this entry)
+First Aderyn run (CI on branch `p2.5`, step 7b, after `f3f5807` and the line-printing change):
+1 high, 5 low, 88 detectors over the 4 source files.
+- High, `reentrancy-state-change`, `deposit` lines 368 and 370: triaged in D-67 (deliberate, D-38;
+  not exploitable: Circle's USDC, `nonReentrant`, the P1.13 re-entry cross product).
+- Low, kept as designed, each reason in D-67: `centralization-risk` (8 admin and guardian functions),
+  `unchecked-return` (the constructor's `_grantRole` lines 111 and 112), `unused-error`
+  (`DivisionByZero`, `MathOverflow`, kept for the ABI), `large-numeric-literal` (`BPS`),
+  `internal-function-used-once` (`mulDivDown`).
+Slither on the same run: exit 0, 7 findings, all informational or low (`timestamp` on the loan
+deadlines under D-53, `low-level-calls` on the D-16 decimals read, `naming-convention` on the role
+getters), unchanged since P1.12.
+Files:
+- Changed: `.github/workflows/ci.yml` step 7b: prints every finding with its file and line; fails on
+  any high not in the allowlist (D-67).
+- New: `.github/aderyn-allowed-highs.txt`: the two triaged lines, with the reason.
+Checks: the allowlist comparison tested locally in three cases: today's findings pass, an invented
+new high fails naming it, the listed finding on a moved line fails. Both workflows parse.
+Level 2 (P2.1 to P2.5): the invariant suites, the differential model and the fork and integration
+tests run green; Deep runs every invariant file at 10,000 runs at depth 256 and the model at
+1,000,000 sequences; two analysers clean or triaged in writing. P2.5 is done, and Level 2 with it,
+when CI on this commit is green and P2.4's and this commit's Deep run is green.
+Commit: ci: aderyn high on deposit triaged by an allowlist, every other high still fails; lows triaged (P2.5, D-67)
+
 ---
 
 ## Open items
