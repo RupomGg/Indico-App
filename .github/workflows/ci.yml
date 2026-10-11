@@ -55,12 +55,13 @@ jobs:
             }' lcov.info
 
       # .gas-snapshot is regenerated with the same profile and filter, nothing else:
-      #   FOUNDRY_PROFILE=default forge snapshot --no-match-test 'testFuzz|invariant'
-      # Fuzz and invariant tests are excluded: their gas and revert counts vary with the random inputs.
+      #   FOUNDRY_PROFILE=default forge snapshot --no-match-test 'testFuzz|invariant|test_fork'
+      # Fuzz and invariant tests are excluded (their gas and revert counts vary with the random
+      # inputs), and so are fork tests, which skip on CI where no RPC URL is set.
       - name: 6. gas snapshot, fails on a regression over 10%
         env:
           FOUNDRY_PROFILE: default
-        run: forge snapshot --check --tolerance 10 --no-match-test 'testFuzz|invariant'
+        run: forge snapshot --check --tolerance 10 --no-match-test 'testFuzz|invariant|test_fork'
 
       - uses: actions/setup-python@v6
         with:

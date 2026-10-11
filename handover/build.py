@@ -176,23 +176,48 @@ def build():
     }
 
 
-def gas_table():
-    out = subprocess.run(["forge", "test", "--gas-report", "--json"], cwd=CONTRACTS,
+def gas_report(args):
+    """The ledger's per-function gas from `forge test --gas-report --json`, or None if no test
+    called it (the fork tests are skipped without an RPC URL)."""
+    out = subprocess.run(["forge", "test", "--gas-report", "--json", *args], cwd=CONTRACTS,
                          capture_output=True, text=True, check=True).stdout
     report = next(json.loads(l) for l in out.splitlines() if l.startswith("[") or l.startswith("{"))
-    ledger = next(c for c in report if c["contract"].endswith(":IndicoLedger"))
+    ledger = next((c for c in report if c["contract"].endswith(":IndicoLedger")), None)
+    return ledger["functions"] if ledger else None
+
+
+def gas_rows(functions):
     rows = ["| Function | Typical (median) | Worst seen (max) | Calls in tests |", "|---|---|---|---|"]
-    for sig, g in sorted(ledger["functions"].items()):
+    for sig, g in sorted(functions.items()):
         rows.append(f"| `{sig}` | {g['median']:,} | {g['max']:,} | {g['calls']:,} |")
-    return (
+    return "\n".join(rows) + "\n"
+
+
+def gas_table():
+    mock = gas_report(["--no-match-path", "test/fork/*"])
+    real = gas_report(["--match-path", "test/fork/*"])
+    text = (
         f"# Gas per function, interface {VERSION}\n\n"
-        "From `forge test --gas-report` over the whole test suite (Forge 1.8.3, optimizer 200, via_ir).\n"
-        "Execution gas only, without the 21,000 base cost and calldata. Typical is the median over\n"
-        "every call the tests made, refused ones included, so it can sit below a successful call.\n"
-        "Worst seen is the most expensive call, usually a first-time storage write; it is not an\n"
-        "upper bound. Always estimate the real transaction with `eth_estimateGas` before the user signs\n"
-        "(PRD U-11); use this table for planning and for the insufficient-ETH message only.\n\n"
-        + "\n".join(rows) + "\n"
+        "From `forge test --gas-report` (Forge 1.8.3, optimizer 200, via_ir). Execution gas only,\n"
+        "without the 21,000 base cost and calldata. Typical is the median over every call the tests\n"
+        "made, refused ones included, so it can sit below a successful call. Worst seen is the most\n"
+        "expensive call, usually a first-time storage write; it is not an upper bound. Always estimate\n"
+        "the real transaction with `eth_estimateGas` before the user signs (PRD U-11); use these tables\n"
+        "for planning and for the insufficient-ETH message only.\n\n"
+        "## On Circle's USDC (Base mainnet fork)\n\n"
+    )
+    if real:
+        text += (
+            "From the fork tests, against the real token at a pinned block. USDC is a proxy, so a call\n"
+            "that moves USDC costs more than with the test token below. Few calls each: a guide, not a\n"
+            "distribution.\n\n" + gas_rows(real) + "\n"
+        )
+    else:
+        text += "Not measured: no `BASE_RPC_URL` was set when this file was generated.\n\n"
+    return text + (
+        "## Whole test suite, test token\n\n"
+        "Every unit, invariant, differential and integration test, on the 6-decimal test token.\n\n"
+        + gas_rows(mock)
     )
 
 

@@ -2735,6 +2735,68 @@ setup assumption broke only there. The next Deep run on this commit is the CI pr
 P2.3 is done when it is green.
 Commit: fix: give the admin and guardian enough test USDC in the differential test, so the token never refuses a call (P2.3 reopen)
 
+### C-069 · P2.4 · Fork tests on Base and the five integration journeys · 2026-10-11
+Type: feature (tests, CI filter; `src/` unchanged)
+Decisions: none new
+Session start (INSTRUCTION 1.2): Deep fuzz run 38072759024 on `6447919` green: **P2.2 is done**. G10
+for P2.3, CI run 38073329484 on `030a46d` (branch `p2.3`) and 38082603691 on `main` green. P2.3's
+Deep run 38082628515 went red; fixed in C-068 (`e6b2ee7`), whose Deep run 38109641700 is in progress.
+P2.4 goes on a branch until that run is green.
+Files:
+- New: `contracts/test/fork/BaseFork.t.sol`: 8 tests on a copy of Base mainnet at block 52,432,000
+  with Circle's USDC (`0x8335...2913`): the ledger deploys on it (D-16); the full journey (deposit,
+  register, borrow the maximum, repay, withdraw everything) with every amount exact; a borrower
+  Circle has blacklisted cannot receive a loan (USDC's own error, nothing changed in the ledger); a
+  borrower blacklisted after borrowing cannot repay, the loan stays Active and is liquidated after
+  its due date as usual; a blacklisted merchant can neither withdraw (both functions, shares and pool
+  unchanged) nor deposit; a direct transfer on the real token is counted nowhere (D-38); and every
+  other action once (credit issued and debited, spend, extend, account move), so the real-token gas
+  table covers every function the app sends. USDC is
+  minted through its real master minter and addresses blacklisted through its real blacklister,
+  impersonated on the fork. The RPC URL comes from `BASE_RPC_URL`, in the environment or in
+  `contracts/.env` (git-ignored, read by Forge); without it every test is skipped (`vm.skip`), so CI,
+  which has no URL, stays green. Checked both ways: all passed with the URL, skipped without it.
+- New: `contracts/test/integration/Journeys.t.sol`: the five journeys of TS 2.5, each asserting the
+  end state of every actor (USDC, credit, lock, shares) and the pool's books: (1) deposit, register,
+  borrow, spend the rest, repay, withdraw everything; (2) two users, two merchants, overlapping loans,
+  one default, both merchants withdraw and share the 2,000 loss 60/40 within 1 wei; (3) borrow the
+  maximum, extend four times, repay 449 days after borrowing; (4) direct payment issued, spent, then
+  cash settlements debited from the user and the paid merchant (D-63); (5) a pause mid-journey
+  refuses every user action while the admin's setters work, the loan falls due during it, the grace
+  blocks liquidation and the late extension goes through (D-54, D-58), then the journey finishes.
+- Changed: `.github/workflows/ci.yml` step 6 and its comment: the gas snapshot also excludes the fork
+  tests (`test_fork`), which skip on CI.
+- Changed: `contracts/.gas-snapshot`: 5 new lines, the journeys. Nothing else.
+Found during the gate: G4 failed on `environment-read-across-mutation`, `vm.warp(block.timestamp + ...)`
+in the new tests (under `via_ir` the read can be reused after a warp); now `vm.getBlockTimestamp()`.
+G1, G3, G4 and G8 rerun after the fix.
+- Changed: `handover/build.py` and `handover/gas.md` (TS 2.4, gas on the real token): `--gas` now
+  writes two tables, one from the fork tests on Circle's USDC (when `BASE_RPC_URL` is set; otherwise
+  it says it was not measured) and one from the rest of the suite on the test token, so the two never
+  mix. On the real token: `deposit` 157,960, `requestLoan` 184,347, `repay` 90,867, `withdrawAll`
+  70,937 to 75,585 (the `withdraw` row is a refused call, from the blacklist test). `--check` (CI step
+  2b) is unchanged: `gas.md` is measured, not generated from the ABI.
+Gate (logs in `docs/gate-logs/P2.4/`, Forge 1.8.3, with the RPC URL set, so the fork tests ran):
+- G1 pass: 601 passed, 0 failed, 0 skipped, exit 0 (`G1-rerun.log` after the G4 fix, the same);
+  602 after the eighth fork test (`G1-final.log`).
+- G2 pass: src lines 283/283, branches 82/82.
+- G3 pass. G4 pass after the fix (`G4.log`).
+- G5 pass: seeds 1 and 2, 601 passed each.
+- G6 pass: three runs, 601 passed each.
+- G7 pass: `ci` profile, 601 passed.
+- G8 pass: `IndicoLedger` 13,042 B, unchanged; snapshot check 537 passed (`G8-rerun.log`).
+- G9 pass, `G9.log`: 6 of 6 caught by `test/integration/` and `test/fork/` alone: J1 extend from now
+  (journey 3); J2 a 1 wei fee on spend (journeys 1 and 4); J3 liquidate forgets the pool credit
+  (journey 2 and the fork liquidation test); J4 no late extension (journey 5); J5 merchant approval
+  blocked while paused (journey 5); J6 the loan paid to the ledger itself (every journey). Scratch
+  copies restored byte-identical; the scratch copy of `contracts/` no longer includes `.env`.
+- G13 pass. Handover `--check` current. Slither (scratch copy): exit 0, 7 findings, no IR error,
+  unchanged.
+- G10 pending: owner pushes. Deep: the journeys run as a shard; the fork file runs as one and skips
+  there, since the Deep workflow has no RPC URL.
+Open items: none raised.
+Commit: test: fork tests on Base against real USDC, blacklisted borrower and merchant, and the five integration journeys (P2.4)
+
 ---
 
 ## Open items
