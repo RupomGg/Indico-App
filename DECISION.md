@@ -2797,6 +2797,20 @@ Gate (logs in `docs/gate-logs/P2.4/`, Forge 1.8.3, with the RPC URL set, so the 
 Open items: none raised.
 Commit: test: fork tests on Base against real USDC, blacklisted borrower and merchant, and the five integration journeys (P2.4)
 
+### C-070 · P2.5 · A second analyser, Aderyn, on every push · 2026-10-11
+Type: chore (CI; `src/` and `test/` unchanged)
+Decisions: owner's choice (2026-10-11): Aderyn as the second analyser (TS 5, P2.5), run on GitHub's
+runner, since v0.6.8 ships no Windows build and this machine has no WSL distribution or Docker.
+Files:
+- Changed: `.github/workflows/ci.yml`: step 7b downloads Cyfrin's official Linux release
+  `aderyn-x86_64-unknown-linux-gnu.tar.xz` (6.3 MB, tag `aderyn-v0.6.8`), checks it against the
+  published SHA-256 `ffd6ca65...691e46`, runs it on `src/` (`--src src`) and writes the Markdown
+  report to the job summary and the finding titles to the log. Aderyn always exits 0, so the step
+  reads `issue_count.high` from its JSON report and fails on any high-severity finding.
+Result: pending, the first CI run on this commit. Every finding is fixed or triaged in writing in the
+entry that follows; a high-severity finding fails CI until then.
+Commit: ci: aderyn v0.6.8 as a second analyser on src/, checksum-verified, fails on a high finding (P2.5)
+
 ---
 
 ## Open items

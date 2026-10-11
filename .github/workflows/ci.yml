@@ -78,6 +78,28 @@ jobs:
             exit 1
           fi
 
+      # A second analyser (TS 5, P2.5). Aderyn ships no Windows build, so it runs here only:
+      # the official Linux release, pinned and checked against its published SHA-256. The full
+      # report goes to the job summary. Aderyn always exits 0, so the step fails by itself on
+      # any high-severity finding; low ones are triaged in writing (DECISION.md).
+      - name: 7b. aderyn on src/, pinned v0.6.8, fails on a high-severity finding
+        run: |
+          curl -sSfL -o aderyn.tar.xz https://github.com/Cyfrin/aderyn/releases/download/aderyn-v0.6.8/aderyn-x86_64-unknown-linux-gnu.tar.xz
+          echo "ffd6ca658962e211a3ac821c646f69c8e14bf1b1001cbfe091bcd4535a691e46  aderyn.tar.xz" | sha256sum -c -
+          mkdir aderyn-bin && tar -xJf aderyn.tar.xz -C aderyn-bin
+          bin=$(find aderyn-bin -type f -name aderyn | head -1)
+          "$bin" . --src src --skip-update-check -o aderyn.md
+          "$bin" . --src src --skip-update-check -o aderyn.json
+          cat aderyn.md >> "$GITHUB_STEP_SUMMARY"
+          highs=$(jq '.issue_count.high' aderyn.json)
+          lows=$(jq '.issue_count.low' aderyn.json)
+          echo "aderyn: $highs high, $lows low"
+          jq -r '(.high_issues.issues[] | "HIGH " + .detector_name + ": " + .title), (.low_issues.issues[] | "low  " + .detector_name + ": " + .title)' aderyn.json
+          if [ "$highs" != "0" ]; then
+            echo "::error::Aderyn reports $highs high-severity finding(s); the report is in the job summary"
+            exit 1
+          fi
+
       - name: 8. backend typecheck, lint, unit, integration, chain integration
         if: false
         run: echo "backend lands in phase 3"
