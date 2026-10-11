@@ -2709,6 +2709,32 @@ Gate (logs in `docs/gate-logs/P2.3/`, Forge 1.8.3):
 Open items: none raised.
 Commit: test: differential model, a naive second ledger agreeing on every state and refusal after every call (P2.3)
 
+### C-068 · P2.3 reopened · Deep run red: the admin and guardian ran out of test USDC · 2026-10-11
+Type: fix (test only; `src/` unchanged)
+Decisions: none
+What happened: Deep run 38082628515 on `030a46d` (P2.3, dispatched): 36 shards green, all 8
+`test/model/Differential.t.sol` shards red at the test step after about 2 minutes of testing. The job
+logs need a signed-in client (C-049), so the failure was reproduced locally with the same profile and
+seed (`docs/gate-logs/P2.3-reopen/repro-seed1.log`): at sequence 26,121, `real refused what the model
+accepts`, with `ERC20InsufficientBalance(sender, 1,000,000e6, 8,036,996.70194e6)`, the token's own
+error.
+Root cause (a test error, not the contract or the model): the differential test lets the admin and the
+guardian act, and be approved as a user or merchant, like any actor. Every other actor holds 10^30
+USDC so that the token is never what refuses a call (the model deliberately does not model token
+balances), but the admin and guardian held only the fixture's `FUND`, 10^12. After enough deposits or
+loans one of them ran short, the real token refused, and the model, correctly for its scope, accepted.
+Default (200), `ci` (2,000) and the local probe (300) runs never got that far.
+Fix: `contracts/test/model/Differential.t.sol` `setUp` mints the same 10^30 USDC to the admin and the
+guardian, with a comment saying why. No assertion, model rule or action changed.
+Proof: the same shard locally, `--profile deep --fuzz-seed 1`, now passes all 125,000 sequences
+(`fixed-seed1.log`, 3,836 s). G1 601 passed, 0 failed (the working copy also holds the uncommitted
+P2.4 tests); G3, G4 and G13 pass (`G1.log`, `G3-G4-G13.log`). G9 for P2.3 stands: the mutations are in
+`src/`, and the change only adds USDC to two actors.
+Process note: the deep profile is the first to run this test past a few thousand sequences, so a
+setup assumption broke only there. The next Deep run on this commit is the CI proof for all 8 seeds;
+P2.3 is done when it is green.
+Commit: fix: give the admin and guardian enough test USDC in the differential test, so the token never refuses a call (P2.3 reopen)
+
 ---
 
 ## Open items

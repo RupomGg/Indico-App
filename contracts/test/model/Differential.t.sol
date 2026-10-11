@@ -41,6 +41,10 @@ contract DifferentialTest is FixtureBase {
             ledger.ADMIN_ROLE(),
             ledger.GUARDIAN_ROLE()
         );
+        // The admin and guardian act too (and may be approved as a user or merchant), so they
+        // hold as much USDC as everyone else: the token must never be what refuses a call.
+        usdc.mint(admin, BIG);
+        usdc.mint(guardian, BIG);
         who.push(admin);
         who.push(guardian);
         for (uint256 i; i < 12; i++) {
