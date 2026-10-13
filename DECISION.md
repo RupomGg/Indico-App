@@ -2874,6 +2874,27 @@ Gate (logs in `docs/gate-logs/P3.1/`, Forge 1.8.3):
 Open items: none raised.
 Commit: deploy: Base Sepolia deployment of IndicoLedger and deploy script with testnet EOA support (P3.1)
 
+### C-074 · P3.2 · Liquidation keeper script · 2026-10-13
+Type: feature
+Decisions: none
+Files:
+- New: `contracts/script/LiquidateKeeper.s.sol`: liquidation keeper script, inspects active loans, checks dueDate and unpause grace period, calls liquidate idempotently with safe concurrency handling.
+- New: `contracts/test/script/LiquidateKeeper.t.sol`: 18 tests covering unopened loans, active loans, overdue loans, grace periods, paused state, repaid loans, already liquidated loans, range queries, idempotent and concurrency-safe liquidations, batch runs, Base Sepolia target resolution.
+- Changed: `contracts/.gas-snapshot`: updated with snapshot entries for LiquidateKeeperTest.
+Gate (logs in `docs/gate-logs/P3.2/`, Forge 1.8.3):
+- G1 pass, `G1.log`: 565 passed, 0 failed, 0 skipped, exit 0.
+- G2 pass, `G2.log`: src lines 283/283 (100.0%), branches 82/82 (100.0%), exit 0.
+- G3 pass, `G3.log`: `forge fmt --check` exit 0, no diff.
+- G4 pass, `G4.log`: `forge build --deny warnings` exit 0.
+- G8 pass, `G8.log`: IndicoLedger 13,042 B runtime (margin 11,534 B); snapshot check 565 passed, exit 0.
+- G9 pass, `G9.log`: 4 mutations on `LiquidateKeeper.s.sol` (M1 status check, M2 pause check, M3 dueDate check, M4 grace check), all 4 caught by `LiquidateKeeperTest`. Byte-identical restoration confirmed.
+- G11 pass: dry-run on Base Sepolia (`0xa51D54BAe8431f4c6f0dd644D2fCeb498CE5eeF0`) queried on-chain state, found 0 overdue loans, exited cleanly with return code 0.
+- G12: this entry.
+- G13 pass, `G13.log`: grep for vm.assume and assumeNot in test/ returns nothing, exit 1.
+- G10 pending: owner pushes, then CI check.
+Open items: none raised.
+Commit: feat: liquidation keeper script with idempotency, concurrency safety, and Sepolia support (P3.2)
+
 ---
 
 ## Open items
