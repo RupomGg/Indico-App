@@ -2837,6 +2837,43 @@ tests run green; Deep runs every invariant file at 10,000 runs at depth 256 and 
 when CI on this commit is green and P2.4's and this commit's Deep run is green.
 Commit: ci: aderyn high on deposit triaged by an allowlist, every other high still fails; lows triaged (P2.5, D-67)
 
+### C-072 · Level 2 complete; D-67 approved; release order · 2026-10-11
+Type: chore
+Files: none changed in code.
+- D-67 approved by the owner (2026-10-11): Aderyn's high on `deposit` stays triaged by the CI
+  allowlist; every other high fails.
+- G10 for P2.5: CI run 38122099042 on `d985d22` (branch `p2.5`) green, step 7b included. P2.5 changed
+  only CI files, not `contracts/`, so it needs no Deep run of its own (D-31).
+- Deep run 38118501733 on `20f5471` (P2.4, dispatched) green: **P2.4 is done**. With P2.1 to P2.3
+  done (C-065 to C-068), **Level 2 is complete.**
+- Release order, the owner's decision: deploy to Base Sepolia (P3.1, P3.2); build the backend against
+  the Sepolia deployment; Base mainnet (P3.3) only after the backend works on testnet, and after every
+  box in TS 5.
+Commit: part of the P3.1 commit.
+
+### C-073 · P3.1 · Deploy script and Base Sepolia testnet deployment · 2026-10-13
+Type: feature
+Decisions: D-68
+Files:
+- New: `contracts/script/Deploy.s.sol`: deploys IndicoLedger with Circle USDC pinned per chain id, Safe admin/guardian checks, testnet EOA override (D-68), post-deploy role verification.
+- New: `contracts/test/script/Deploy.t.sol`: 10 tests covering Base Sepolia Circle USDC, Base mainnet USDC, same Safe for both, EOA admin on Base Sepolia (D-68), refusal of EOA on mainnet, wrong chains, zero address, wrong roles, wrong USDC.
+- Changed: `docs/deployments.md`: Base Sepolia deployment record (address 0xa51D54BAe8431f4c6f0dd644D2fCeb498CE5eeF0, tx 0x21c2e6a82928830bbaaa74ee6c5e76b2e6e603ac397d1f9a34bf7e8c573f8fac, block 48046317, verified on BaseScan).
+- Changed: `docs/decisions.md`: D-68 documenting single EOA admin allowance on Base Sepolia testnet only.
+- Changed: `contracts/.gas-snapshot`: 10 new snapshot lines for DeployTest.
+Gate (logs in `docs/gate-logs/P3.1/`, Forge 1.8.3):
+- G1 pass, `G1.log`: 612 passed, 0 failed, 0 skipped, exit 0.
+- G2 pass, `G2.log`: src lines 283/283 (100.0%), branches 82/82 (100.0%), exit 0.
+- G3 pass, `G3.log`: `forge fmt --check` exit 0, no diff.
+- G4 pass, `G4.log`: `forge build --deny warnings` exit 0.
+- G8 pass, `G8.log`: IndicoLedger 13,042 B runtime (margin 11,534 B); snapshot check 547 passed, exit 0.
+- G9 pass, `G9.log`: 4 mutations on `Deploy.s.sol` (M1 swap mainnet USDC, M2 delete admin contract check, M3 swap Sepolia USDC, M4 remove mainnet EOA check), all 4 caught by `DeployTest`. Byte-identical restoration confirmed.
+- G11 pass: IndicoLedger deployed on Base Sepolia at `0xa51D54BAe8431f4c6f0dd644D2fCeb498CE5eeF0`, verified on BaseScan, on-chain roles and USDC confirmed.
+- G12: this entry.
+- G13 pass, `G13.log`: grep for vm.assume and assumeNot in test/ returns nothing, exit 1.
+- G10 pending: owner pushes, then CI check.
+Open items: none raised.
+Commit: deploy: Base Sepolia deployment of IndicoLedger and deploy script with testnet EOA support (P3.1)
+
 ---
 
 ## Open items
