@@ -2891,7 +2891,7 @@ Gate (logs in `docs/gate-logs/P3.2/`, Forge 1.8.3):
 - G11 pass: dry-run on Base Sepolia (`0xa51D54BAe8431f4c6f0dd644D2fCeb498CE5eeF0`) queried on-chain state, found 0 overdue loans, exited cleanly with return code 0.
 - G12: this entry.
 - G13 pass, `G13.log`: grep for vm.assume and assumeNot in test/ returns nothing, exit 1.
-- G10 pending: owner pushes, then CI check.
+- G10 pass, `G10.log`: CI run 38365432024 (commit a23ba6a) passed all 9 steps in 26m14s, exit 0.
 Open items: none raised.
 Commit: feat: liquidation keeper script with idempotency, concurrency safety, and Sepolia support (P3.2)
 
