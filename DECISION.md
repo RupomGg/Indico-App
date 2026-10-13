@@ -2870,7 +2870,7 @@ Gate (logs in `docs/gate-logs/P3.1/`, Forge 1.8.3):
 - G11 pass: IndicoLedger deployed on Base Sepolia at `0xa51D54BAe8431f4c6f0dd644D2fCeb498CE5eeF0`, verified on BaseScan, on-chain roles and USDC confirmed.
 - G12: this entry.
 - G13 pass, `G13.log`: grep for vm.assume and assumeNot in test/ returns nothing, exit 1.
-- G10 pending: owner pushes, then CI check.
+- G10 pass, `G10.log`: CI run 38344398363 (commit 6d3e993) passed all steps in 17m30s, exit 0.
 Open items: none raised.
 Commit: deploy: Base Sepolia deployment of IndicoLedger and deploy script with testnet EOA support (P3.1)
 
