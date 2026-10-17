@@ -95,7 +95,9 @@ contract ExecuteSepoliaLiveTest is Script {
         try ledger.registerAsset(DOC_HASH_1, 1, 10e6) {
             revert("FAIL: Duplicate docHash should have reverted!");
         } catch {
-            console.log("  [PASS] Corner Case A: Re-registering duplicate asset reverts (AssetAlreadyRegistered).");
+            console.log(
+                "  [PASS] Corner Case A: Re-registering duplicate asset reverts (AssetAlreadyRegistered)."
+            );
         }
 
         // Corner Case B: Registering asset type > 5 reverts
@@ -160,7 +162,9 @@ contract ExecuteSepoliaLiveTest is Script {
         try ledger.repay(loanId) {
             revert("FAIL: Non-borrower repay should have reverted!");
         } catch {
-            console.log("  [PASS] Corner Case D: Non-borrower attempting to repay reverts (NotBorrower).");
+            console.log(
+                "  [PASS] Corner Case D: Non-borrower attempting to repay reverts (NotBorrower)."
+            );
         }
 
         // -------------------------------------------------------------

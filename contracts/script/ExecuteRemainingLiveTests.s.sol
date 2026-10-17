@@ -25,7 +25,8 @@ contract ExecuteRemainingLiveTests is Script {
 
         address merchant = vm.addr(merchantPk);
         address user = vm.addr(userPk);
-        address admin = msg.sender == address(0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38) ? ADMIN : msg.sender;
+        address admin =
+            msg.sender == address(0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38) ? ADMIN : msg.sender;
 
         IndicoLedger ledger = IndicoLedger(LEDGER);
         IERC20 usdc = IERC20(USDC);
@@ -86,7 +87,9 @@ contract ExecuteRemainingLiveTests is Script {
         try ledger.extend(loan2) {
             revert("FAIL: Extension outside window should have reverted!");
         } catch {
-            console.log("  [PASS] Calling extend outside 30-day window reverts (ExtensionWindowNotOpen).");
+            console.log(
+                "  [PASS] Calling extend outside 30-day window reverts (ExtensionWindowNotOpen)."
+            );
         }
         // Restore user nonce before next broadcast
         vm.setNonceUnsafe(user, uNonce2);
@@ -127,8 +130,10 @@ contract ExecuteRemainingLiveTests is Script {
         console.log("\n--- Feature 4: Lost Wallet Migration (D-64) ---");
         // To preserve TestUser1 for ongoing backend and frontend operations, we test
         // the migration flow with dedicated temporary addresses.
-        address tempOld = vm.addr(0xbeef000000000000000000000000000000000000000000000000000000000001);
-        address tempNew = vm.addr(0xbeef000000000000000000000000000000000000000000000000000000000002);
+        address tempOld =
+            vm.addr(0xbeef000000000000000000000000000000000000000000000000000000000001);
+        address tempNew =
+            vm.addr(0xbeef000000000000000000000000000000000000000000000000000000000002);
         bytes32 tempRef = keccak256("temp-user-ref-migration-test");
 
         console.log("Temporary Old Wallet:   ", tempOld);

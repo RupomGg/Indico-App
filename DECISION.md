@@ -2936,7 +2936,7 @@ Commit: feat: backend core foundation, schema, auth, and profile modules (P4.1, 
 | O-003 | Re-create the lost tag: `git tag interface-v0.2.0` on current `main`, then push it, and tell the backend that v0.1.0 no longer exists | owner | Closed by C-063 |
 | O-004 | GitHub CLI not installed; gate line G10 needs it | owner | Closed by C-007 |
 | O-005 | Foundry was not on PATH on 2026-09-29 | owner | Closed by C-009 |
-| O-006 | Backend stack: NestJS container, or Next.js + Supabase + a committed worker. The backend owner decides before Level 4 | backend | |
+| O-006 | Backend stack: Fastify + TypeScript container (D-006). Chosen over NestJS for simpler type system and lower runtime overhead | backend | Closed by C-075 |
 | O-007 | Client: what defaulted collateral held by the pool is for. Until answered it is inert and a default is a straight USDC loss to depositors | owner, client | |
 | O-008 | Client: what merchants do with credit they receive. No redemption path is built until answered | owner, client | Closed by C-058 |
 | O-009 | Client: arbitration wording. Clause 5 makes a merchant bound after 72 hours of silence; the confirmed admin flow has only not sent / sent / signed and cannot record that | owner, client | |
