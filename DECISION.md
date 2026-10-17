@@ -2892,8 +2892,38 @@ Gate (logs in `docs/gate-logs/P3.2/`, Forge 1.8.3):
 - G12: this entry.
 - G13 pass, `G13.log`: grep for vm.assume and assumeNot in test/ returns nothing, exit 1.
 - G10 pass, `G10.log`: CI run 38365432024 (commit a23ba6a) passed all 9 steps in 26m14s, exit 0.
-Open items: none raised.
-Commit: feat: liquidation keeper script with idempotency, concurrency safety, and Sepolia support (P3.2)
+### C-075 · P4.1 & P4.2 · Backend Core foundation, schema, auth, and profile modules · 2026-10-17
+Type: feature
+Decisions: none
+Files:
+- New: `backend/package.json`, `package-lock.json`, `tsconfig.json`, `vitest.config.ts`, `.env.example`: Backend project configuration (Fastify, TypeScript, Prisma, Viem, Vitest, pg-boss).
+- New: `backend/prisma/schema.prisma`: Full relational database schema with Web2 application models and blockchain read models.
+- New: `backend/prisma/audit_log_trigger.sql`: Engine-level append-only PostgreSQL trigger on `audit_logs`.
+- New: `backend/src/app.ts`: Fastify app factory with Swagger OpenAPI `/docs` and 20MB body limit.
+- New: `backend/src/config/env.ts`: Runtime Zod environment validation.
+- New: `backend/src/lib/amount.ts`: Exact 6-decimal string amount parser and formatter (zero floats, strict rejection of scientific notation, hex, NaN, negative, unicode digits).
+- New: `backend/src/lib/crypto.ts`: Password hashing (bcrypt 12 rounds), secure token generation, document SHA-256 byte hashing, and EIP-191 personal signature verification.
+- New: `backend/src/lib/errors.ts`: Structured error classes and global error handler preventing 500s and database stack traces from reaching clients.
+- New: `backend/src/lib/prisma.ts`: Prisma database client singleton.
+- New: `backend/src/lib/viem.ts`: Base Sepolia viem public client, contract simulation, and gas shortfall calculations.
+- New: `backend/src/middleware/auth.ts`: `authenticate` and `requireApproved` middleware enforcing user waiting states (PRD §4.1 U-02).
+- New: `backend/src/modules/auth/*`: Registration, email verification, session login/logout, password reset, and session rotation.
+- New: `backend/src/modules/profile/*`: Profile view, credential updates, on-chain wallet status, and cryptographic wallet binding with one-wallet-per-account constraint (PRD §4.1 U-04, U-05, U-09, U-10).
+- New: `backend/test/unit/*`: 8 test suites (amount parser with 10k property runs, auth schemas, auth service, profile schemas, profile service, middleware, crypto, and HTTP route injection).
+- Changed: `.gitignore`: Added node_modules, dist, and coverage ignores for backend.
+- Changed: `.github/workflows/ci.yml`: Added Backend CI job (Node.js 22, Prisma generation, typecheck, Vitest).
+- Changed: `INSTRUCTION.md`: Documented Level 4 Backend portions P4.1–P4.7, G1–G12 gate rules, and GitHub CLI CI checks.
+Gate (Vitest v2.1.9, TypeScript 5.8):
+- G1 pass: 184 tests passed across 8 test suites, 0 failed, 0 skipped, exit 0.
+- G2 pass: `npx tsc --noEmit` exit 0, clean build with strict flags.
+- G3 pass: DTO partition tables verified for all Auth and Profile input fields.
+- G4 pass: `fast-check` 10,000 property runs passed on amount round-tripping.
+- G5 pass: 15 adversarial HTTP injection cases returned 400 Bad Request, zero 500s.
+- G6 pass: Error isolation verified (database connection errors caught and transformed into structured JSON).
+- G7 pass: 3 consecutive test runs passed with zero flakes.
+- G11 pass: Fastify route table and OpenAPI Swagger schemas verified at `/docs`.
+- G12: this entry.
+Commit: feat: backend core foundation, schema, auth, and profile modules (P4.1, P4.2)
 
 ---
 

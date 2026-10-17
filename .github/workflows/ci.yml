@@ -107,9 +107,36 @@ jobs:
           fi
 
       - name: 8. backend typecheck, lint, unit, integration, chain integration
-        if: false
-        run: echo "backend lands in phase 3"
+        run: echo "backend covered in backend job"
 
       - name: 9. reconciliation test
         if: false
         run: echo "reconciliation lands in phase 4"
+
+  backend:
+    name: Backend (TypeScript & Vitest)
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: "npm"
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Typecheck (tsc --noEmit)
+        run: npx tsc --noEmit
+
+      - name: Run test suite (100% pass)
+        run: npm run test
+

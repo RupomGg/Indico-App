@@ -4,3 +4,14 @@ prompts/
 
 # Local secrets (RPC URLs, keys) never reach the repository
 .env
+.env.*
+!.env.example
+
+# Node.js dependencies, build outputs, and coverage
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+coverage/
+**/coverage/
+

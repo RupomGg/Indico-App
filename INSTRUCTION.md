@@ -399,11 +399,65 @@ immediately.
 **P3.3 Mainnet** · only after every box in TS §5 is ticked, including the client's written
 acknowledgement that no audit was bought.
 
-### Level 4 and later: Backend
+### Level 4: Backend Core (Fastify, TypeScript Strict, Prisma, Viem, Vitest)
 
-Written once the backend stack is chosen (NestJS container, or Next.js + Supabase + worker).
-Until then `prompts/03-backend-core.md`, `04-indexer.md` and `05-ai-assistant.md` describe the
-work. The same rules and gate apply, with the backend's own commands in G1 to G8.
+Standard: The backend provides prepared calldata and gas estimates; Flutter never holds an ABI, never encodes calldata, and never decodes contract reverts. Every endpoint has defined outcomes for every shape of input. 500s, database stack traces, and raw reverts reaching clients are prohibited.
+
+**P4.1 (Step 1) Foundation, Schema, Exact Amount Parser & Viem Client**
+- Goal: Fastify app factory with Swagger `/docs`, PostgreSQL Prisma schema with read-models and append-only trigger, Zod environment validation, structured errors, Base Sepolia viem client, and exact 6-decimal string amount parser.
+- Files: `backend/src/app.ts`, `backend/src/config/env.ts`, `backend/src/lib/amount.ts`, `backend/src/lib/errors.ts`, `backend/src/lib/prisma.ts`, `backend/src/lib/viem.ts`, `backend/prisma/schema.prisma`, `backend/prisma/audit_log_trigger.sql`, `backend/test/unit/amount.test.ts`.
+- Gate: 10,000-run `fast-check` property test on amount round-tripping, partition table tests for input testing §6.4.
+
+**P4.2 (Step 2) Auth & Profile Modules**
+- Goal: User registration, email verification, session tokens, password reset, profile credentials, wallet binding with EIP-191 signature proof, wallet Base ETH balance, and contract state queries (`termsSigned`, `approvedUser`).
+- Files: `backend/src/middleware/auth.ts`, `backend/src/modules/auth/*`, `backend/src/modules/profile/*`, `backend/test/unit/auth.*`, `backend/test/unit/profile.*`, `backend/test/unit/crypto.test.ts`, `backend/test/unit/middleware.test.ts`, `backend/test/unit/routes.inject.test.ts`.
+- Gate: 184 tests passing, DTO boundary partitions, cryptographic signature verification, adversarial HTTP injection, 0 compiler errors.
+
+**P4.3 (Step 3) Terms & Asset Document Upload Modules**
+- Goal: Terms viewing (`GET /terms/current`) and calldata preparation (`POST /terms/prepare-sign`); presigned asset upload (`POST /assets/presigned-upload`), server-side SHA-256 byte recomputation and verification against client hash (`POST /assets/submit`), AES-256 encryption at rest, duplicate hash rejection (global uniqueness), asset listing and detail (`GET /assets`, `GET /assets/:id`).
+- PRD refs: §4.1 U-06 to U-08, U-12; §4.2 A-01 to A-07.
+- Gate: File bytes tampered by 1 byte rejected; double registration of same hash rejected with 409 Conflict; files > 20MB rejected; AES-256 ciphertext verified on disk.
+
+**P4.4 (Step 4) Loans & Credit Spending Calldata Preparation**
+- Goal: Calldata preparation and pre-flight simulation for loans (`POST /loans/prepare-borrow`, `POST /loans/prepare-repay`, `POST /loans/prepare-extend`) and merchant credit spending (`POST /credit/prepare-spend`).
+- PRD refs: §4.1 U-11; §4.3 L-01 to L-11; §4.4 S-01 to S-05.
+- Gate: Calldata decodes back to exact ABI arguments; pre-flight simulation detects contract reverts and returns human-readable custom error; Base ETH shortfall calculated and returned without opening wallet prompt.
+
+**P4.5 (Step 5) Merchants & Read-Model History**
+- Goal: Read-only approved merchants with services and price lists (`GET /merchants`); user balance, credit history, active/repaid/defaulted loans from read-model tables only (Rule 9).
+- PRD refs: §4.4 S-01; §4.7.
+- Gate: Application logic never writes to read-model tables (`CreditBalance`, `Loan`, `PoolDeposit`); empty states and multi-loan pagination tested.
+
+**P4.6 (Step 6) Admin Operations & Audit Logs**
+- Goal: Admin authentication; user approval/rejection (`POST /admin/users/:id/approve`); merchant and service CRUD; merchant agreement upload and signing tracking; pool dashboard reads; immutable audit logging.
+- PRD refs: §4.6 AD-01 to AD-21; §4.7.
+- Gate: Non-admin session returns 403 Forbidden across every admin endpoint; audit log append-only trigger prevents updates/deletions.
+
+**P4.7 (Step 7) Generic No-500 Adversarial Sweep & Integration**
+- Goal: Generic test-time crawler reading the route table and generating 1,000 structurally random adversarial payloads per route using `fast-check`.
+- Gate: Zero 500s across all routes; 100% structured 4xx responses; zero leaked database or Prisma stack traces.
+
+---
+
+### Backend Gate & CI Protocol (G1 to G12)
+
+| # | Check | Command | Pass condition |
+|---|---|---|---|
+| G1 | All tests pass | `npm run test` | 0 failed, 0 skipped, exit 0 |
+| G2 | Strict Typecheck | `npx tsc --noEmit` | Clean build, 0 warnings/errors |
+| G3 | DTO partition tables | Table-driven tests per field | All boundary rows pass |
+| G4 | Amount properties | `fast-check` (10,000 runs) | `parse(format(x)) === x`, zero floats |
+| G5 | No-500 injection sweep | Adversarial payloads via `app.inject` | All return 4xx, never 500 |
+| G6 | Error isolation | Trigger DB/network faults | Structured JSON only, zero stack traces |
+| G7 | Test stability | 3 consecutive test runs | Same result every time (no flakes) |
+| G8 | Calldata validation | Decode prepared hex against contract ABI | Exact match on function and arguments |
+| G9 | Deliberate-bug checks | Mutate hash, signature, or token checks | Tests catch every mutation |
+| G10 | GitHub Actions CI green | `gh run list --branch main --limit 1` then `gh run watch <id> --exit-status` | CI green on GitHub |
+| G11 | Manual check | Inspect Swagger UI `/docs` and endpoints | Verified by owner |
+| G12 | Logged in DECISION.md | Record all changed files, reasons, results | Documented before push |
+
+**Push Rule:** The engineer never pushes autonomously. At the end of each portion, the engineer presents the gate results and commit command. The owner commits and pushes. Then GitHub CLI (`gh run watch`) verifies CI is green on GitHub Actions before starting the next portion.
+
 
 ---
 

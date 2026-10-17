@@ -1,0 +1,225 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// -------------------------------------------------------------
+// Core Application Models (Web2 Platform State)
+// -------------------------------------------------------------
+
+model User {
+  id                     String          @id @default(uuid())
+  email                  String          @unique
+  passwordHash           String          @map("password_hash")
+  isEmailVerified        Boolean         @default(false) @map("is_email_verified")
+  emailVerifyToken       String?         @map("email_verify_token")
+  emailVerifyExpiresAt   DateTime?       @map("email_verify_expires_at")
+  passwordResetToken     String?         @map("password_reset_token")
+  passwordResetExpiresAt DateTime?       @map("password_reset_expires_at")
+  isApproved             Boolean         @default(false) @map("is_approved")
+  createdAt              DateTime        @default(now()) @map("created_at")
+  updatedAt              DateTime        @updatedAt @map("updated_at")
+
+  sessions               Session[]
+  walletBinding          WalletBinding?
+  assets                 Asset[]
+
+  @@map("users")
+}
+
+model Session {
+  id         String    @id @default(uuid())
+  userId     String    @map("user_id")
+  tokenHash  String    @unique @map("token_hash")
+  expiresAt  DateTime  @map("expires_at")
+  revokedAt  DateTime? @map("revoked_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+model WalletBinding {
+  id            String    @id @default(uuid())
+  userId        String    @unique @map("user_id")
+  walletAddress String    @unique @map("wallet_address")
+  accountRef    String    @unique @map("account_ref")
+  boundAt       DateTime  @default(now()) @map("bound_at")
+
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([walletAddress])
+  @@map("wallet_bindings")
+}
+
+model Asset {
+  id              String   @id @default(uuid())
+  userId          String   @map("user_id")
+  docHash         String   @unique @map("doc_hash")
+  assetType       Int      @map("asset_type")
+  declaredValue   String   @map("declared_value")
+  referenceNumber String   @map("reference_number")
+  issueDate       String   @map("issue_date")
+  issuingParty    String   @map("issuing_party")
+  description     String   @map("description")
+  storageKey      String   @map("storage_key")
+  status          String   @default("PENDING") @map("status")
+  txHash          String?  @map("tx_hash")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([docHash])
+  @@map("assets")
+}
+
+model Merchant {
+  id                  String              @id @default(uuid())
+  name                String              @map("name")
+  contactEmail        String              @map("contact_email")
+  walletAddress       String              @unique @map("wallet_address")
+  isApproved          Boolean             @default(false) @map("is_approved")
+  agreementStatus     String              @default("NOT_SENT") @map("agreement_status")
+  agreementSentAt     DateTime?           @map("agreement_sent_at")
+  agreementSignedAt   DateTime?           @map("agreement_signed_at")
+  agreementStorageKey String?             @map("agreement_storage_key")
+  createdAt           DateTime            @default(now()) @map("created_at")
+  updatedAt           DateTime            @updatedAt @map("updated_at")
+
+  services            MerchantService[]
+  agreements          MerchantAgreement[]
+
+  @@index([walletAddress])
+  @@map("merchants")
+}
+
+model MerchantService {
+  id          String   @id @default(uuid())
+  merchantId  String   @map("merchant_id")
+  name        String   @map("name")
+  priceUnits  String   @map("price_units")
+  description String   @map("description")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  merchant    Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  @@index([merchantId])
+  @@map("merchant_services")
+}
+
+model MerchantAgreement {
+  id           String    @id @default(uuid())
+  merchantId   String    @map("merchant_id")
+  documentType String    @default("ARBITRATION_AGREEMENT") @map("document_type")
+  storageKey   String    @map("storage_key")
+  status       String    @map("status")
+  sentAt       DateTime  @default(now()) @map("sent_at")
+  signedAt     DateTime? @map("signed_at")
+
+  merchant     Merchant  @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  @@index([merchantId])
+  @@map("merchant_agreements")
+}
+
+model AdminUser {
+  id           String   @id @default(uuid())
+  email        String   @unique @map("email")
+  passwordHash String   @map("password_hash")
+  role         String   @default("ADMIN") @map("role")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@map("admin_users")
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  actorType  String   @map("actor_type")
+  actorId    String?  @map("actor_id")
+  action     String   @map("action")
+  resource   String   @map("resource")
+  resourceId String?  @map("resource_id")
+  payload    Json?    @map("payload")
+  ipAddress  String?  @map("ip_address")
+  userAgent  String?  @map("user_agent")
+  timestamp  DateTime @default(now()) @map("timestamp")
+
+  @@index([actorId])
+  @@index([action])
+  @@index([timestamp])
+  @@map("audit_logs")
+}
+
+// -------------------------------------------------------------
+// Read-Model Tables (Populated strictly by Chain Events)
+// Rule 9: The contract is the source of truth for credit/loans.
+// -------------------------------------------------------------
+
+model CreditBalance {
+  walletAddress      String   @id @map("wallet_address")
+  creditUnits        String   @default("0") @map("credit_units")
+  lockedCreditUnits  String   @default("0") @map("locked_credit_units")
+  lastUpdatedBlock   BigInt   @default(0) @map("last_updated_block")
+  updatedAt          DateTime @default(now()) @updatedAt @map("updated_at")
+
+  @@map("read_credit_balances")
+}
+
+model Loan {
+  loanId             BigInt   @id @map("loan_id")
+  borrower           String   @map("borrower")
+  principalUnits     String   @map("principal_units")
+  collateralUnits    String   @map("collateral_units")
+  dueDate            BigInt   @map("due_date")
+  extensionCount     Int      @default(0) @map("extension_count")
+  status             String   @map("status")
+  openedAtBlock      BigInt   @map("opened_at_block")
+  repaidAtBlock      BigInt?  @map("repaid_at_block")
+  defaultedAtBlock   BigInt?  @map("defaulted_at_block")
+  updatedAt          DateTime @default(now()) @updatedAt @map("updated_at")
+
+  @@index([borrower])
+  @@index([status])
+  @@map("read_loans")
+}
+
+model PoolDeposit {
+  merchant           String   @id @map("merchant")
+  shares             String   @default("0") @map("shares")
+  lastUpdatedBlock   BigInt   @default(0) @map("last_updated_block")
+  updatedAt          DateTime @default(now()) @updatedAt @map("updated_at")
+
+  @@map("read_pool_deposits")
+}
+
+model ChainEvent {
+  id             String   @id @default(uuid())
+  txHash         String   @map("tx_hash")
+  logIndex       Int      @map("log_index")
+  eventName      String   @map("event_name")
+  blockNumber    BigInt   @map("block_number")
+  blockTimestamp BigInt   @map("block_timestamp")
+  data           Json     @map("data")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@unique([txHash, logIndex])
+  @@index([eventName])
+  @@index([blockNumber])
+  @@map("chain_events")
+}
+
+model IndexerCheckpoint {
+  id                 String   @id @default("singleton")
+  lastProcessedBlock BigInt   @default(0) @map("last_processed_block")
+  updatedAt          DateTime @default(now()) @updatedAt @map("updated_at")
+
+  @@map("indexer_checkpoints")
+}
