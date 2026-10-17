@@ -35,9 +35,27 @@ contract ExecuteSepoliaLiveTest is Script {
         console.log("Test User:       ", user);
         console.log("Active termsHash:", vm.toString(terms));
 
-        // -------------------------------------------------------------
-        // PHASE 1: Merchant Terms & Liquidity Deposit
-        // -------------------------------------------------------------
+        _phase1Deposit(ledger, usdc, merchant, merchantPk, terms);
+        _phase2Mint(ledger, user, userPk, terms);
+        _phase3CornerCases(ledger, merchant);
+        _phase4Spend(ledger, user, merchant, userPk);
+        uint256 loanId = _phase5Borrow(ledger, user, userPk);
+        _phase6RepayProtection(ledger, merchant, loanId);
+        _phase7Repay(ledger, usdc, user, userPk, loanId);
+        _phase8Keeper(ledger);
+
+        console.log("\n=================================================");
+        console.log("=== ALL LIVE SEPOLIA TESTS & CORNER CASES PASSED ===");
+        console.log("=================================================");
+    }
+
+    function _phase1Deposit(
+        IndicoLedger ledger,
+        IERC20 usdc,
+        address merchant,
+        uint256 merchantPk,
+        bytes32 terms
+    ) internal {
         console.log("\n--- Phase 1: Merchant Liquidity Deposit ---");
         vm.startBroadcast(merchantPk);
 
@@ -63,10 +81,11 @@ contract ExecuteSepoliaLiveTest is Script {
         console.log("  -> Merchant Shares: ", merchantShares);
         require(poolAfterDeposit >= 10e6, "Pool deposit failed");
         require(merchantShares > 0, "No shares minted");
+    }
 
-        // -------------------------------------------------------------
-        // PHASE 2: User Terms & Asset Registration (Credit Minting)
-        // -------------------------------------------------------------
+    function _phase2Mint(IndicoLedger ledger, address user, uint256 userPk, bytes32 terms)
+        internal
+    {
         console.log("\n--- Phase 2: User Terms & Asset Registration ---");
         vm.startBroadcast(userPk);
 
@@ -85,13 +104,11 @@ contract ExecuteSepoliaLiveTest is Script {
         uint256 userCredit = ledger.credit(user);
         console.log("  -> User Credit:     ", userCredit / 1e6, "CREDIT");
         require(userCredit >= 10e6, "Credit not minted");
+    }
 
-        // -------------------------------------------------------------
-        // PHASE 3: Corner Cases (Pre-Borrow Verifications)
-        // -------------------------------------------------------------
+    function _phase3CornerCases(IndicoLedger ledger, address merchant) internal {
         console.log("\n--- Phase 3: Corner Cases & Invariants ---");
 
-        // Corner Case A: Re-registering duplicate docHash reverts
         try ledger.registerAsset(DOC_HASH_1, 1, 10e6) {
             revert("FAIL: Duplicate docHash should have reverted!");
         } catch {
@@ -100,23 +117,22 @@ contract ExecuteSepoliaLiveTest is Script {
             );
         }
 
-        // Corner Case B: Registering asset type > 5 reverts
         try ledger.registerAsset(DOC_HASH_INVALID, 6, 10e6) {
             revert("FAIL: Invalid asset type 6 should have reverted!");
         } catch {
             console.log("  [PASS] Corner Case B: Asset type 6 reverts (InvalidAssetType).");
         }
 
-        // Corner Case C: Overspending credit reverts
         try ledger.spend(merchant, 500e6) {
             revert("FAIL: Overspending credit should have reverted!");
         } catch {
             console.log("  [PASS] Corner Case C: Overspending credit reverts (InsufficientCredit).");
         }
+    }
 
-        // -------------------------------------------------------------
-        // PHASE 4: Spending Credit at Merchant
-        // -------------------------------------------------------------
+    function _phase4Spend(IndicoLedger ledger, address user, address merchant, uint256 userPk)
+        internal
+    {
         console.log("\n--- Phase 4: Credit Spending at Merchant ---");
         vm.startBroadcast(userPk);
 
@@ -131,16 +147,18 @@ contract ExecuteSepoliaLiveTest is Script {
         console.log("  -> Merchant Credit: ", merchantCreditAfterSpend / 1e6, "CREDIT");
         require(userCreditAfterSpend == 8e6, "User credit balance mismatch");
         require(merchantCreditAfterSpend == 2e6, "Merchant credit balance mismatch");
+    }
 
-        // -------------------------------------------------------------
-        // PHASE 5: Borrowing USDC (requestLoan)
-        // -------------------------------------------------------------
+    function _phase5Borrow(IndicoLedger ledger, address user, uint256 userPk)
+        internal
+        returns (uint256 loanId)
+    {
         console.log("\n--- Phase 5: Requesting Loan ---");
         vm.startBroadcast(userPk);
 
-        uint256 borrowAmt = 4e6; // 4.00 USDC
+        uint256 borrowAmt = 4e6;
         console.log("[5.1] Requesting 4.00 USDC loan (locks 5.00 credit at 1.25x LTV)...");
-        uint256 loanId = ledger.requestLoan(borrowAmt);
+        loanId = ledger.requestLoan(borrowAmt);
 
         vm.stopBroadcast();
 
@@ -153,10 +171,11 @@ contract ExecuteSepoliaLiveTest is Script {
         console.log("  -> Status (0=Active):", status);
         require(status == 0, "Loan not active");
         require(ledger.lockedCredit(user) == 5e6, "Locked credit mismatch");
+    }
 
-        // -------------------------------------------------------------
-        // PHASE 6: Corner Case - Repayment by Non-Borrower Reverts
-        // -------------------------------------------------------------
+    function _phase6RepayProtection(IndicoLedger ledger, address merchant, uint256 loanId)
+        internal
+    {
         console.log("\n--- Phase 6: Corner Cases (Repayment Protection) ---");
         vm.prank(merchant);
         try ledger.repay(loanId) {
@@ -166,13 +185,19 @@ contract ExecuteSepoliaLiveTest is Script {
                 "  [PASS] Corner Case D: Non-borrower attempting to repay reverts (NotBorrower)."
             );
         }
+    }
 
-        // -------------------------------------------------------------
-        // PHASE 7: Loan Repayment by Borrower
-        // -------------------------------------------------------------
+    function _phase7Repay(
+        IndicoLedger ledger,
+        IERC20 usdc,
+        address user,
+        uint256 userPk,
+        uint256 loanId
+    ) internal {
         console.log("\n--- Phase 7: Loan Repayment & Collateral Release ---");
         vm.startBroadcast(userPk);
 
+        uint256 borrowAmt = 4e6;
         console.log("[7.1] User approving 4.00 USDC to IndicoLedger...");
         usdc.approve(address(ledger), borrowAmt);
 
@@ -190,25 +215,19 @@ contract ExecuteSepoliaLiveTest is Script {
         require(statusAfterRepay == 1, "Loan not marked Repaid");
         require(lockedAfterRepay == 0, "Collateral not released");
 
-        // Corner Case E: Re-repaying already repaid loan reverts
         try ledger.repay(loanId) {
             revert("FAIL: Re-repaying should have reverted!");
         } catch {
             console.log("  [PASS] Corner Case E: Re-repaying repaid loan reverts (LoanNotActive).");
         }
+    }
 
-        // -------------------------------------------------------------
-        // PHASE 8: Keeper Script Verification
-        // -------------------------------------------------------------
+    function _phase8Keeper(IndicoLedger ledger) internal {
         console.log("\n--- Phase 8: Liquidation Keeper Inspection ---");
         LiquidateKeeper keeper = new LiquidateKeeper();
         uint256 overdueCount = keeper.findOverdueLoans(ledger).length;
         console.log("  -> Overdue loans found by keeper:", overdueCount);
         require(overdueCount == 0, "Keeper found overdue loans unexpectedly");
         console.log("  [PASS] Keeper cleanly confirmed 0 overdue loans.");
-
-        console.log("\n=================================================");
-        console.log("=== ALL LIVE SEPOLIA TESTS & CORNER CASES PASSED ===");
-        console.log("=================================================");
     }
 }

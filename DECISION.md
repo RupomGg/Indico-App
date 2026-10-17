@@ -2925,6 +2925,17 @@ Gate (Vitest v2.1.9, TypeScript 5.8):
 - G12: this entry.
 Commit: feat: backend core foundation, schema, auth, and profile modules (P4.1, P4.2)
 
+### C-076 · CI · Fix forge coverage stack-too-deep in live test scripts · 2026-10-17
+Type: chore
+Decisions: none
+Files:
+- Changed: `contracts/script/ExecuteRemainingLiveTests.s.sol`: Decomposed monolithic `run()` function into internal helper methods (`_testBorrowLimits`, `_testExtensionWindow`, etc.) to prevent EVM stack-too-deep errors when compiled without `via_ir` during `forge coverage`.
+- Changed: `contracts/script/ExecuteSepoliaLiveTest.s.sol`: Decomposed monolithic `run()` function into internal phase helper methods (`_phase1Deposit`, `_phase2Mint`, etc.) and formatted with `forge fmt`.
+Gate:
+- G1 pass: `forge fmt --check` exit 0, clean formatting.
+- G2 pass: `forge coverage --report lcov --no-match-coverage "(test|script)/"` compiles without `via_ir` cleanly with 0 stack errors, exit 0.
+Commit: chore: refactor live test scripts to fix coverage stack-too-deep and format
+
 ---
 
 ## Open items
