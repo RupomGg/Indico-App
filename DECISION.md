@@ -2934,7 +2934,42 @@ Files:
 Gate:
 - G1 pass: `forge fmt --check` exit 0, clean formatting.
 - G2 pass: `forge coverage --report lcov --no-match-coverage "(test|script)/"` compiles without `via_ir` cleanly with 0 stack errors, exit 0.
+- G10 pass: GitHub Actions CI run 39041955894 passed all jobs (Backend in 34s, Contracts in 31m25s), exit 0.
 Commit: chore: refactor live test scripts to fix coverage stack-too-deep and format
+
+### C-077 · P4.3 · Terms & Asset Document Upload Modules · 2026-10-18
+Type: feature
+Decisions: none
+Files:
+- New: `backend/src/lib/storage.ts`: Encrypted storage service supporting AES-256-GCM encryption/decryption at rest and presigned upload session management.
+- New: `backend/src/modules/terms/terms.schemas.ts`: Zod request/response validation schemas for Terms endpoints.
+- New: `backend/src/modules/terms/terms.service.ts`: Terms text query, termsSigned on-chain status, and calldata preparation for `signTerms(bytes32)` with pre-flight simulation and gas shortfall calculation.
+- New: `backend/src/modules/terms/terms.routes.ts`: `GET /terms/current`, `GET /terms/status`, and `POST /terms/prepare-sign`.
+- New: `backend/src/modules/assets/assets.schemas.ts`: Boundary schemas for asset types (1..5), 6-decimal USDC declared values, docHash 66-character 0x-hex strings, and upload validation.
+- New: `backend/src/modules/assets/assets.service.ts`: Presigned upload session creation, server-side SHA-256 byte recomputation, 1-byte tamper detection, global duplicate hash rejection (DB and on-chain), AES-256-GCM encryption at rest, calldata preparation for `registerAsset(bytes32,uint8,uint256)`, and asset listing/detail.
+- New: `backend/src/modules/assets/assets.routes.ts`: `POST /assets/presigned-upload`, `POST /assets/upload/:uploadId`, `POST /assets/submit`, `POST /assets/:id/prepare-register`, `GET /assets`, `GET /assets/:id`, `GET /assets/:id/document`.
+- New: `backend/test/unit/terms.test.ts`: 9 unit tests for terms viewing, on-chain signature status, and calldata preparation.
+- New: `backend/test/unit/assets.test.ts`: 15 unit tests covering DTO boundary partitions, upload verification, 1-byte file tamper rejection, duplicate hash conflicts, and calldata preparation.
+- Changed: `backend/src/app.ts`: Registered `@fastify/multipart`, `termsRoutes`, and `assetsRoutes`.
+- Changed: `backend/src/lib/crypto.ts`: Added `encryptAes256Gcm` and `decryptAes256Gcm`.
+- Changed: `backend/src/lib/errors.ts`: Added `PayloadTooLargeError` (413).
+- Changed: `backend/src/lib/viem.ts`: Added `assetRegistered` to ABI and exported `simulatePreparedTransaction` and `calculateGasShortfall`.
+- Changed: `backend/src/lib/amount.ts`: Exported `parseAmount` and `formatAmount` aliases.
+- Changed: `backend/test/unit/crypto.test.ts`: Added 5 unit tests for AES-256-GCM encryption, decryption, IV randomness, and auth tag tamper rejection.
+- Changed: `backend/test/unit/routes.inject.test.ts`: Added 6 route injection tests for Terms and Assets endpoints.
+Gate (Vitest v2.1.9, TypeScript 5.8):
+- G1 pass: 219 tests passed across 10 test suites, 0 failed, 0 skipped, exit 0.
+- G2 pass: `npx tsc --noEmit` exit 0, clean build with strict flags (0 errors, 0 warnings).
+- G3 pass: DTO partition tables verified for all assetType (1..5 valid, 0 and >5 rejected) and declaredValueUsdc boundary values.
+- G4 pass: `fast-check` 10,000 property runs passed on amount round-tripping.
+- G5 pass: Adversarial route injection sweep returned structured 4xx responses, zero 500s.
+- G6 pass: Error isolation verified for database, RPC, and storage errors.
+- G7 pass: 3 consecutive test runs passed with 219/219 tests and zero flakes.
+- G8 pass: Prepared calldata for `signTerms` and `registerAsset` decodes back to exact ABI arguments.
+- G9 pass: Deliberate-bug checks: 1-byte file tampering detected and rejected with 400 Bad Request; double docHash rejected with 409 Conflict.
+- G11 pass: Fastify route table and OpenAPI Swagger schemas verified at `/docs`.
+- G12: this entry.
+Commit: feat: terms and asset document upload modules with aes-256 encryption at rest (P4.3)
 
 ---
 
