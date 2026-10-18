@@ -71,3 +71,6 @@ export function formatUnitsToAmount(units: bigint): string {
   const fracStr = fracPart.toString().padStart(DECIMALS, "0");
   return `${intPart.toString()}.${fracStr}`;
 }
+
+export const parseAmount = parseAmountToUnits;
+export const formatAmount = formatUnitsToAmount;

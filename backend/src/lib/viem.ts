@@ -41,6 +41,7 @@ export const INDICO_LEDGER_ABI = parseAbi([
   "function termsSigned(address user) external view returns (bool)",
   "function approvedUser(address user) external view returns (bool)",
   "function approvedMerchant(address merchant) external view returns (bool)",
+  "function assetRegistered(bytes32 docHash) external view returns (bool)",
 
   // Custom Errors
   "error ZeroAddress()",
@@ -170,3 +171,87 @@ export async function prepareTransaction(params: {
     gasShortfallEth: shortfallWei > 0n ? formatEther(shortfallWei) : null,
   };
 }
+
+export interface GasShortfallResult {
+  estimatedGasUnits: string;
+  gasCostEth: string;
+  gasCostUsd: string;
+  userEthBalance: string;
+  ethShortfall: string;
+  ethShortfallUnits: string;
+  canAfford: boolean;
+}
+
+/**
+ * Simulates transaction execution via eth_call to detect reverts before broadcasting.
+ */
+export async function simulatePreparedTransaction(params: {
+  to: Address;
+  data: Hex;
+  from?: Address;
+  value?: bigint;
+}): Promise<void> {
+  const { to, data, from, value = 0n } = params;
+  try {
+    await publicClient.call({
+      account: from,
+      to,
+      data,
+      value,
+    });
+  } catch (err: any) {
+    let decodedReason = "Transaction would revert on-chain";
+    if (err.data) {
+      try {
+        const decoded = decodeErrorResult({
+          abi: INDICO_LEDGER_ABI,
+          data: err.data,
+        });
+        decodedReason = `Contract error: ${decoded.errorName}`;
+      } catch {
+        // Fallback
+      }
+    }
+    throw new Error(decodedReason);
+  }
+}
+
+/**
+ * Calculates gas fees and checks whether the user has sufficient Base ETH balance.
+ */
+export async function calculateGasShortfall(
+  from: Address,
+  tx: { to: Address; data: Hex; value?: bigint }
+): Promise<GasShortfallResult> {
+  const { to, data, value = 0n } = tx;
+  const [estimatedGas, gasPrice, userBalance] = await Promise.all([
+    publicClient
+      .estimateGas({
+        account: from,
+        to,
+        data,
+        value,
+      })
+      .catch(() => 100_000n),
+    publicClient.getGasPrice().catch(() => 1_000_000_000n),
+    publicClient.getBalance({ address: from }).catch(() => 0n),
+  ]);
+
+  const gasLimit = (estimatedGas * 120n) / 100n;
+  const totalCostWei = gasLimit * gasPrice + value;
+  const shortfallWei = userBalance < totalCostWei ? totalCostWei - userBalance : 0n;
+
+  const ethCostFloat = Number(formatEther(totalCostWei));
+  const gasCostUsd = (ethCostFloat * 2500).toFixed(4);
+
+  return {
+    estimatedGasUnits: gasLimit.toString(),
+    gasCostEth: formatEther(totalCostWei),
+    gasCostUsd: `$${gasCostUsd}`,
+    userEthBalance: formatEther(userBalance),
+    ethShortfall: formatEther(shortfallWei),
+    ethShortfallUnits: shortfallWei.toString(),
+    canAfford: shortfallWei === 0n,
+  };
+}
+

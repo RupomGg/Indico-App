@@ -1,6 +1,7 @@
 import fastify, { FastifyInstance } from "fastify";
 import cors from "@fastify/cors";
 import sensible from "@fastify/sensible";
+import multipart from "@fastify/multipart";
 import swagger from "@fastify/swagger";
 import swaggerUi from "@fastify/swagger-ui";
 import {
@@ -12,6 +13,8 @@ import {
 import { globalErrorHandler } from "./lib/errors.js";
 import { authRoutes } from "./modules/auth/auth.routes.js";
 import { profileRoutes } from "./modules/profile/profile.routes.js";
+import { termsRoutes } from "./modules/terms/terms.routes.js";
+import { assetsRoutes } from "./modules/assets/assets.routes.js";
 
 export function buildApp(): FastifyInstance {
   const app = fastify({
@@ -31,6 +34,14 @@ export function buildApp(): FastifyInstance {
   });
 
   app.register(sensible);
+
+  // Multipart support for file uploads (max 20 MB, PRD §4.2 A-01)
+  app.register(multipart, {
+    limits: {
+      fileSize: 20 * 1024 * 1024,
+      files: 1,
+    },
+  });
 
   // OpenAPI / Swagger Documentation Generator
   app.register(swagger, {
@@ -75,6 +86,8 @@ export function buildApp(): FastifyInstance {
   // API Routes
   app.register(authRoutes, { prefix: "/api/v1/auth" });
   app.register(profileRoutes, { prefix: "/api/v1/profile" });
+  app.register(termsRoutes, { prefix: "/api/v1/terms" });
+  app.register(assetsRoutes, { prefix: "/api/v1/assets" });
 
   // Global Error Handler (PRD §Input Testing requirement)
   app.setErrorHandler(globalErrorHandler);

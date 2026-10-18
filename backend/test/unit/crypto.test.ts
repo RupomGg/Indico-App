@@ -7,6 +7,8 @@ import {
   hashToken,
   computeFileSha256,
   verifyWalletSignature,
+  encryptAes256Gcm,
+  decryptAes256Gcm,
 } from "../../src/lib/crypto.js";
 
 describe("Cryptographic Utilities & Corner Cases", () => {
@@ -164,6 +166,56 @@ describe("Cryptographic Utilities & Corner Cases", () => {
         ("0x" + "00".repeat(65)) as `0x${string}`
       );
       expect(isValid).toBe(false);
+    });
+  });
+
+  describe("AES-256-GCM Encryption & Decryption at Rest (PRD §4.2 A-06, INSTRUCTION P4.3)", () => {
+    const testKey = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+    it("encrypts plaintext and decrypts back to exact byte stream", () => {
+      const plaintext = Buffer.from("CONFIDENTIAL_INDICO_ASSET_DOCUMENT_2026_PDF_BYTES");
+      const encrypted = encryptAes256Gcm(plaintext, testKey);
+
+      expect(encrypted).not.toEqual(plaintext);
+      expect(encrypted.length).toBeGreaterThan(plaintext.length);
+
+      const decrypted = decryptAes256Gcm(encrypted, testKey);
+      expect(decrypted).toEqual(plaintext);
+      expect(decrypted.toString("utf-8")).toBe("CONFIDENTIAL_INDICO_ASSET_DOCUMENT_2026_PDF_BYTES");
+    });
+
+    it("produces distinct ciphertexts for identical plaintext due to random IV", () => {
+      const plaintext = Buffer.from("SAME_PLAINTEXT_DIFFERENT_IV");
+      const enc1 = encryptAes256Gcm(plaintext, testKey);
+      const enc2 = encryptAes256Gcm(plaintext, testKey);
+
+      expect(enc1).not.toEqual(enc2);
+      expect(decryptAes256Gcm(enc1, testKey)).toEqual(plaintext);
+      expect(decryptAes256Gcm(enc2, testKey)).toEqual(plaintext);
+    });
+
+    it("throws error when ciphertext is tampered by 1 byte (Authentication Tag Verification)", () => {
+      const plaintext = Buffer.from("UNTOUCHED_SECRET_ASSET_METADATA");
+      const encrypted = encryptAes256Gcm(plaintext, testKey);
+
+      // Tamper 1 byte in the ciphertext portion
+      const tampered = Buffer.from(encrypted);
+      tampered[tampered.length - 1] ^= 0x01; // flip 1 bit
+
+      expect(() => decryptAes256Gcm(tampered, testKey)).toThrow();
+    });
+
+    it("throws error when attempting to decrypt with incorrect key", () => {
+      const plaintext = Buffer.from("SECRET_DOCUMENT");
+      const wrongKey = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210";
+      const encrypted = encryptAes256Gcm(plaintext, testKey);
+
+      expect(() => decryptAes256Gcm(encrypted, wrongKey)).toThrow();
+    });
+
+    it("throws error when encrypted buffer is too short to contain IV and Tag", () => {
+      const shortBuffer = Buffer.from("too-short");
+      expect(() => decryptAes256Gcm(shortBuffer, testKey)).toThrow(/too short/);
     });
   });
 });

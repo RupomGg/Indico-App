@@ -150,4 +150,86 @@ describe("HTTP Route Adversarial & Corner-Case Injection (PRD §Input Testing §
       expect([404, 405]).toContain(response.statusCode);
     });
   });
+
+  describe("Terms & Assets Route Injection & Security (PRD §4.1, §4.2)", () => {
+    it("GET /api/v1/terms/current returns 200 OK with terms text and termsHash (Public)", async () => {
+      const response = await app.inject({
+        method: "GET",
+        url: "/api/v1/terms/current",
+      });
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.body);
+      expect(body.version).toBe("1.0.0");
+      expect(body.termsHash).toMatch(/^0x[0-9a-fA-F]{64}$/);
+      expect(body.content).toContain("Indico");
+    });
+
+    it("GET /api/v1/terms/status without auth header returns 401 Unauthorized", async () => {
+      const response = await app.inject({
+        method: "GET",
+        url: "/api/v1/terms/status",
+      });
+      expect(response.statusCode).toBe(401);
+      const body = JSON.parse(response.body);
+      expect(body.success).toBe(false);
+      expect(body.error.code).toBe("UNAUTHORIZED");
+    });
+
+    it("POST /api/v1/terms/prepare-sign without auth header returns 401 Unauthorized", async () => {
+      const response = await app.inject({
+        method: "POST",
+        url: "/api/v1/terms/prepare-sign",
+      });
+      expect(response.statusCode).toBe(401);
+      const body = JSON.parse(response.body);
+      expect(body.success).toBe(false);
+      expect(body.error.code).toBe("UNAUTHORIZED");
+    });
+
+    it("POST /api/v1/assets/presigned-upload without auth header returns 401 Unauthorized", async () => {
+      const response = await app.inject({
+        method: "POST",
+        url: "/api/v1/assets/presigned-upload",
+        payload: {
+          fileName: "doc.pdf",
+          fileSizeBytes: 1000,
+          mimeType: "application/pdf",
+        },
+      });
+      expect(response.statusCode).toBe(401);
+      const body = JSON.parse(response.body);
+      expect(body.success).toBe(false);
+      expect(body.error.code).toBe("UNAUTHORIZED");
+    });
+
+    it("POST /api/v1/assets/submit without auth header returns 401 Unauthorized", async () => {
+      const response = await app.inject({
+        method: "POST",
+        url: "/api/v1/assets/submit",
+        payload: {
+          uploadId: "mock-upload",
+          docHash: "0x" + "a".repeat(64),
+          assetType: 1,
+          declaredValueUsdc: "1000.000000",
+          referenceNumber: "REF-1",
+          issueDate: "2026-10-18",
+          issuingParty: "Party",
+          description: "Desc",
+        },
+      });
+      expect(response.statusCode).toBe(401);
+      const body = JSON.parse(response.body);
+      expect(body.success).toBe(false);
+      expect(body.error.code).toBe("UNAUTHORIZED");
+    });
+
+    it("GET /api/v1/assets without auth header returns 401 Unauthorized", async () => {
+      const response = await app.inject({
+        method: "GET",
+        url: "/api/v1/assets",
+      });
+      expect(response.statusCode).toBe(401);
+    });
+  });
 });
+

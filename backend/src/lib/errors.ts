@@ -76,6 +76,12 @@ export class RateLimitExceededError extends AppError {
   }
 }
 
+export class PayloadTooLargeError extends AppError {
+  constructor(message = "Payload exceeds maximum allowed size") {
+    super(413, "PAYLOAD_TOO_LARGE", message);
+  }
+}
+
 /**
  * Global Fastify error handler ensuring no stack trace or raw database error
  * reaches clients (PRD §Input Testing requirement).
