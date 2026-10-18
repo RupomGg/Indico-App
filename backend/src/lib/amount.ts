@@ -4,6 +4,7 @@
  * Converts string representations to/from integer units (1 USDC = 1,000,000 units).
  */
 
+import { z } from "zod";
 export const DECIMALS = 6;
 export const MULTIPLIER = 1_000_000n;
 
@@ -74,3 +75,17 @@ export function formatUnitsToAmount(units: bigint): string {
 
 export const parseAmount = parseAmountToUnits;
 export const formatAmount = formatUnitsToAmount;
+
+export const amountSchema = z
+  .string()
+  .refine(
+    (val) => {
+      try {
+        parseAmountToUnits(val);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    { message: "Invalid amount format (must be a valid 6-decimal unsigned monetary string)" }
+  );

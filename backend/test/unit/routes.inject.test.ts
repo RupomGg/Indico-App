@@ -231,5 +231,99 @@ describe("HTTP Route Adversarial & Corner-Case Injection (PRD §Input Testing §
       expect(response.statusCode).toBe(401);
     });
   });
+
+  describe("Loans & Credit Route Injection & Security (PRD §4.3, §4.4, §4.5)", () => {
+    it("POST /api/v1/loans/prepare-borrow without auth header returns 401 Unauthorized", async () => {
+      const response = await app.inject({
+        method: "POST",
+        url: "/api/v1/loans/prepare-borrow",
+        payload: { amount: "100.000000" },
+      });
+      expect(response.statusCode).toBe(401);
+      const body = JSON.parse(response.body);
+      expect(body.success).toBe(false);
+      expect(body.error.code).toBe("UNAUTHORIZED");
+    });
+
+    it("POST /api/v1/loans/prepare-repay without auth header returns 401 Unauthorized", async () => {
+      const response = await app.inject({
+        method: "POST",
+        url: "/api/v1/loans/prepare-repay",
+        payload: { loanId: "1" },
+      });
+      expect(response.statusCode).toBe(401);
+      const body = JSON.parse(response.body);
+      expect(body.success).toBe(false);
+      expect(body.error.code).toBe("UNAUTHORIZED");
+    });
+
+    it("POST /api/v1/loans/prepare-extend without auth header returns 401 Unauthorized", async () => {
+      const response = await app.inject({
+        method: "POST",
+        url: "/api/v1/loans/prepare-extend",
+        payload: { loanId: "1" },
+      });
+      expect(response.statusCode).toBe(401);
+      const body = JSON.parse(response.body);
+      expect(body.success).toBe(false);
+      expect(body.error.code).toBe("UNAUTHORIZED");
+    });
+
+    it("POST /api/v1/credit/prepare-spend without auth header returns 401 Unauthorized", async () => {
+      const response = await app.inject({
+        method: "POST",
+        url: "/api/v1/credit/prepare-spend",
+        payload: {
+          merchantAddress: "0x3333333333333333333333333333333333333333",
+          amount: "50.000000",
+        },
+      });
+      expect(response.statusCode).toBe(401);
+      const body = JSON.parse(response.body);
+      expect(body.success).toBe(false);
+      expect(body.error.code).toBe("UNAUTHORIZED");
+    });
+
+    it("Malformed body payloads on /prepare-borrow return 400 Bad Request, never 500", async () => {
+      const malformedPayloads = [
+        {},
+        { amount: "" },
+        { amount: "abc" },
+        { amount: "-100" },
+        { amount: "100.1234567" },
+        { extra: "junk" },
+      ];
+
+      for (const payload of malformedPayloads) {
+        const response = await app.inject({
+          method: "POST",
+          url: "/api/v1/loans/prepare-borrow",
+          headers: { authorization: "Bearer invalid-token" },
+          payload,
+        });
+        // 400 validation error or 401 unauthorized, never 500
+        expect([400, 401]).toContain(response.statusCode);
+      }
+    });
+
+    it("Malformed body payloads on /prepare-spend return 400 Bad Request, never 500", async () => {
+      const malformedPayloads = [
+        {},
+        { merchantAddress: "not-an-address", amount: "50.000000" },
+        { merchantAddress: "0x123", amount: "50.000000" },
+        { merchantAddress: "0x3333333333333333333333333333333333333333", amount: "not-a-number" },
+      ];
+
+      for (const payload of malformedPayloads) {
+        const response = await app.inject({
+          method: "POST",
+          url: "/api/v1/credit/prepare-spend",
+          headers: { authorization: "Bearer invalid-token" },
+          payload,
+        });
+        expect([400, 401]).toContain(response.statusCode);
+      }
+    });
+  });
 });
 

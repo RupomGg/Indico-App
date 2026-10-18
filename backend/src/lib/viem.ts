@@ -42,6 +42,9 @@ export const INDICO_LEDGER_ABI = parseAbi([
   "function approvedUser(address user) external view returns (bool)",
   "function approvedMerchant(address merchant) external view returns (bool)",
   "function assetRegistered(bytes32 docHash) external view returns (bool)",
+  "function poolAvailable() external view returns (uint256)",
+  "function nextLoanId() external view returns (uint256)",
+  "function loans(uint256 loanId) external view returns (address borrower, uint64 dueDate, uint16 extensionCount, uint8 status, uint128 principal, uint128 collateral)",
 
   // Custom Errors
   "error ZeroAddress()",

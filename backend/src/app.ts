@@ -15,6 +15,8 @@ import { authRoutes } from "./modules/auth/auth.routes.js";
 import { profileRoutes } from "./modules/profile/profile.routes.js";
 import { termsRoutes } from "./modules/terms/terms.routes.js";
 import { assetsRoutes } from "./modules/assets/assets.routes.js";
+import { loansRoutes } from "./modules/loans/loans.routes.js";
+import { creditRoutes } from "./modules/credit/credit.routes.js";
 
 export function buildApp(): FastifyInstance {
   const app = fastify({
@@ -88,6 +90,8 @@ export function buildApp(): FastifyInstance {
   app.register(profileRoutes, { prefix: "/api/v1/profile" });
   app.register(termsRoutes, { prefix: "/api/v1/terms" });
   app.register(assetsRoutes, { prefix: "/api/v1/assets" });
+  app.register(loansRoutes, { prefix: "/api/v1/loans" });
+  app.register(creditRoutes, { prefix: "/api/v1/credit" });
 
   // Global Error Handler (PRD §Input Testing requirement)
   app.setErrorHandler(globalErrorHandler);

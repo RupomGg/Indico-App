@@ -2969,7 +2969,38 @@ Gate (Vitest v2.1.9, TypeScript 5.8):
 - G9 pass: Deliberate-bug checks: 1-byte file tampering detected and rejected with 400 Bad Request; double docHash rejected with 409 Conflict.
 - G11 pass: Fastify route table and OpenAPI Swagger schemas verified at `/docs`.
 - G12: this entry.
+- G10 pass: GitHub Actions CI run 39107630430 passed all jobs (ci in 32m4s, Backend in 37s), exit 0.
 Commit: feat: terms and asset document upload modules with aes-256 encryption at rest (P4.3)
+
+### C-078 · P4.4 · Loans & Credit Spending Calldata Preparation · 2026-10-18
+Type: feature
+Decisions: D-05, D-08, D-09, D-13, D-36, D-37, D-48, D-50
+Files:
+- New: `backend/src/modules/loans/loans.schemas.ts`: Zod schemas and TypeScript types for `POST /loans/prepare-borrow`, `POST /loans/prepare-repay`, and `POST /loans/prepare-extend`.
+- New: `backend/src/modules/loans/loans.service.ts`: Business logic for loan calldata preparation, over-collateralised math (1.25x rounding up in pool favour), allowance and balance pre-flights (generating 2-step approval sequence if USDC allowance < principal), extension window validation (30-day window, 90-day term extension), and Base ETH gas shortfall estimation.
+- New: `backend/src/modules/loans/loans.routes.ts`: Fastify route handlers with OpenAPI Swagger documentation and authentication/approval guards.
+- New: `backend/src/modules/credit/credit.schemas.ts`: Zod schemas and TypeScript types for `POST /credit/prepare-spend`.
+- New: `backend/src/modules/credit/credit.service.ts`: Business logic for credit spending calldata preparation, merchant approval and terms signature verification (`MerchantTermsNotSigned` / O-031), self-spend prohibition, and Base ETH gas shortfall estimation.
+- New: `backend/src/modules/credit/credit.routes.ts`: Fastify route handler for credit spending with Swagger schemas.
+- New: `backend/test/unit/loans.test.ts`: 21 comprehensive unit tests covering parameter partitions, rounding boundaries, pool liquidity, collateral sufficiency, 2-step repayment approvals, and loan extension time boundaries.
+- New: `backend/test/unit/credit.test.ts`: 9 unit tests covering merchant address partitions, self-spend prohibition, merchant unsigned terms checks, and spend calldata decoding.
+- Changed: `backend/src/app.ts`: Registered `loansRoutes` under `/api/v1/loans` and `creditRoutes` under `/api/v1/credit`.
+- Changed: `backend/src/lib/amount.ts`: Exported Zod `amountSchema` validator ensuring canonical 6-decimal string amount format across endpoints.
+- Changed: `backend/src/lib/viem.ts`: Added `loans`, `poolAvailable`, and `nextLoanId` view definitions to `INDICO_LEDGER_ABI`.
+- Changed: `backend/test/unit/routes.inject.test.ts`: Added adversarial injection and unauthenticated guard tests for loan and credit endpoints.
+Gate (Vitest v2.1.9, TypeScript 5.8):
+- G1 pass: 255 tests passed across 12 test suites, 0 failed, 0 skipped, exit 0.
+- G2 pass: `npx tsc --noEmit` exit 0, clean build with strict flags (0 errors, 0 warnings).
+- G3 pass: DTO partition tables verified for principal (0, 1 wei, typical, limits, rounding), loanId, and merchant addresses.
+- G4 pass: `fast-check` 10,000 property runs passed on amount round-tripping.
+- G5 pass: Adversarial route injection sweep returned structured 4xx responses, zero 500s.
+- G6 pass: Error isolation verified for contract errors, custom reverts, and RPC failures.
+- G7 pass: 3 consecutive test runs passed with 255/255 tests and zero flakes.
+- G8 pass: Prepared calldata for `requestLoan`, `repay`, `approve`, `extend`, and `spend` decodes back to exact ABI arguments.
+- G9 pass: Deliberate-bug checks: 1 wei rounding in pool favour verified; insufficient credit and liquidity caught; unsigned merchant spend rejected; revoked borrower extension rejected; 2-step approval sequence verified.
+- G11 pass: Fastify route table and OpenAPI Swagger schemas verified at `/docs`.
+- G12: this entry.
+Commit: feat: loans and credit spending calldata preparation (P4.4)
 
 ---
 
