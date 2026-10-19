@@ -10,6 +10,12 @@ export interface AuthenticatedUser {
   isApproved: boolean;
 }
 
+export interface AuthenticatedAdmin {
+  id: string;
+  email: string;
+  role: string;
+}
+
 export interface AuthenticatedSession {
   id: string;
   userId: string;
@@ -20,6 +26,7 @@ declare module "fastify" {
   interface FastifyRequest {
     user?: AuthenticatedUser;
     session?: AuthenticatedSession;
+    admin?: AuthenticatedAdmin;
   }
 }
 
@@ -80,4 +87,29 @@ export async function requireApproved(request: FastifyRequest, _reply: FastifyRe
       "Your account is pending administrator approval. Please wait for an invitation."
     );
   }
+}
+
+/**
+ * Middleware ensuring caller is an authenticated administrator (PRD §4.7 AD-01; Gate G10).
+ * Rejects non-admin or unauthenticated sessions with 401/403.
+ */
+export async function authenticateAdmin(request: FastifyRequest, _reply: FastifyReply) {
+  const authHeader = request.headers.authorization;
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    throw new UnauthorizedError("Missing or invalid Authorization header");
+  }
+
+  const rawToken = authHeader.substring(7).trim();
+  if (!rawToken) {
+    throw new UnauthorizedError("Bearer token cannot be empty");
+  }
+
+  const { AdminAuthService } = await import("../modules/admin/admin.auth.service.js");
+  const admin = await AdminAuthService.verifyAdminToken(rawToken);
+
+  request.admin = {
+    id: admin.id,
+    email: admin.email,
+    role: admin.role,
+  };
 }

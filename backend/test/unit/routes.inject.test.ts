@@ -382,5 +382,80 @@ describe("HTTP Route Adversarial & Corner-Case Injection (PRD §Input Testing §
       expect(body.error.code).toBe("UNAUTHORIZED");
     });
   });
+
+  describe("Admin Route Injection & Strict RBAC (PRD §4.7 AD-01; Gate G10)", () => {
+    it("POST /api/v1/admin/auth/login with malformed body returns 400 Bad Request", async () => {
+      const response = await app.inject({
+        method: "POST",
+        url: "/api/v1/admin/auth/login",
+        payload: { email: "not-an-email" },
+      });
+      expect(response.statusCode).toBe(400);
+      const body = JSON.parse(response.body);
+      expect(body.success).toBe(false);
+    });
+
+    it("GET /api/v1/admin/users without auth header returns 401 Unauthorized", async () => {
+      const response = await app.inject({
+        method: "GET",
+        url: "/api/v1/admin/users",
+      });
+      expect(response.statusCode).toBe(401);
+      const body = JSON.parse(response.body);
+      expect(body.success).toBe(false);
+      expect(body.error.code).toBe("UNAUTHORIZED");
+    });
+
+    it("GET /api/v1/admin/users with non-admin / user token returns 403 Forbidden (RBAC Guard)", async () => {
+      const jwt = (await import("jsonwebtoken")).default;
+      const { env } = await import("../../src/config/env.js");
+      const userToken = jwt.sign(
+        { id: "user-123", email: "user@indico.com", role: "USER", domain: "user" },
+        env.JWT_SECRET
+      );
+
+      const response = await app.inject({
+        method: "GET",
+        url: "/api/v1/admin/users",
+        headers: { authorization: `Bearer ${userToken}` },
+      });
+      expect(response.statusCode).toBe(403);
+      const body = JSON.parse(response.body);
+      expect(body.success).toBe(false);
+      expect(body.error.code).toBe("FORBIDDEN");
+    });
+
+    it("GET /api/v1/admin/pool without auth header returns 401 Unauthorized", async () => {
+      const response = await app.inject({
+        method: "GET",
+        url: "/api/v1/admin/pool",
+      });
+      expect(response.statusCode).toBe(401);
+    });
+
+    it("GET /api/v1/admin/loans without auth header returns 401 Unauthorized", async () => {
+      const response = await app.inject({
+        method: "GET",
+        url: "/api/v1/admin/loans",
+      });
+      expect(response.statusCode).toBe(401);
+    });
+
+    it("GET /api/v1/admin/safe-status without auth header returns 401 Unauthorized", async () => {
+      const response = await app.inject({
+        method: "GET",
+        url: "/api/v1/admin/safe-status",
+      });
+      expect(response.statusCode).toBe(401);
+    });
+
+    it("GET /api/v1/admin/audit-logs without auth header returns 401 Unauthorized", async () => {
+      const response = await app.inject({
+        method: "GET",
+        url: "/api/v1/admin/audit-logs",
+      });
+      expect(response.statusCode).toBe(401);
+    });
+  });
 });
 

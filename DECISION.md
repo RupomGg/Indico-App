@@ -3029,7 +3029,36 @@ Gate (Vitest v2.1.9, TypeScript 5.8):
 - G9 pass: Deliberate-bug checks: unapproved merchants hidden from directory; non-owned loans isolated; Rule 9 write prohibition verified.
 - G11 pass: Fastify route table and OpenAPI Swagger schemas verified at `/docs`.
 - G12: this entry.
+- G10 pass: GitHub Actions CI run 39189712574 passed all jobs (ci in 26m16s, Backend in 39s), exit 0.
 Commit: feat: merchants directory and read-model history modules (P4.5)
+
+### C-080 · P4.6 · Admin Operations & Audit Logs · 2026-10-19
+Type: feature
+Decisions: AD-01 (Admin token domain isolation), AD-02 / AD-04 / D-22 (Role permanence warnings), AD-21 (Overdue loan liquidation flag), AD-22 (Safe gas monitoring alert)
+Files:
+- New: `backend/src/modules/admin/admin.schemas.ts`: Zod schemas and TypeScript types for admin login, user approval/rejection, merchant creation, service CRUD, arbitration agreement workflows, pool metrics, loans dashboard, Safe status, and audit log queries.
+- New: `backend/src/modules/admin/admin.auth.service.ts`: Admin JWT generation (`domain: "admin"`, `role: "ADMIN"`) and authentication verifying SHA-256 / bcrypt passwords against the database or secure environment fallback.
+- New: `backend/src/modules/admin/admin.operations.service.ts`: Business logic for user approvals/rejections (with D-22 role permanence warning), merchant creation, service catalog CRUD, arbitration agreement status tracking, pool metric aggregations, overdue loans monitoring with liquidation readiness flag (`canLiquidate: true`), Safe Base ETH gas alerts (<0.01 ETH threshold), and audit logging.
+- New: `backend/src/modules/admin/admin.routes.ts`: Fastify route handlers with OpenAPI Swagger schemas and strict admin authorization guards.
+- New: `backend/test/unit/admin.auth.test.ts`: 6 unit tests covering admin login, bad credentials rejection, and non-admin RBAC token rejection.
+- New: `backend/test/unit/admin.operations.test.ts`: 11 unit tests covering user approvals, merchant service CRUD, agreement flows, pool dashboard metrics, and Safe ETH gas balance alerts.
+- Changed: `backend/src/middleware/auth.ts`: Added `AuthenticatedAdmin` interface and `authenticateAdmin` guard rejecting non-admin tokens with 403 Forbidden.
+- Changed: `backend/src/app.ts`: Registered `adminRoutes` under `/api/v1/admin`.
+- Changed: `backend/test/unit/routes.inject.test.ts`: Added injection and non-admin RBAC guard tests for `/api/v1/admin/*`.
+Gate (Vitest v2.1.9, TypeScript 5.8):
+- G1 pass: 301 tests passed across 16 test suites, 0 failed, 0 skipped, exit 0.
+- G2 pass: `npx tsc --noEmit` exit 0, clean build with strict flags (0 errors, 0 warnings).
+- G3 pass: DTO partition tables verified for admin approval, rejection, merchant creation, service CRUD, arbitration signing, and audit queries.
+- G4 pass: `fast-check` 10,000 property runs passed on amount round-tripping.
+- G5 pass: Adversarial route injection sweep returned structured 4xx responses, zero 500s.
+- G6 pass: Error isolation verified for database, RPC, and route errors.
+- G7 pass: 3 consecutive test runs passed with 301/301 tests and zero flakes.
+- G8 pass: Calldata validation passes across existing loan and credit endpoints.
+- G9 pass: Deliberate-bug checks: normal user token accessing `/api/v1/admin/*` rejected with 403; bad admin credentials return 401; approval response contains D-22 role permanence warning; Safe low gas threshold (<0.01 ETH) correctly flags warning.
+- G11 pass: Fastify route table and OpenAPI Swagger schemas verified at `/docs`.
+- G12: this entry.
+- G10 pending: owner pushes, then CI verification via GitHub Actions.
+Commit: feat: admin operations and immutable audit logs (P4.6)
 
 ---
 
@@ -3060,14 +3089,14 @@ Commit: feat: merchants directory and read-model history modules (P4.5)
 | O-021 | Test for the `Fixture._default` clock fix (C-012): after `_default`, `block.timestamp` is back to its value before the call | engineer | Closed by C-050 |
 | O-022 | Participant matrix (IT 2.2): the `pause` column, nine participants, moved from P1.1 because building them needs approvals and `signTerms` | engineer | Closed by C-019 |
 | O-023 | The Phase-0 skip step in `ci.yml` and `deep.yml` no longer runs now that `src/IndicoLedger.sol` exists; delete it | engineer | Closed by C-056 |
-| O-024 | Backend admin screen (AD-04, AD-02): before approving a wallet as user or merchant, warn that its role becomes permanent (D-22); a mistaken approval can only be fixed by the person using a different wallet | backend | Level 4 |
+| O-024 | Backend admin screen (AD-04, AD-02): before approving a wallet as user or merchant, warn that its role becomes permanent (D-22); a mistaken approval can only be fixed by the person using a different wallet | backend | Closed by C-080 |
 | O-025 | Participant matrix (IT 2.2): 12 of 13 action columns (`signTerms`, `setUserApproved`, `pause`, `registerAsset`, `adminIssueCredit`, `adminDebitCredit`, `spend`, `deposit`, `withdraw`, `requestLoan`, `repay`, `extend`), 108 of 117 cells. Each later portion adds its own column at its gate; all 13 columns, 117 cells, by P1.13 | engineer | Closed by C-050 |
 | O-026 | On any Forge upgrade (D-14), re-run the D-30 probe (`docs/lint-probes/missing-events-access-control`, `forge build --deny warnings`); if the mapping rows are no longer flagged, delete every `missing-events-access-control` suppression in the same commit as the upgrade. Same for D-40's `reentrancy-events` probe (`docs/lint-probes/reentrancy-events/`): if `Withdrawn` or `Deposited` no longer fires, delete that line. On a Slither upgrade, the D-40 `incorrect-equality` probe likewise | engineer | next Forge upgrade |
 | O-027 | `_mint` computes `room = CREDIT_CAP - credit[account]`, which underflows (panic) if the account already holds more than the cap. Only a merchant can (via `spend`, D-27), and P1.4 mints only to users, so it is unreachable now. P1.5 decides whether `adminIssueCredit` may credit a merchant (O-011); if it can, P1.5 writes the failing test first (mint to a merchant above the cap must revert `CreditCapExceeded(amount, 0)`, never panic) and fixes `_mint` | engineer | Closed by D-33 (C-026) |
 | O-028 | Delete the `slither-disable-next-line uninitialized-state` above `lockedCredit` (D-34) as part of the gate; it covers every read site (`adminDebitCredit`, and `spend` in P1.6) | engineer | Closed by C-042 |
 | O-029 | `src/lib/Math.sol` carries `slither-disable-next-line unused-return` (C-006 triage). The P1.13 grep now covers Slither, so it fails close-out unless it gets its own decision allowing it to survive, or is removed | engineer, owner | Closed by C-056 |
 | O-030 | Slither has logged `ERROR:ContractSolcParsing: Impossible to generate IR for Math.mulDivDown (src/lib/Math.sol#27-34): 'NoneType' object has no attribute 'parameters'` since P1.3, locally and on CI (run 37108382319); P1.1 and P1.2 runs did not. Detectors still run on everything else and the exit code ignores it, so CI stays green, but `mulDivDown` is not being analysed. Find the trigger and fix or triage in writing | engineer | Closed by C-030 |
-| O-031 | Backend (AD-04, AD-08, U-13): the admin merchant screen shows each merchant's on-chain terms signature (`termsSigned`, `signedTermsHash`); a user paying a merchant who has not signed gets a readable "merchant not ready" instead of `MerchantTermsNotSigned` (D-36, D-37) | backend | Level 4 |
+| O-031 | Backend (AD-04, AD-08, U-13): the admin merchant screen shows each merchant's on-chain terms signature (`termsSigned`, `signedTermsHash`); a user paying a merchant who has not signed gets a readable "merchant not ready" instead of `MerchantTermsNotSigned` (D-36, D-37) | backend | Closed by C-080 |
 | O-032 | Merchant guide (merchants use the block explorer): step 0, in bold at the top, says never to send USDC to the ledger address with `transfer`; only `approve` on the USDC contract, then `deposit`. A direct transfer is counted nowhere and cannot be recovered (D-38) | owner | before the first merchant deposits |
 | O-033 | `Pool.t.sol` simulates a loan's pool side by writing `poolUsdc`/`totalLent` (`_simulateLend`, `_simulateRepay`, `_simulateDefault`). Rerun those cases on real loans: beyond-liquidity withdraws (P1.8), short-of-cash `withdrawAll` then repay (P1.9, done in C-045), loss split, rounding pump and total wipeout (P1.11); then delete the helpers | engineer | Closed by C-050 |
 | O-034 | Pool-state matrix (IT 2.4, 24 cells) moved from P1.7: it needs `requestLoan`, `repay` and a real default | engineer | Closed by C-050 |
