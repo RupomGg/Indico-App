@@ -130,29 +130,37 @@ export function globalErrorHandler(
     });
   }
 
-  // 4. Prisma database errors
-  if (error instanceof Prisma.PrismaClientKnownRequestError) {
-    if (error.code === "P2002") {
-      // Unique constraint violation
-      return reply.status(409).send({
-        success: false,
-        error: {
-          code: "CONFLICT",
-          message: "A resource with these details already exists",
-        },
-      });
+  // 4. Prisma database errors (catch all variants and prevent diagnostic leakage)
+  if (
+    error instanceof Prisma.PrismaClientKnownRequestError ||
+    error instanceof Prisma.PrismaClientInitializationError ||
+    error instanceof Prisma.PrismaClientUnknownRequestError ||
+    error instanceof Prisma.PrismaClientRustPanicError ||
+    error instanceof Prisma.PrismaClientValidationError ||
+    error.name?.includes("Prisma") ||
+    (error.message && (error.message.includes("prisma") || error.message.includes("database server")))
+  ) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError) {
+      if (error.code === "P2002") {
+        return reply.status(409).send({
+          success: false,
+          error: {
+            code: "CONFLICT",
+            message: "A resource with these details already exists",
+          },
+        });
+      }
+      if (error.code === "P2025") {
+        return reply.status(404).send({
+          success: false,
+          error: {
+            code: "NOT_FOUND",
+            message: "Requested record not found",
+          },
+        });
+      }
     }
-    if (error.code === "P2025") {
-      // Record not found
-      return reply.status(404).send({
-        success: false,
-        error: {
-          code: "NOT_FOUND",
-          message: "Requested record not found",
-        },
-      });
-    }
-    // Generic database error (never leak raw query or table names)
+    // Generic sanitized database error (never leak raw query or credentials)
     return reply.status(400).send({
       success: false,
       error: {
@@ -162,14 +170,24 @@ export function globalErrorHandler(
     });
   }
 
-  // 5. Fastify internal/schema validation errors (e.g. malformed JSON)
+  // 5. Fastify internal/schema validation errors (e.g. malformed JSON, content type)
   const statusCode = (error as FastifyError).statusCode || 400;
+  let clientMessage = error.message || "Invalid request";
+  if (
+    clientMessage.includes("\n") ||
+    clientMessage.includes("prisma") ||
+    clientMessage.includes("database") ||
+    clientMessage.includes("localhost")
+  ) {
+    clientMessage = "Invalid request payload or parameters";
+  }
+
   if (statusCode < 500) {
     return reply.status(statusCode).send({
       success: false,
       error: {
         code: "BAD_REQUEST",
-        message: error.message || "Invalid request",
+        message: clientMessage,
       },
     });
   }

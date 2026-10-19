@@ -139,7 +139,9 @@ describe("HTTP Route Adversarial & Corner-Case Injection (PRD §Input Testing §
       });
       expect(response.statusCode).toBe(404);
       const body = JSON.parse(response.body);
-      expect(body.message).toBeDefined();
+      expect(body.success).toBe(false);
+      expect(body.error.code).toBe("NOT_FOUND");
+      expect(body.error.message).toBeDefined();
     });
 
     it("Wrong HTTP method on known route returns 404 or 405, never 500", async () => {

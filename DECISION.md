@@ -3057,8 +3057,32 @@ Gate (Vitest v2.1.9, TypeScript 5.8):
 - G9 pass: Deliberate-bug checks: normal user token accessing `/api/v1/admin/*` rejected with 403; bad admin credentials return 401; approval response contains D-22 role permanence warning; Safe low gas threshold (<0.01 ETH) correctly flags warning.
 - G11 pass: Fastify route table and OpenAPI Swagger schemas verified at `/docs`.
 - G12: this entry.
-- G10 pending: owner pushes, then CI verification via GitHub Actions.
+- G10 pass: GitHub Actions CI run 39208389442 passed all jobs (ci in 24m48s, Backend in 47s), exit 0.
 Commit: feat: admin operations and immutable audit logs (P4.6)
+
+### C-081 · P4.7 · Generic No-500 Adversarial Sweep & Integration · 2026-10-19
+Type: feature
+Decisions: G5, Zero-500 Policy, Strict Error Envelope
+Files:
+- New: `backend/src/lib/routeCrawler.ts`: Generic route crawler discovering routes dynamically, parameter extraction and substitution, fast-check adversarial generators, and security leak assertion (`assertNo500AndNoLeaks`).
+- New: `backend/test/unit/adversarial.sweep.test.ts`: Automated dynamic route crawler test executing 1,000 structurally random adversarial payloads per route using `fast-check` across all discovered routes, parameterized injection tests, and non-JSON body boundary tests.
+- Changed: `backend/src/app.ts`: Added `onRoute` hook support to `buildApp`, Fastify v5 `routerOptions: { maxParamLength: 1000 }` to permit parameterized fuzzing, and registered `setNotFoundHandler` guaranteeing the Indico standard error envelope on 404s.
+- Changed: `backend/src/lib/errors.ts`: Sanitized all Prisma errors (`PrismaClientInitializationError`, `PrismaClientUnknownRequestError`, `PrismaClientRustPanicError`, `PrismaClientValidationError`) preventing raw query/credential leakage, and sanitized Fastify internal error messages.
+- Changed: `backend/test/unit/routes.inject.test.ts`: Updated 404 assertion to expect Indico structured error envelope (`body.error.code === "NOT_FOUND"`).
+Gate (Vitest v2.1.9, TypeScript 5.8):
+- G1 pass: 306 tests passed across 17 test suites, 0 failed, 0 skipped, exit 0.
+- G2 pass: `npx tsc --noEmit` exit 0, clean build with strict flags (0 errors, 0 warnings).
+- G3 pass: DTO partition tables verified across all routes for parameter variations and body shapes.
+- G4 pass: `fast-check` 10,000 property runs on amount and 1,000 adversarial payloads per discovered route.
+- G5 pass: Generic dynamic crawler sweep across all API routes returned structured 4xx responses, zero 500s.
+- G6 pass: Error isolation verified for database, RPC, and route errors; zero Prisma diagnostics leaked.
+- G7 pass: 3 consecutive test runs passed with 306/306 tests and zero flakes.
+- G8 pass: Calldata validation passes across existing loan and credit endpoints.
+- G9 pass: Deliberate-bug checks: unhandled database error sanitization verified; non-existent route structured 404 verified; adversarial path param injection verified.
+- G11 pass: Fastify route table and OpenAPI Swagger schemas verified at `/docs`.
+- G12: this entry.
+- G10 pending: owner pushes, then CI verification via GitHub Actions.
+Commit: feat: generic no-500 adversarial route crawler and error isolation (P4.7)
 
 ---
 

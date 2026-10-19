@@ -21,12 +21,24 @@ import { merchantsRoutes } from "./modules/merchants/merchants.routes.js";
 import { historyRoutes } from "./modules/history/history.routes.js";
 import { adminRoutes } from "./modules/admin/admin.routes.js";
 
-export function buildApp(): FastifyInstance {
+export interface BuildAppOptions {
+  onRoute?: (routeOptions: any) => void;
+}
+
+export function buildApp(options?: BuildAppOptions): FastifyInstance {
   const app = fastify({
     logger: process.env["NODE_ENV"] === "development",
     // 20MB body limit for document uploads (PRD §4.2 A-01)
     bodyLimit: 20 * 1024 * 1024,
+    // Support long IDs and parameterized injection tests (Fastify v5 style)
+    routerOptions: {
+      maxParamLength: 1000,
+    },
   }).withTypeProvider<ZodTypeProvider>();
+
+  if (options?.onRoute) {
+    app.addHook("onRoute", options.onRoute);
+  }
 
   // Register schema compilers
   app.setValidatorCompiler(validatorCompiler);
@@ -101,6 +113,17 @@ export function buildApp(): FastifyInstance {
 
   // Global Error Handler (PRD §Input Testing requirement)
   app.setErrorHandler(globalErrorHandler);
+
+  // Global Not Found Handler (Strict Indico error envelope for 404s)
+  app.setNotFoundHandler((request, reply) => {
+    reply.status(404).send({
+      success: false,
+      error: {
+        code: "NOT_FOUND",
+        message: `Route ${request.method} ${request.url} not found`,
+      },
+    });
+  });
 
   return app as unknown as FastifyInstance;
 }
