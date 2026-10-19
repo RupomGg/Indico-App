@@ -3000,7 +3000,36 @@ Gate (Vitest v2.1.9, TypeScript 5.8):
 - G9 pass: Deliberate-bug checks: 1 wei rounding in pool favour verified; insufficient credit and liquidity caught; unsigned merchant spend rejected; revoked borrower extension rejected; 2-step approval sequence verified.
 - G11 pass: Fastify route table and OpenAPI Swagger schemas verified at `/docs`.
 - G12: this entry.
+- G10 pass: GitHub Actions CI run 39116710605 passed all jobs (ci in 31m8s, Backend in 42s), exit 0.
 Commit: feat: loans and credit spending calldata preparation (P4.4)
+
+### C-079 · P4.5 · Merchants & Read-Model History · 2026-10-19
+Type: feature
+Decisions: D-06, Rule 9 (read-model immutability)
+Files:
+- New: `backend/src/modules/merchants/merchants.schemas.ts`: Zod schemas and TypeScript types for `GET /merchants` and `GET /merchants/:id`.
+- New: `backend/src/modules/merchants/merchants.service.ts`: Query service for admin-approved merchants and services with formatted 6-decimal pricing.
+- New: `backend/src/modules/merchants/merchants.routes.ts`: Fastify route handlers with OpenAPI Swagger schemas.
+- New: `backend/src/modules/history/history.schemas.ts`: Zod schemas and TypeScript types for `GET /history/balance`, `GET /history/loans`, and `GET /history/loans/:loanId`.
+- New: `backend/src/modules/history/history.service.ts`: Read-only queries against `read_credit_balances` and `read_loans` read-models with empty-state handling and borrower isolation.
+- New: `backend/src/modules/history/history.routes.ts`: Fastify route handlers for user balance and loan history.
+- New: `backend/test/unit/merchants.test.ts`: 6 unit tests covering merchant directory partitions, search queries, pagination, and unapproved merchant isolation.
+- New: `backend/test/unit/history.test.ts`: 11 unit tests covering read-model balance computations, multi-loan pagination, status filters, borrower isolation, and the Rule 9 read-only invariant.
+- Changed: `backend/src/app.ts`: Registered `merchantsRoutes` under `/api/v1/merchants` and `historyRoutes` under `/api/v1/history`.
+- Changed: `backend/test/unit/routes.inject.test.ts`: Added unauthenticated guard tests for merchants and history endpoints.
+Gate (Vitest v2.1.9, TypeScript 5.8):
+- G1 pass: 277 tests passed across 14 test suites, 0 failed, 0 skipped, exit 0.
+- G2 pass: `npx tsc --noEmit` exit 0, clean build with strict flags (0 errors, 0 warnings).
+- G3 pass: DTO partition tables verified for merchant queries, balance states, and multi-loan pagination.
+- G4 pass: `fast-check` 10,000 property runs passed on amount round-tripping.
+- G5 pass: Adversarial route injection sweep returned structured 4xx responses, zero 500s.
+- G6 pass: Error isolation verified for database, RPC, and route errors.
+- G7 pass: 3 consecutive test runs passed with 277/277 tests and zero flakes.
+- G8 pass: Calldata validation passes across existing loan and credit endpoints.
+- G9 pass: Deliberate-bug checks: unapproved merchants hidden from directory; non-owned loans isolated; Rule 9 write prohibition verified.
+- G11 pass: Fastify route table and OpenAPI Swagger schemas verified at `/docs`.
+- G12: this entry.
+Commit: feat: merchants directory and read-model history modules (P4.5)
 
 ---
 

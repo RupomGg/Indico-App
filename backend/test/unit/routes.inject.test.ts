@@ -325,5 +325,62 @@ describe("HTTP Route Adversarial & Corner-Case Injection (PRD §Input Testing §
       }
     });
   });
+
+  describe("Merchants & History Route Injection & Security (PRD §4.3, §4.4)", () => {
+    it("GET /api/v1/merchants without auth header returns 401 Unauthorized", async () => {
+      const response = await app.inject({
+        method: "GET",
+        url: "/api/v1/merchants",
+      });
+      expect(response.statusCode).toBe(401);
+      const body = JSON.parse(response.body);
+      expect(body.success).toBe(false);
+      expect(body.error.code).toBe("UNAUTHORIZED");
+    });
+
+    it("GET /api/v1/merchants/:id without auth header returns 401 Unauthorized", async () => {
+      const response = await app.inject({
+        method: "GET",
+        url: "/api/v1/merchants/m-123",
+      });
+      expect(response.statusCode).toBe(401);
+      const body = JSON.parse(response.body);
+      expect(body.success).toBe(false);
+      expect(body.error.code).toBe("UNAUTHORIZED");
+    });
+
+    it("GET /api/v1/history/balance without auth header returns 401 Unauthorized", async () => {
+      const response = await app.inject({
+        method: "GET",
+        url: "/api/v1/history/balance",
+      });
+      expect(response.statusCode).toBe(401);
+      const body = JSON.parse(response.body);
+      expect(body.success).toBe(false);
+      expect(body.error.code).toBe("UNAUTHORIZED");
+    });
+
+    it("GET /api/v1/history/loans without auth header returns 401 Unauthorized", async () => {
+      const response = await app.inject({
+        method: "GET",
+        url: "/api/v1/history/loans",
+      });
+      expect(response.statusCode).toBe(401);
+      const body = JSON.parse(response.body);
+      expect(body.success).toBe(false);
+      expect(body.error.code).toBe("UNAUTHORIZED");
+    });
+
+    it("GET /api/v1/history/loans/:loanId without auth header returns 401 Unauthorized", async () => {
+      const response = await app.inject({
+        method: "GET",
+        url: "/api/v1/history/loans/1",
+      });
+      expect(response.statusCode).toBe(401);
+      const body = JSON.parse(response.body);
+      expect(body.success).toBe(false);
+      expect(body.error.code).toBe("UNAUTHORIZED");
+    });
+  });
 });
 
