@@ -3084,6 +3084,30 @@ Gate (Vitest v2.1.9, TypeScript 5.8):
 - G10 pass: GitHub Actions CI run 39231208668 passed all jobs (ci in 33m6s, Backend in 48s), exit 0.
 Commit: feat: generic no-500 adversarial route crawler and error isolation (P4.7)
 
+### C-082 · Real-Time On-Chain Event Indexer & State Replayer · 2026-10-20
+Type: feature
+Decisions: PRD §2 (Option B: Web2 DB replica deterministically rebuilt from chain events), Rule 9 (Read-model immutability)
+Files:
+- New: `backend/src/modules/indexer/indexer.schemas.ts`: Types and schemas for decoded chain logs, checkpoints, and sync status.
+- New: `backend/src/modules/indexer/indexer.projector.ts`: Pure state transition functions projecting on-chain events (`CreditMinted`, `CreditBurned`, `Spent`, `LoanOpened`, `LoanExtended`, `LoanRepaid`, `LoanDefaulted`, `Deposited`, `Withdrawn`, `AccountMoved`, `UserApprovalSet`) into PostgreSQL read models (`read_credit_balances`, `read_loans`, `read_pool_deposits`) and immutable `chain_events` table with exact BigInt amount arithmetic.
+- New: `backend/src/modules/indexer/indexer.service.ts`: Block range synchronization using Viem `getLogs`, atomic transaction commits, checkpoint tracking (`indexer_checkpoints`), lag status, and full deterministic event replayer (`replayAllEvents`) reconstructing PostgreSQL state from empty tables.
+- New: `backend/test/unit/indexer.test.ts`: 11 unit tests covering all event projections, borrower collateral locking/releasing, loan lifecycle transitions, pool deposits/withdrawals, duplicate event idempotency, and the PRD §2 state replay determinism test.
+- Changed: `backend/src/lib/viem.ts`: Added canonical event signatures to `INDICO_LEDGER_ABI` matching `contracts/src/interfaces/IIndicoLedger.sol` and `docs/event-catalogue.md`.
+Gate (Vitest v2.1.9, TypeScript 5.8):
+- G1 pass: 317 tests passed across 18 test suites, 0 failed, 0 skipped, exit 0.
+- G2 pass: `npx tsc --noEmit` exit 0, clean build with strict flags (0 errors, 0 warnings).
+- G3 pass: DTO partition tables verified for all on-chain events and projected state tables.
+- G4 pass: `fast-check` 10,000 property runs on amount and 1,000 adversarial payloads per discovered route.
+- G5 pass: Adversarial route crawler sweep verified zero 500s across all API routes.
+- G6 pass: Error isolation verified for database, RPC, and route errors; zero Prisma diagnostics leaked.
+- G7 pass: 3 consecutive test runs passed with 317/317 tests and zero flakes.
+- G8 pass: Calldata validation passes across existing loan and credit endpoints.
+- G9 pass: Deliberate-bug checks: duplicate `(txHash, logIndex)` event execution rejected (idempotency verified); replay from `chain_events` matches pre-wipe state bit-for-bit (PRD §2 verified).
+- G11 pass: Fastify route table and OpenAPI Swagger schemas verified at `/docs`.
+- G12: this entry.
+- G10 pending: owner pushes, then CI verification via GitHub Actions.
+Commit: feat: real-time on-chain event indexer and state replayer
+
 ---
 
 ## Open items
