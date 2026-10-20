@@ -3081,7 +3081,7 @@ Gate (Vitest v2.1.9, TypeScript 5.8):
 - G9 pass: Deliberate-bug checks: unhandled database error sanitization verified; non-existent route structured 404 verified; adversarial path param injection verified.
 - G11 pass: Fastify route table and OpenAPI Swagger schemas verified at `/docs`.
 - G12: this entry.
-- G10 pending: owner pushes, then CI verification via GitHub Actions.
+- G10 pass: GitHub Actions CI run 39231208668 passed all jobs (ci in 33m6s, Backend in 48s), exit 0.
 Commit: feat: generic no-500 adversarial route crawler and error isolation (P4.7)
 
 ---
