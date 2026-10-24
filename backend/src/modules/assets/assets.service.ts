@@ -239,8 +239,32 @@ export class AssetsService {
         ? "https://basescan.org/tx/"
         : "https://sepolia.basescan.org/tx/";
 
+    const checkedItems = await Promise.all(
+      items.map(async (a) => {
+        if (a.status === "REGISTERED") return a;
+        try {
+          const isRegistered = await publicClient.readContract({
+            address: env.INDICO_LEDGER_ADDRESS as Address,
+            abi: INDICO_LEDGER_ABI,
+            functionName: "assetRegistered",
+            args: [a.docHash as Hex],
+          });
+          if (isRegistered) {
+            await prisma.asset
+              .update({
+                where: { id: a.id },
+                data: { status: "REGISTERED" },
+              })
+              .catch(() => {});
+            return { ...a, status: "REGISTERED" };
+          }
+        } catch {}
+        return a;
+      })
+    );
+
     return {
-      items: items.map((a) => ({
+      items: checkedItems.map((a) => ({
         id: a.id,
         userId: a.userId,
         docHash: a.docHash,

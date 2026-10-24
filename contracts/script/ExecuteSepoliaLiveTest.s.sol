@@ -10,7 +10,7 @@ import {LiquidateKeeper} from "./LiquidateKeeper.s.sol";
 /// @notice Executes the complete live test journey and corner cases on Base Sepolia.
 ///         Uses the dummy private keys configured in contracts/.env.
 contract ExecuteSepoliaLiveTest is Script {
-    address internal constant LEDGER = 0xa51D54BAe8431f4c6f0dd644D2fCeb498CE5eeF0;
+    address internal constant LEDGER = 0x78686caeAD6b25335895a4d920Dc1597140365Cd;
     address internal constant USDC = 0x036CbD53842c5426634e7929541eC2318f3dCF7e;
 
     bytes32 internal constant DOC_HASH_1 = keccak256("indico-asset-bill-of-exchange-001");

@@ -119,6 +119,38 @@ export async function adminRoutes(fastify: FastifyInstance) {
       }
     );
 
+    // GET /admin/merchants (PRD §4.7 AD-04, AD-05)
+    adminScope.get(
+      "/merchants",
+      {
+        schema: {
+          description: "List all merchants with services and agreement metadata for admin (AD-04, AD-05)",
+          tags: ["Admin"],
+        },
+      },
+      async (_request, reply) => {
+        const result = await AdminOperationsService.listMerchants();
+        return reply.send(result);
+      }
+    );
+
+    // GET /admin/merchants/:id/services (PRD §4.7 AD-05)
+    adminScope.get(
+      "/merchants/:id/services",
+      {
+        schema: {
+          description: "Get all service offerings for a merchant (AD-05)",
+          tags: ["Admin"],
+          params: z.object({ id: z.string() }),
+        },
+      },
+      async (request, reply) => {
+        const { id } = request.params as { id: string };
+        const result = await AdminOperationsService.getMerchantServices(id);
+        return reply.send(result);
+      }
+    );
+
     // POST /admin/merchants (PRD §4.7 AD-04)
     adminScope.post(
       "/merchants",
@@ -133,6 +165,26 @@ export async function adminRoutes(fastify: FastifyInstance) {
         const result = await AdminOperationsService.createMerchant(
           request.admin!.id,
           request.body as any
+        );
+        return reply.send(result);
+      }
+    );
+
+    // POST /admin/merchants/:id/sync-chain (PRD §4.7 AD-04)
+    adminScope.post(
+      "/merchants/:id/sync-chain",
+      {
+        schema: {
+          description: "Sync on-chain verification and terms status for a merchant (AD-04)",
+          tags: ["Admin"],
+          params: z.object({ id: z.string() }),
+        },
+      },
+      async (request, reply) => {
+        const { id } = request.params as { id: string };
+        const result = await AdminOperationsService.syncMerchantOnChainStatus(
+          request.admin!.id,
+          id
         );
         return reply.send(result);
       }

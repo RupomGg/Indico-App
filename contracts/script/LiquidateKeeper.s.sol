@@ -16,7 +16,7 @@ import {LIQUIDATION_GRACE} from "../src/lib/Constants.sol";
 ///           LEDGER_ADDRESS – overrides default contract address for the chain.
 contract LiquidateKeeper is Script {
     uint256 internal constant BASE_SEPOLIA = 84532;
-    address internal constant SEPOLIA_LEDGER = 0xa51D54BAe8431f4c6f0dd644D2fCeb498CE5eeF0;
+    address internal constant SEPOLIA_LEDGER = 0x78686caeAD6b25335895a4d920Dc1597140365Cd;
 
     error UnknownLedgerForChain(uint256 chainId);
 

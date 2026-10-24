@@ -116,7 +116,21 @@ export class CreditService {
       );
     }
 
-    if (!hasMerchantSignedTerms) {
+    let isMerchantTermsSigned = Boolean(hasMerchantSignedTerms);
+    if (!isMerchantTermsSigned) {
+      try {
+        const merchantRecord = await prisma.merchant.findFirst({
+          where: { walletAddress: { equals: merchantAddress, mode: "insensitive" } },
+        });
+        if (merchantRecord && merchantRecord.agreementStatus === "SIGNED") {
+          isMerchantTermsSigned = true;
+        }
+      } catch {
+        // Fallback for unit test environments
+      }
+    }
+
+    if (!isMerchantTermsSigned) {
       throw new BadRequestError(
         "Merchant has not signed platform terms yet (MerchantTermsNotSigned). Please notify merchant to sign."
       );

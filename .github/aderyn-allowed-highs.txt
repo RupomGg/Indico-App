@@ -4,5 +4,5 @@
 #
 # deposit: the shares are minted on what actually arrived, measured after safeTransferFrom
 # (D-38, fee-on-transfer); nonReentrant; the token is Circle's USDC, immutable, no hooks.
-reentrancy-state-change src/IndicoLedger.sol:368
-reentrancy-state-change src/IndicoLedger.sol:370
+reentrancy-state-change src/IndicoLedger.sol:377
+reentrancy-state-change src/IndicoLedger.sol:379

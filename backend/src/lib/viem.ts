@@ -136,6 +136,68 @@ export interface PreparedTransaction {
  * Simulates an on-chain transaction via `eth_call`, estimates gas,
  * and checks the user's ETH balance for network fees (PRD §4.1 U-11).
  */
+function decodeContractRevert(err: any): string {
+  let hexData: Hex | undefined = undefined;
+
+  if (typeof err?.data === "string" && err.data.startsWith("0x")) {
+    hexData = err.data as Hex;
+  } else if (typeof err?.cause?.data === "string" && err.cause.data.startsWith("0x")) {
+    hexData = err.cause.data as Hex;
+  } else if (typeof err?.walk === "function") {
+    const found = err.walk((e: any) => typeof e?.data === "string" && e.data.startsWith("0x"));
+    if (found?.data) {
+      hexData = found.data as Hex;
+    }
+  }
+
+  if (!hexData && err?.message) {
+    const match = err.message.match(/data: "(0x[a-fA-F0-9]+)"/);
+    if (match && match[1]) {
+      hexData = match[1] as Hex;
+    }
+  }
+
+  if (hexData) {
+    try {
+      const decoded = decodeErrorResult({
+        abi: INDICO_LEDGER_ABI,
+        data: hexData,
+      });
+
+      switch (decoded.errorName) {
+        case "NotApprovedUser":
+          return "Your wallet is not approved on-chain by an administrator yet (NotApprovedUser). Please complete on-chain approval in the Admin Portal.";
+        case "TermsNotSigned":
+          return "You must sign the platform terms on-chain before registering an asset (TermsNotSigned).";
+        case "AssetAlreadyRegistered":
+          return "This document fingerprint has already been registered on-chain (AssetAlreadyRegistered).";
+        case "ZeroAmount":
+          return "Asset declared value cannot be zero (ZeroAmount).";
+        case "ZeroDocHash":
+          return "Document hash cannot be empty (ZeroDocHash).";
+        case "InvalidAssetType":
+          return "Invalid asset document type (InvalidAssetType).";
+        case "CreditCapExceeded":
+          return "Per-account credit limit exceeded (CreditCapExceeded).";
+        case "InsufficientAvailableCredit":
+          return "Insufficient available credit for this operation (InsufficientAvailableCredit).";
+        case "InsufficientLiquidity":
+          return "The liquidity pool currently does not have enough USDC to fund this loan (InsufficientLiquidity).";
+        default:
+          return `Contract error: ${decoded.errorName}`;
+      }
+    } catch {
+      // Non-contract or custom revert
+    }
+  }
+
+  return "Transaction would revert on-chain";
+}
+
+/**
+ * Simulates an on-chain transaction via `eth_call`, estimates gas,
+ * and checks the user's ETH balance for network fees (PRD §4.1 U-11).
+ */
 export async function prepareTransaction(params: {
   from: Address;
   to: Address;
@@ -153,20 +215,7 @@ export async function prepareTransaction(params: {
       value,
     });
   } catch (err: any) {
-    // Attempt to decode custom error from revert data
-    let decodedReason = "Transaction would revert on-chain";
-    if (err.data) {
-      try {
-        const decoded = decodeErrorResult({
-          abi: INDICO_LEDGER_ABI,
-          data: err.data,
-        });
-        decodedReason = `Contract error: ${decoded.errorName}`;
-      } catch {
-        // Fallback to error message
-      }
-    }
-    throw new Error(decodedReason);
+    throw new Error(decodeContractRevert(err));
   }
 
   // 2. Estimate gas and fetch current gas price
@@ -226,19 +275,7 @@ export async function simulatePreparedTransaction(params: {
       value,
     });
   } catch (err: any) {
-    let decodedReason = "Transaction would revert on-chain";
-    if (err.data) {
-      try {
-        const decoded = decodeErrorResult({
-          abi: INDICO_LEDGER_ABI,
-          data: err.data,
-        });
-        decodedReason = `Contract error: ${decoded.errorName}`;
-      } catch {
-        // Fallback
-      }
-    }
-    throw new Error(decodedReason);
+    throw new Error(decodeContractRevert(err));
   }
 }
 

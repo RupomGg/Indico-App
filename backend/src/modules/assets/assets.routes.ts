@@ -1,4 +1,5 @@
 import { FastifyInstance } from "fastify";
+import { z } from "zod";
 import { AssetsService } from "./assets.service.js";
 import {
   PresignedUploadInputSchema,
@@ -43,13 +44,9 @@ export async function assetsRoutes(fastify: FastifyInstance) {
       schema: {
         description: "Upload file binary bytes to active upload session (A-01, A-03)",
         tags: ["Assets"],
-        params: {
-          type: "object",
-          properties: {
-            uploadId: { type: "string" },
-          },
-          required: ["uploadId"],
-        },
+        params: z.object({
+          uploadId: z.string(),
+        }),
       },
     },
     async (request, reply) => {
@@ -117,13 +114,9 @@ export async function assetsRoutes(fastify: FastifyInstance) {
       schema: {
         description: "Prepare transaction calldata and gas shortfall analysis for registerAsset (A-07)",
         tags: ["Assets"],
-        params: {
-          type: "object",
-          properties: {
-            id: { type: "string" },
-          },
-          required: ["id"],
-        },
+        params: z.object({
+          id: z.string(),
+        }),
         response: {
           200: PrepareRegisterAssetResponseSchema,
         },
@@ -167,13 +160,9 @@ export async function assetsRoutes(fastify: FastifyInstance) {
       schema: {
         description: "Get detailed information for a specific asset (A-09)",
         tags: ["Assets"],
-        params: {
-          type: "object",
-          properties: {
-            id: { type: "string" },
-          },
-          required: ["id"],
-        },
+        params: z.object({
+          id: z.string(),
+        }),
         response: {
           200: AssetDetailSchema,
         },
@@ -195,13 +184,9 @@ export async function assetsRoutes(fastify: FastifyInstance) {
       schema: {
         description: "Download decrypted original document file for authorized owner",
         tags: ["Assets"],
-        params: {
-          type: "object",
-          properties: {
-            id: { type: "string" },
-          },
-          required: ["id"],
-        },
+        params: z.object({
+          id: z.string(),
+        }),
       },
     },
     async (request, reply) => {

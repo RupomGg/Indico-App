@@ -386,6 +386,29 @@ export async function projectChainLog(
       break;
     }
 
+    case "AssetRegistered": {
+      const docHash = (args["docHash"] as string).toLowerCase();
+      const asset = await client.asset.findFirst({
+        where: {
+          docHash: {
+            equals: docHash,
+            mode: "insensitive",
+          },
+        },
+      });
+
+      if (asset) {
+        await client.asset.update({
+          where: { id: asset.id },
+          data: {
+            status: "REGISTERED",
+            txHash: log.txHash,
+          },
+        });
+      }
+      break;
+    }
+
     default:
       // Other events (TermsHashSet, TermsSigned, Paused, etc.) are recorded in chain_events
       break;

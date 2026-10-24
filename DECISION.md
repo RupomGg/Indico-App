@@ -3108,6 +3108,28 @@ Gate (Vitest v2.1.9, TypeScript 5.8):
 - G10 pending: owner pushes, then CI verification via GitHub Actions.
 Commit: feat: real-time on-chain event indexer and state replayer
 
+### C-083 · Interactive Web Test Frontend & Confirmed Scope Verifier · 2026-10-20
+Type: feature
+Decisions: Confirmed Feature List (docs/feature-list.md §1, §2, §3), D-22 (Permanence warning modal), Rule 9 (Zero-ABI architecture)
+Files:
+- New: `frontend/package.json`, `frontend/tsconfig.json`, `frontend/index.html`: Vite + Vanilla TypeScript SPA project configuration with zero Flutter dependencies required for local testing.
+- New: `frontend/src/api.ts`: Typed REST client connecting to all Fastify v1 endpoints (`/auth`, `/profile`, `/terms`, `/assets`, `/loans`, `/credit`, `/merchants`, `/history`, `/admin`).
+- New: `frontend/src/wallet.ts`: Dual-mode Web3 wallet supporting EIP-1193 browser wallets (MetaMask/Brave/Coinbase) and an in-memory Viem simulated wallet for automated local testing without browser extensions.
+- New: `frontend/src/style.css`: Obsidian & neon dark theme with glassmorphism, responsive cards, modals, toast alerts, and metric widgets.
+- New: `frontend/src/ui.ts`: Toast system, D-22 modal alerts, Base Sepolia block explorer links, currency formatters.
+- New: `frontend/src/views/userView.ts`: Interactive User Portal verifying auth, wallet binding, terms review & on-chain signature, asset upload with browser SHA-256 computation, credit balances (1 credit = 1 USDC), merchant spending, 80% borrowing ratio, 90-day loan repayment & extension, and Indico AI Assistant.
+- New: `frontend/src/views/adminView.ts`: Interactive Admin Portal verifying separate admin auth, user list with D-22 role permanence modal, merchant onboarding, services cataloging, arbitration agreement transmission and execution, shared pool & loan dashboard, Safe Base ETH gas alerts, and audit log CSV export.
+- New: `frontend/src/views/checklistView.ts`: Automated Feature List Verifier covering 100% of confirmed features from `docs/feature-list.md` (all 21 items across User, Platform, and Admin) with real-time pass/fail reporting, timing, and JSON payload inspection.
+- New: `frontend/src/main.ts`: Application shell, navigation router, API health heartbeat indicator, and wallet switcher.
+Gate:
+- G1 pass: `npm run build` in `frontend/` succeeds with zero TypeScript errors and produces optimized production bundles in `frontend/dist/`.
+- G2 pass: All 317 backend unit tests across 18 test suites in `backend/` pass with zero failures.
+- G3 pass: Zero ABI leakage to frontend: all transactions consume prepared calldata from the backend.
+- G4 pass: Strict 6-decimal string amount representation preserved across all frontend views and forms.
+- G12: this entry.
+- G10 pending: owner commits and pushes to GitHub repository.
+Commit: feat: interactive web test frontend and 100% confirmed feature list verifier
+
 ---
 
 ## Open items

@@ -15,3 +15,7 @@ dist/
 coverage/
 **/coverage/
 
+# Local storage and file uploads
+storage/
+**/storage/
+

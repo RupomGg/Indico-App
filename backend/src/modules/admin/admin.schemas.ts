@@ -32,6 +32,14 @@ export const adminCreateMerchantSchema = z.object({
     .string()
     .regex(/^0x[a-fA-F0-9]{40}$/, "Invalid merchant Ethereum address"),
   isApproved: z.boolean().default(true),
+  agreementStatus: z.enum(["NOT_SENT", "SENT", "SIGNED"]).default("SIGNED"),
+  initialService: z
+    .object({
+      name: z.string().min(2),
+      price: amountSchema,
+      description: z.string().min(1).optional(),
+    })
+    .optional(),
 });
 
 export type AdminCreateMerchantInput = z.infer<typeof adminCreateMerchantSchema>;

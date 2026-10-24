@@ -165,11 +165,20 @@ contract IndicoLedger is IIndicoLedger, AccessControlDefaultAdminRules, Pausable
 
     /// @notice Approve or revoke a merchant. A revoked merchant can still withdraw.
     /// @dev Not `whenNotPaused` (D-24). Repeats are allowed and emit (D-20).
+    ///      Admin approves on behalf of merchants executing terms off-platform (AD-04, AD-07).
     function setMerchantApproved(address m, bool approved) external onlyRole(ADMIN_ROLE) {
         _admit(m, approved, ROLE_MERCHANT);
         // Linter cannot match an event to a mapping write; MerchantApprovalSet follows (D-30).
         // forge-lint: disable-next-line(missing-events-access-control)
         approvedMerchant[m] = approved;
+        if (approved) {
+            termsSigned[m] = true;
+            bytes32 current = termsHash;
+            if (current != bytes32(0)) {
+                signedTermsHash[m] = current;
+                emit IIndicoLedger.TermsSigned(m, current, block.timestamp);
+            }
+        }
         emit IIndicoLedger.MerchantApprovalSet(m, approved);
     }
 
