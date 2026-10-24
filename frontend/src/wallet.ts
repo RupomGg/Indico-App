@@ -28,6 +28,10 @@ export class WalletManager {
   }
 
   static isSimulated(): boolean {
+    if (typeof window !== "undefined" && !!(window as any).ethereum && localStorage.getItem("indico_sim_wallet") !== "true") {
+      this.isSimMode = false;
+      return false;
+    }
     return this.isSimMode;
   }
 
@@ -38,14 +42,8 @@ export class WalletManager {
   }
 
   static async getAccount(): Promise<string | null> {
-    if (this.isSimMode) {
-      if (!this.simAccount) {
-        this.simAccount = privateKeyToAccount(this.getSimPrivateKey());
-      }
-      return this.simAccount.address;
-    }
-
-    if (typeof window !== "undefined" && (window as any).ethereum) {
+    const hasEthereum = typeof window !== "undefined" && !!(window as any).ethereum;
+    if (hasEthereum && !this.isSimMode) {
       try {
         const accounts = (await (window as any).ethereum.request({
           method: "eth_accounts",
@@ -55,17 +53,49 @@ export class WalletManager {
         return null;
       }
     }
+
+    if (this.isSimMode) {
+      if (!this.simAccount) {
+        this.simAccount = privateKeyToAccount(this.getSimPrivateKey());
+      }
+      return this.simAccount.address;
+    }
+
     return null;
   }
 
-  static async connect(): Promise<string> {
+  static async connect(forceBrowser = false): Promise<string> {
+    const hasEthereum = typeof window !== "undefined" && !!(window as any).ethereum;
+
+    // Prioritize real browser wallet whenever available
+    if (hasEthereum && (forceBrowser || localStorage.getItem("indico_sim_wallet") !== "true")) {
+      this.isSimMode = false;
+      localStorage.setItem("indico_sim_wallet", "false");
+
+      const accounts = (await (window as any).ethereum.request({
+        method: "eth_requestAccounts",
+      })) as string[];
+
+      if (!accounts || accounts.length === 0) {
+        throw new Error("No accounts authorized in browser wallet");
+      }
+
+      if (typeof window !== "undefined" && (window as any).ethereum?.on && !(window as any)._hasWalletListeners) {
+        (window as any)._hasWalletListeners = true;
+        (window as any).ethereum.on("accountsChanged", () => {
+          window.location.reload();
+        });
+      }
+
+      return accounts[0].toLowerCase();
+    }
+
     if (this.isSimMode) {
       this.simAccount = privateKeyToAccount(this.getSimPrivateKey());
       return this.simAccount.address;
     }
 
-    if (typeof window === "undefined" || !(window as any).ethereum) {
-      // Fallback to simulated mode automatically if no extension found
+    if (!hasEthereum) {
       this.setSimulated(true);
       this.simAccount = privateKeyToAccount(this.getSimPrivateKey());
       return this.simAccount.address;
@@ -74,40 +104,25 @@ export class WalletManager {
     const accounts = (await (window as any).ethereum.request({
       method: "eth_requestAccounts",
     })) as string[];
-
-    if (!accounts || accounts.length === 0) {
-      throw new Error("No accounts authorized in browser wallet");
-    }
-
-    if (typeof window !== "undefined" && (window as any).ethereum?.on && !(window as any)._hasWalletListeners) {
-      (window as any)._hasWalletListeners = true;
-      (window as any).ethereum.on("accountsChanged", () => {
-        window.location.reload();
-      });
-    }
-
     return accounts[0].toLowerCase();
   }
 
   static async signMessage(message: string): Promise<string> {
-    if (this.isSimMode) {
-      if (!this.simAccount) {
-        this.simAccount = privateKeyToAccount(this.getSimPrivateKey());
-      }
-      return await this.simAccount.signMessage({ message });
+    const hasEthereum = typeof window !== "undefined" && !!(window as any).ethereum;
+
+    if (!this.isSimMode && hasEthereum) {
+      const account = await this.connect(true);
+      const signature = await (window as any).ethereum.request({
+        method: "personal_sign",
+        params: [message, account],
+      });
+      return signature;
     }
 
-    const account = await this.connect();
-    if (!(window as any).ethereum) {
-      throw new Error("Ethereum provider not found");
+    if (!this.simAccount) {
+      this.simAccount = privateKeyToAccount(this.getSimPrivateKey());
     }
-
-    const signature = await (window as any).ethereum.request({
-      method: "personal_sign",
-      params: [message, account],
-    });
-
-    return signature;
+    return await this.simAccount.signMessage({ message });
   }
 
   static async ensureBaseSepolia(): Promise<void> {
@@ -148,7 +163,8 @@ export class WalletManager {
     gasLimit?: string;
     estimatedGasUnits?: string;
   }): Promise<string> {
-    if (this.isSimMode) {
+    const hasEthereum = typeof window !== "undefined" && !!(window as any).ethereum;
+    if (this.isSimMode && !hasEthereum) {
       // In simulation mode, generate a mock Base Sepolia transaction hash
       const randomHex = Array.from({ length: 64 }, () =>
         Math.floor(Math.random() * 16).toString(16)
@@ -158,7 +174,7 @@ export class WalletManager {
 
     await this.ensureBaseSepolia();
 
-    const from = await this.connect();
+    const from = await this.connect(true);
 
     // Determine gas limit from backend response (estimatedGasUnits or gasLimit)
     // Capped at 5,000,000 so it strictly stays under Base Sepolia's 16,777,216 max transaction gas limit

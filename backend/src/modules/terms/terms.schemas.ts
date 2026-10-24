@@ -6,6 +6,7 @@ export const CurrentTermsResponseSchema = z.object({
   title: z.string(),
   content: z.string(),
   effectiveDate: z.string(),
+  isOnChainSet: z.boolean().optional(),
 });
 
 export const TermsStatusResponseSchema = z.object({

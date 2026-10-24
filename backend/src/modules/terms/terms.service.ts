@@ -46,6 +46,7 @@ export class TermsService {
    */
   static async getCurrentTerms(): Promise<CurrentTermsResponse> {
     let onChainHash: Hex = DEFAULT_TERMS_HASH;
+    let isOnChainSet = false;
 
     try {
       const hash = await publicClient.readContract({
@@ -56,10 +57,12 @@ export class TermsService {
 
       if (hash && hash !== "0x0000000000000000000000000000000000000000000000000000000000000000") {
         onChainHash = hash as Hex;
+        isOnChainSet = true;
       }
     } catch {
       // Use fallback if RPC read fails or contract is not yet initialized with termsHash
       onChainHash = DEFAULT_TERMS_HASH;
+      isOnChainSet = false;
     }
 
     return {
@@ -68,6 +71,7 @@ export class TermsService {
       title: "Indico Asset Ledger Participant Terms and Conditions",
       content: DEFAULT_TERMS_TEXT,
       effectiveDate: "2026-09-29",
+      isOnChainSet,
     };
   }
 
@@ -123,7 +127,13 @@ export class TermsService {
     }
 
     const walletAddress = binding.walletAddress as Address;
-    const { termsHash } = await this.getCurrentTerms();
+    const currentTerms = await this.getCurrentTerms();
+    if (currentTerms.isOnChainSet === false) {
+      throw new BadRequestError(
+        "Platform terms have not been activated on the blockchain yet (termsHash is 0x0). Please activate terms via the Admin Portal before users can sign."
+      );
+    }
+    const { termsHash } = currentTerms;
 
     // Check on chain if already signed
     let alreadySigned = false;

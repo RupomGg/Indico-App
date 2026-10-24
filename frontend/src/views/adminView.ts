@@ -24,6 +24,7 @@ export class AdminView {
   private static loansData: any[] = [];
   private static safeStatus: any = null;
   private static auditLogs: any[] = [];
+  private static termsData: any = null;
 
   static async render(target: HTMLElement) {
     this.container = target;
@@ -38,7 +39,7 @@ export class AdminView {
     }
 
     try {
-      const [meRes, poolRes, usersRes, merchantsRes, loansRes, safeRes, auditRes] =
+      const [meRes, poolRes, usersRes, merchantsRes, loansRes, safeRes, auditRes, termsRes] =
         await Promise.allSettled([
           ApiClient.adminMe(),
           ApiClient.adminGetPool(),
@@ -47,6 +48,7 @@ export class AdminView {
           ApiClient.adminGetLoans(),
           ApiClient.adminGetSafeStatus(),
           ApiClient.adminGetAuditLogs({ limit: 50 }),
+          ApiClient.getCurrentTerms(),
         ]);
 
       if (meRes.status === "rejected") {
@@ -83,6 +85,9 @@ export class AdminView {
       if (auditRes.status === "fulfilled") {
         const v = auditRes.value as any;
         this.auditLogs = v?.items || v?.data?.items || v?.data?.logs || v?.logs || [];
+      }
+      if (termsRes.status === "fulfilled") {
+        this.termsData = termsRes.value as any;
       }
 
       this.renderDashboard();
@@ -207,6 +212,38 @@ export class AdminView {
         </div>
       </div>
 
+      <!-- Terms Hash Activation Status & Banner (PRD AD-01 / D-21) -->
+      ${
+        this.termsData?.isOnChainSet === false
+          ? `
+        <div class="card" style="margin-bottom: 24px; border-left: 4px solid #f59e0b; background: rgba(245, 158, 11, 0.12);">
+          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 14px;">
+            <div>
+              <div style="font-weight: 800; font-size: 15px; color: #fbbf24; margin-bottom: 4px; display: flex; align-items: center; gap: 8px;">
+                <span>⚠️ Protocol Terms Not Activated on Blockchain</span>
+                <span class="badge badge-danger">termsHash: 0x0</span>
+              </div>
+              <div style="font-size: 12.5px; color: var(--text-muted); line-height: 1.5;">
+                The contract has not been initialized with the platform terms hash. Users will receive <code>Contract error: TermsNotSet</code> until activated.
+              </div>
+            </div>
+            <button id="btn-admin-set-terms" class="btn btn-purple btn-sm" style="font-weight: 700; white-space: nowrap;">
+              ⚡ Activate Platform Terms On-Chain
+            </button>
+          </div>
+        </div>
+        `
+          : `
+        <div style="margin-bottom: 20px; display: flex; align-items: center; justify-content: space-between; background: rgba(16, 185, 129, 0.08); border: 1px solid rgba(16, 185, 129, 0.2); border-radius: 8px; padding: 10px 16px;">
+          <div style="font-size: 12.5px; color: #34d399; display: flex; align-items: center; gap: 8px;">
+            <span>✓ <strong>Protocol Terms Active On-Chain:</strong></span>
+            <code style="color: #6ee7b7;">${truncateAddress(this.termsData?.termsHash || "0x5b39922883ef59c037996c5e88863fc9f12d8a554a71879ec8217bb48ca4c820")}</code>
+          </div>
+          <button id="btn-admin-set-terms" class="btn btn-outline btn-sm" style="font-size: 11.5px; padding: 4px 10px;">Update Terms Hash</button>
+        </div>
+        `
+      }
+
       <!-- Navigation Tabs -->
       <div style="display: flex; gap: 10px; margin-bottom: 24px; border-bottom: 1px solid var(--border-subtle); padding-bottom: 8px;">
         <button id="adm-tab-users" class="btn btn-sm btn-primary">👥 Registered Users (${this.usersList.length})</button>
@@ -219,6 +256,48 @@ export class AdminView {
       <!-- Tab Content Area -->
       <div id="admin-subtab-container"></div>
     `;
+
+    // Terms activation listener
+    document.getElementById("btn-admin-set-terms")?.addEventListener("click", () => {
+      const SET_TERMS_HASH_ABI = parseAbi([
+        "function setTermsHash(bytes32 newHash) external"
+      ]);
+      const INDICO_LEDGER_ADDRESS = "0x78686caeAD6b25335895a4d920Dc1597140365Cd";
+      const defaultHash = "0x5b39922883ef59c037996c5e88863fc9f12d8a554a71879ec8217bb48ca4c820";
+
+      showModal({
+        title: "⚡ Activate Platform Terms On-Chain (ADMIN_ROLE)",
+        contentHtml: `
+          <div style="background: rgba(168, 85, 247, 0.1); border: 1px solid rgba(168, 85, 247, 0.3); border-radius: 8px; padding: 14px; margin-bottom: 14px; font-size: 13px; color: #d8b4fe;">
+            <strong>ON-CHAIN TERMS INITIALIZATION (D-21):</strong><br/>
+            Setting the active platform terms hash on <code>${truncateAddress(INDICO_LEDGER_ADDRESS)}</code>.<br/>
+            Target Hash: <code>${defaultHash}</code>
+          </div>
+          <p style="font-size: 12.5px; color: var(--text-muted); line-height: 1.6;">
+            Make sure your MetaMask is connected with your <strong>Admin Wallet (0xb9B4...F677)</strong> to sign this transaction. Once confirmed, all approved users can sign terms on-chain.
+          </p>
+        `,
+        confirmText: "Broadcast setTermsHash",
+        onConfirm: async () => {
+          try {
+            showToast("Broadcasting setTermsHash calldata via Admin wallet...", "info");
+            const data = encodeFunctionData({
+              abi: SET_TERMS_HASH_ABI,
+              functionName: "setTermsHash",
+              args: [defaultHash as any],
+            });
+            const txHash = await WalletManager.sendPreparedTx({
+              to: INDICO_LEDGER_ADDRESS,
+              data,
+            });
+            showToast(`Platform terms activated on-chain! Tx: ${truncateAddress(txHash)}`, "success");
+            await this.refresh();
+          } catch (err: any) {
+            showToast(err.message || "Failed to set terms hash", "error");
+          }
+        },
+      });
+    });
 
     // Header listeners
     document.getElementById("btn-admin-logout")?.addEventListener("click", () => {

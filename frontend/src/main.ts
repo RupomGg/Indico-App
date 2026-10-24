@@ -99,7 +99,7 @@ class App {
 
     document.getElementById("btn-main-wallet")?.addEventListener("click", async () => {
       try {
-        const address = await WalletManager.connect();
+        const address = await WalletManager.connect(true);
         showToast(`Wallet connected: ${truncateAddress(address)}`, "success");
         this.updateWalletUI();
       } catch (err: any) {
@@ -127,6 +127,12 @@ class App {
 
   private static async updateWalletUI() {
     const address = await WalletManager.getAccount();
+    const isSim = WalletManager.isSimulated();
+    const simBtn = document.getElementById("btn-toggle-sim");
+    if (simBtn) {
+      simBtn.textContent = isSim ? "🧪 Wallet: Simulated" : "🦊 Wallet: Browser";
+    }
+
     const btn = document.getElementById("btn-main-wallet");
     if (btn) {
       if (address) {

@@ -1078,8 +1078,8 @@ export class UserView {
   // --- ACTIONS: BIND WALLET & SIGN TERMS ---
   private static async handleBindWallet() {
     try {
-      showToast("Connecting wallet...", "info");
-      const address = await WalletManager.connect();
+      showToast("Connecting browser wallet...", "info");
+      const address = await WalletManager.connect(true);
       let accountRef = this.userProfile?.accountRef;
       if (!accountRef || !accountRef.startsWith("0x") || accountRef.length !== 66) {
         const randBytes = crypto.getRandomValues(new Uint8Array(32));
@@ -1087,7 +1087,7 @@ export class UserView {
       }
       const message = `Bind Indico Account ${accountRef} to ${address}`;
 
-      showToast("Please sign the message in your wallet...", "info");
+      showToast(`Connected: ${truncateAddress(address)}. Please sign the verification in your wallet...`, "info");
       const signature = await WalletManager.signMessage(message);
 
       showToast("Submitting cryptographic binding to backend...", "info");
