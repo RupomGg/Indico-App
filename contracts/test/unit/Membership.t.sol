@@ -384,7 +384,9 @@ contract MembershipTest is StateSnapshot {
         _startDiff();
         _set(admin, userFirst, a, true);
         // A user's first approval also links the wallet and the account both ways (D-60).
-        Write[] memory w = new Write[](userFirst ? 4 : 2);
+        // A merchant's approval auto-signs terms on-chain.
+        uint256 writeCount = userFirst ? 4 : (ledger.termsHash() != bytes32(0) ? 4 : 3);
+        Write[] memory w = new Write[](writeCount);
         uint256 flag = userFirst ? SLOT_APPROVED_USER : SLOT_APPROVED_MERCHANT;
         w[0] = _w(address(ledger), _key(a, flag), 1);
         w[1] = _w(address(ledger), _key(a, SLOT_PARTICIPANT_ROLE), role);
@@ -393,6 +395,13 @@ contract MembershipTest is StateSnapshot {
             w[3] = _w(
                 address(ledger), _key(_accountRef(a), SLOT_WALLET_OF_ACCOUNT), uint256(uint160(a))
             );
+        } else {
+            w[2] = _w(address(ledger), _key(a, SLOT_TERMS_SIGNED), 1);
+            if (ledger.termsHash() != bytes32(0)) {
+                w[3] = _w(
+                    address(ledger), _key(a, SLOT_SIGNED_TERMS_HASH), uint256(ledger.termsHash())
+                );
+            }
         }
         _assertWrites(w);
         assertEq(ledger.participantRole(a), role);

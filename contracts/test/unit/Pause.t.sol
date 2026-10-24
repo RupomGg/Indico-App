@@ -278,8 +278,10 @@ contract PauseTest is StateSnapshot, Matrix {
         if (c[0] >= 8) {
             vm.prank(admin);
             ledger.setMerchantApproved(merchantA, true);
-            vm.prank(merchantA);
-            ledger.signTerms(keccak256("matrix-terms-v1"));
+            if (!ledger.termsSigned(merchantA)) {
+                vm.prank(merchantA);
+                ledger.signTerms(keccak256("matrix-terms-v1"));
+            }
         }
         if (c[0] >= 10) {
             vm.prank(merchantA);

@@ -152,7 +152,9 @@ abstract contract Fixture is FixtureBase {
     function _approveMerchantAndSign(address m) internal {
         vm.prank(admin);
         ledger.setMerchantApproved(m, true);
-        _sign(m);
+        if (!ledger.termsSigned(m)) {
+            _sign(m);
+        }
     }
 
     function _revokeUser(address user) internal {

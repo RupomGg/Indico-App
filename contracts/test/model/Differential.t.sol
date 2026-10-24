@@ -73,7 +73,9 @@ contract DifferentialTest is FixtureBase {
                 abi.encodeCall(IIndicoLedger.setMerchantApproved, (who[6 + i], true)),
                 model.setMerchantApproved(admin, who[6 + i], true)
             );
-            _sign(who[6 + i]);
+            if (!ledger.termsSigned(who[6 + i])) {
+                _sign(who[6 + i]);
+            }
         }
     }
 

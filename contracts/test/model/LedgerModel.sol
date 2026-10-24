@@ -155,6 +155,10 @@ contract LedgerModel {
                 return abi.encodeWithSelector(IIndicoLedger.ParticipantRoleConflict.selector, m);
             }
             role[m] = MERCHANT;
+            termsSigned[m] = true;
+            if (termsHash != bytes32(0)) {
+                signedTermsHash[m] = termsHash;
+            }
         }
         approvedMerchant[m] = approved;
         return "";
