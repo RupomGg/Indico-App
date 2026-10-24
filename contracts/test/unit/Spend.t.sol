@@ -218,6 +218,8 @@ contract SpendTest is Actors {
         _addActor(m);
         vm.prank(admin);
         ledger.setMerchantApproved(m, true);
+        vm.store(address(ledger), _key(m, SLOT_TERMS_SIGNED), bytes32(0));
+        vm.store(address(ledger), _key(m, SLOT_SIGNED_TERMS_HASH), bytes32(0));
         _expectRevertUnchanged(
             alice, m, 1, abi.encodeWithSelector(IIndicoLedger.MerchantTermsNotSigned.selector, m)
         );
@@ -304,6 +306,7 @@ contract SpendTest is Actors {
         address m = makeAddr("unsignedMerchant");
         vm.prank(admin);
         ledger.setMerchantApproved(m, true);
+        vm.store(address(ledger), _key(m, SLOT_TERMS_SIGNED), bytes32(0));
         _expectRevertUnchanged(
             alice, m, 0, abi.encodeWithSelector(IIndicoLedger.MerchantTermsNotSigned.selector, m)
         );

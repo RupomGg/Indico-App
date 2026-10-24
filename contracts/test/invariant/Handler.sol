@@ -84,8 +84,10 @@ contract Handler is Test {
             address m = _newActor(string.concat("inv-merchant", vm.toString(i)));
             vm.prank(admin_);
             ledger_.setMerchantApproved(m, true);
-            vm.prank(m);
-            ledger_.signTerms(terms);
+            if (!ledger_.termsSigned(m)) {
+                vm.prank(m);
+                ledger_.signTerms(terms);
+            }
             merchants.push(m);
         }
         for (uint256 i; i < 2; i++) {

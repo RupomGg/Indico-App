@@ -253,6 +253,8 @@ contract PoolTest is Actors {
         _addActor(m);
         vm.prank(admin);
         ledger.setMerchantApproved(m, true);
+        vm.store(address(ledger), _key(m, SLOT_TERMS_SIGNED), bytes32(0));
+        vm.store(address(ledger), _key(m, SLOT_SIGNED_TERMS_HASH), bytes32(0));
         _expectRevertUnchanged(
             m, _depositCall(DEP), abi.encodeWithSelector(IIndicoLedger.TermsNotSigned.selector)
         );
@@ -343,6 +345,7 @@ contract PoolTest is Actors {
         address m = makeAddr("unsignedMerchant");
         vm.prank(admin);
         ledger.setMerchantApproved(m, true);
+        vm.store(address(ledger), _key(m, SLOT_TERMS_SIGNED), bytes32(0));
         _expectRevertUnchanged(
             m, _depositCall(0), abi.encodeWithSelector(IIndicoLedger.TermsNotSigned.selector)
         );
