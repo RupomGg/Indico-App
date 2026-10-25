@@ -6,3 +6,8 @@
 # (D-38, fee-on-transfer); nonReentrant; the token is Circle's USDC, immutable, no hooks.
 reentrancy-state-change src/IndicoLedger.sol:377
 reentrancy-state-change src/IndicoLedger.sol:379
+#
+# syncDeposit: surplus USDC balance measured via balanceOf before crediting merchant shares;
+# nonReentrant; the token is Circle's USDC, immutable, no hooks.
+reentrancy-state-change src/IndicoLedger.sol:405
+
