@@ -15,7 +15,7 @@ const envSchema = z.object({
   INDICO_LEDGER_ADDRESS: z
     .string()
     .regex(/^0x[a-fA-F0-9]{40}$/, "Invalid IndicoLedger contract address")
-    .default("0x78686caeAD6b25335895a4d920Dc1597140365Cd"),
+    .default("0x422D36E2198863C5b2A6B8E2865fBf5196de96cF"),
   USDC_ADDRESS: z
     .string()
     .regex(/^0x[a-fA-F0-9]{40}$/, "Invalid USDC contract address")

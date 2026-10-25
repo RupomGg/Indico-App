@@ -12,7 +12,7 @@ import {IndicoLedger} from "../src/IndicoLedger.sol";
 ///         - Funds TestMerchant1 with ETH (gas) and 10 USDC (liquidity)
 ///         - Funds TestUser1 with ETH (gas) and 5 USDC (repayment)
 contract OnboardParticipants is Script {
-    address internal constant LEDGER = 0x78686caeAD6b25335895a4d920Dc1597140365Cd;
+    address internal constant LEDGER = 0x422D36E2198863C5b2A6B8E2865fBf5196de96cF;
     address internal constant USDC = 0x036CbD53842c5426634e7929541eC2318f3dCF7e;
 
     address internal constant TEST_MERCHANT = 0x7b4C1E792d0ef3942f479E74de6043A6238a8fd1;

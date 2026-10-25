@@ -10,7 +10,7 @@ export default defineConfig({
     env: {
       DATABASE_URL: "postgresql://test_user:test_pass@localhost:5432/test_db?schema=public",
       JWT_SECRET: "test-jwt-secret-at-least-32-characters-long-12345",
-      INDICO_LEDGER_ADDRESS: "0x78686caeAD6b25335895a4d920Dc1597140365Cd",
+      INDICO_LEDGER_ADDRESS: "0x422D36E2198863C5b2A6B8E2865fBf5196de96cF",
       USDC_ADDRESS: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
       DOCUMENT_ENCRYPTION_KEY: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
       NODE_ENV: "test",

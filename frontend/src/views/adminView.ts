@@ -262,7 +262,7 @@ export class AdminView {
       const SET_TERMS_HASH_ABI = parseAbi([
         "function setTermsHash(bytes32 newHash) external"
       ]);
-      const INDICO_LEDGER_ADDRESS = "0x78686caeAD6b25335895a4d920Dc1597140365Cd";
+      const INDICO_LEDGER_ADDRESS = "0x422D36E2198863C5b2A6B8E2865fBf5196de96cF";
       const defaultHash = "0x5b39922883ef59c037996c5e88863fc9f12d8a554a71879ec8217bb48ca4c820";
 
       showModal({
@@ -460,7 +460,7 @@ export class AdminView {
       });
     });
 
-    const INDICO_LEDGER_ADDRESS = "0x78686caeAD6b25335895a4d920Dc1597140365Cd";
+    const INDICO_LEDGER_ADDRESS = "0x422D36E2198863C5b2A6B8E2865fBf5196de96cF";
     const SET_USER_APPROVED_ABI = parseAbi([
       "function setUserApproved(address user, bool approved, bytes32 accountRef) external"
     ]);
@@ -536,7 +536,7 @@ export class AdminView {
 
   // --- SUB-TAB 2: MERCHANTS & SERVICES (AD-04 to AD-08) ---
   private static renderMerchantsTab(container: HTMLElement) {
-    const INDICO_LEDGER_ADDRESS = "0x78686caeAD6b25335895a4d920Dc1597140365Cd";
+    const INDICO_LEDGER_ADDRESS = "0x422D36E2198863C5b2A6B8E2865fBf5196de96cF";
     const SET_MERCHANT_APPROVED_ABI = parseAbi([
       "function setMerchantApproved(address m, bool approved) external"
     ]);
@@ -1084,7 +1084,7 @@ export class AdminView {
   // --- SUB-TAB 3: POOL & LOANS SUPERVISION (AD-13, AD-15, AD-21) ---
   // --- SUB-TAB 3: POOL & LOANS SUPERVISION (AD-13, AD-15, AD-21) ---
   private static renderLoansTab(container: HTMLElement) {
-    const INDICO_LEDGER_ADDRESS = "0x78686caeAD6b25335895a4d920Dc1597140365Cd";
+    const INDICO_LEDGER_ADDRESS = "0x422D36E2198863C5b2A6B8E2865fBf5196de96cF";
     const SYNC_DEPOSIT_ABI = parseAbi([
       "function syncDeposit(address merchant, uint256 amount) external"
     ]);

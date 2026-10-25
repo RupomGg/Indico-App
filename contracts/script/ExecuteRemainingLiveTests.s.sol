@@ -14,7 +14,7 @@ import {IIndicoLedger} from "../src/interfaces/IIndicoLedger.sol";
 ///         5. Merchant pool withdrawals (withdraw & withdrawAll)
 ///         6. Guardian emergency controls (pause & unpause & grace period)
 contract ExecuteRemainingLiveTests is Script {
-    address internal constant LEDGER = 0x78686caeAD6b25335895a4d920Dc1597140365Cd;
+    address internal constant LEDGER = 0x422D36E2198863C5b2A6B8E2865fBf5196de96cF;
     address internal constant USDC = 0x036CbD53842c5426634e7929541eC2318f3dCF7e;
 
     address internal constant ADMIN = 0xb9B49b26Df2AC02FEE89dCe82Eb1f8bC3774F677;
