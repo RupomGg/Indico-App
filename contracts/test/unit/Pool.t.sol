@@ -1143,7 +1143,10 @@ contract PoolTest is Actors {
     function testFuzz_syncDeposit_unauthorizedCaller_reverts(address caller, uint256 amount)
         public
     {
-        vm.assume(caller != admin && caller != merchantA && caller != address(0));
+        caller = _remapForgeAddress(caller);
+        if (caller == admin || caller == merchantA || caller == address(0)) {
+            caller = makeAddr("unauthorized-sync-caller");
+        }
         amount = bound(amount, 1, 1_000_000e6);
 
         vm.prank(merchantA);
