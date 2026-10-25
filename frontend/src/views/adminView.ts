@@ -1082,8 +1082,53 @@ export class AdminView {
   }
 
   // --- SUB-TAB 3: POOL & LOANS SUPERVISION (AD-13, AD-15, AD-21) ---
+  // --- SUB-TAB 3: POOL & LOANS SUPERVISION (AD-13, AD-15, AD-21) ---
   private static renderLoansTab(container: HTMLElement) {
+    const INDICO_LEDGER_ADDRESS = "0x78686caeAD6b25335895a4d920Dc1597140365Cd";
+    const SYNC_DEPOSIT_ABI = parseAbi([
+      "function syncDeposit(address merchant, uint256 amount) external"
+    ]);
+
     container.innerHTML = `
+      <!-- Escrow Pool & Tangem / MetaMask Direct Transfer Overview -->
+      <div class="card" style="margin-bottom: 24px; border: 1px solid rgba(168, 85, 247, 0.3); background: linear-gradient(135deg, rgba(168, 85, 247, 0.05) 0%, rgba(20, 20, 30, 0.6) 100%);">
+        <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
+          <div>
+            <h3 class="card-title" style="color: #d8b4fe; display: flex; align-items: center; gap: 8px;">
+              🛡️ Escrow Pool & Direct Wallet Ingestion
+            </h3>
+            <span style="font-size: 12px; color: var(--text-muted);">
+              Supports direct USDC transfers from Tangem Wallet NFC cards & MetaMask without web dApp usage
+            </span>
+          </div>
+          <span class="badge badge-success" style="font-size: 11px;">● Automated Keeper Active</span>
+        </div>
+
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; margin: 18px 0;">
+          <div style="background: rgba(255,255,255,0.03); border: 1px solid var(--border-subtle); border-radius: 8px; padding: 14px;">
+            <div style="font-size: 11px; text-transform: uppercase; color: var(--text-muted); font-weight: 700; letter-spacing: 0.5px;">Pool Liquidity (Cash)</div>
+            <div style="font-size: 22px; font-weight: 800; color: #fff; margin-top: 4px; font-family: var(--font-mono);">${formatUsdc(this.poolData?.poolAvailableUnits || "0")} USDC</div>
+            <div style="font-size: 11.5px; color: #10b981; margin-top: 4px;">Available for user borrowing</div>
+          </div>
+          <div style="background: rgba(255,255,255,0.03); border: 1px solid var(--border-subtle); border-radius: 8px; padding: 14px;">
+            <div style="font-size: 11px; text-transform: uppercase; color: var(--text-muted); font-weight: 700; letter-spacing: 0.5px;">Total Lent on Active Loans</div>
+            <div style="font-size: 22px; font-weight: 800; color: #fff; margin-top: 4px; font-family: var(--font-mono);">${formatUsdc(this.poolData?.totalLentUnits || "0")} USDC</div>
+            <div style="font-size: 11.5px; color: var(--text-muted); margin-top: 4px;">Across ${this.loansData.filter((l: any) => l.status === "ACTIVE").length} active loan(s)</div>
+          </div>
+          <div style="background: rgba(255,255,255,0.03); border: 1px solid var(--border-subtle); border-radius: 8px; padding: 14px;">
+            <div style="font-size: 11px; text-transform: uppercase; color: var(--text-muted); font-weight: 700; letter-spacing: 0.5px;">Merchant Deposit Address</div>
+            <div style="font-size: 12px; font-family: var(--font-mono); color: #cbd5e1; margin-top: 6px; word-break: break-all;">
+              ${INDICO_LEDGER_ADDRESS}
+            </div>
+            <button id="btn-copy-escrow-addr" class="btn btn-sm btn-outline" style="margin-top: 8px; width: 100%; font-size: 11px;">📋 Copy Address for Merchants</button>
+          </div>
+        </div>
+
+        <div style="display: flex; gap: 10px; justify-content: flex-end; align-items: center; border-top: 1px solid var(--border-subtle); padding-top: 14px;">
+          <button id="btn-manual-sync-deposit" class="btn btn-sm btn-purple" style="font-size: 12px;">⚡ Manual Sync Merchant Deposit</button>
+        </div>
+      </div>
+
       <div class="card">
         <div class="card-header">
           <h3 class="card-title">📊 System Loans & Liquidation Trigger (${this.loansData.length})</h3>
@@ -1148,6 +1193,62 @@ export class AdminView {
         </div>
       </div>
     `;
+
+    // Copy Escrow Address
+    document.getElementById("btn-copy-escrow-addr")?.addEventListener("click", () => {
+      navigator.clipboard.writeText(INDICO_LEDGER_ADDRESS);
+      showToast("Escrow address copied to clipboard!", "success");
+    });
+
+    // Manual Sync Merchant Deposit Modal
+    document.getElementById("btn-manual-sync-deposit")?.addEventListener("click", () => {
+      showModal({
+        title: "⚡ Manual Sync Merchant Direct Deposit (ADMIN_ROLE)",
+        contentHtml: `
+          <div style="background: rgba(168, 85, 247, 0.1); border: 1px solid rgba(168, 85, 247, 0.3); border-radius: 8px; padding: 14px; margin-bottom: 14px; font-size: 13px; color: #d8b4fe;">
+            <strong>ON-CHAIN POOL DEPOSIT SYNC (syncDeposit):</strong><br/>
+            Credits USDC that a merchant sent directly to the escrow contract from Tangem or MetaMask.
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 12px; font-size: 13px;">
+            <div class="form-group">
+              <label class="form-label">Approved Merchant</label>
+              <select id="sync-merchant-wallet" class="form-select">
+                ${this.merchantsList.map((m) => `<option value="${m.walletAddress}">${m.name} (${truncateAddress(m.walletAddress)})</option>`).join("")}
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Amount (USDC)</label>
+              <input type="text" id="sync-deposit-amount" class="form-input form-mono" placeholder="5.000000" />
+            </div>
+          </div>
+        `,
+        confirmText: "Broadcast syncDeposit",
+        onConfirm: async () => {
+          const merchantWallet = (document.getElementById("sync-merchant-wallet") as HTMLSelectElement)?.value;
+          const amountStr = (document.getElementById("sync-deposit-amount") as HTMLInputElement)?.value.trim();
+
+          if (!merchantWallet) throw new Error("Select a merchant");
+          if (!amountStr || isNaN(Number(amountStr)) || Number(amountStr) <= 0) throw new Error("Enter a valid USDC amount");
+
+          const units = BigInt(Math.floor(Number(amountStr) * 1e6));
+
+          showToast("Preparing syncDeposit transaction...", "info");
+          const data = encodeFunctionData({
+            abi: SYNC_DEPOSIT_ABI,
+            functionName: "syncDeposit",
+            args: [merchantWallet as any, units],
+          });
+
+          const txHash = await WalletManager.sendPreparedTx({
+            to: INDICO_LEDGER_ADDRESS,
+            data,
+          });
+
+          showToast(`Deposit synced on-chain! Tx: ${truncateAddress(txHash)}`, "success");
+          await this.refresh();
+        },
+      });
+    });
   }
 
   // --- SUB-TAB 4: AUDIT LOGS BROWSER (AD-16) ---

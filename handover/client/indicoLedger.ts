@@ -1006,6 +1006,24 @@ export const indicoLedgerAbi = [
   },
   {
     "type": "function",
+    "name": "syncDeposit",
+    "inputs": [
+      {
+        "name": "merchant",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "termsHash",
     "inputs": [],
     "outputs": [

@@ -1,6 +1,6 @@
 import { decodeEventLog } from "viem";
 import { prisma } from "../../lib/prisma.js";
-import { publicClient, INDICO_LEDGER_ABI } from "../../lib/viem.js";
+import { publicClient, INDICO_LEDGER_ABI, keeperWalletClient, keeperAccount } from "../../lib/viem.js";
 import { env } from "../../config/env.js";
 import { projectChainLog } from "./indexer.projector.js";
 import { DecodedChainLog, IndexerStatusResponse } from "./indexer.schemas.js";
@@ -35,6 +35,56 @@ export class IndexerService {
   static async syncBlockRange(fromBlock: bigint, toBlock: bigint) {
     if (fromBlock > toBlock) {
       return { syncedBlocks: 0, eventsProcessed: 0 };
+    }
+
+    // 1. Check for direct USDC transfers sent to IndicoLedger (e.g. from Tangem / MetaMask wallet "Send")
+    try {
+      const usdcTransferLogs = await publicClient.getLogs({
+        address: env.USDC_ADDRESS as `0x${string}`,
+        event: {
+          type: "event",
+          name: "Transfer",
+          inputs: [
+            { type: "address", name: "from", indexed: true },
+            { type: "address", name: "to", indexed: true },
+            { type: "uint256", name: "value", indexed: false },
+          ],
+        },
+        args: {
+          to: env.INDICO_LEDGER_ADDRESS as `0x${string}`,
+        },
+        fromBlock,
+        toBlock,
+      });
+
+      for (const log of usdcTransferLogs) {
+        const fromAddress = (log.args.from as string).toLowerCase();
+        const value = log.args.value as bigint;
+
+        if (!fromAddress || !value || value === 0n) continue;
+
+        const merchant = await prisma.merchant.findUnique({
+          where: { walletAddress: fromAddress },
+        });
+
+        if (merchant && merchant.isApproved && keeperWalletClient && keeperAccount) {
+          console.log(`⚡ [Keeper] Direct USDC transfer of ${value} units detected from approved merchant ${fromAddress}. Syncing on-chain...`);
+          try {
+            const hash = await keeperWalletClient.writeContract({
+              address: env.INDICO_LEDGER_ADDRESS as `0x${string}`,
+              abi: INDICO_LEDGER_ABI,
+              functionName: "syncDeposit",
+              args: [fromAddress as `0x${string}`, value],
+              account: keeperAccount,
+            });
+            console.log(`✅ [Keeper] syncDeposit broadcasted for merchant ${fromAddress}: ${hash}`);
+          } catch (syncErr: any) {
+            console.warn(`⚠️ [Keeper] syncDeposit skipped or already synced:`, syncErr?.message || syncErr);
+          }
+        }
+      }
+    } catch (err: any) {
+      // Don't interrupt indexer loop if public RPC getLogs encounters rate limit
     }
 
     const rawLogs = await publicClient.getLogs({

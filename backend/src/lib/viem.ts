@@ -1,5 +1,6 @@
 import {
   createPublicClient,
+  createWalletClient,
   http,
   parseAbi,
   decodeErrorResult,
@@ -7,6 +8,7 @@ import {
   type Hex,
   type Address,
 } from "viem";
+import { privateKeyToAccount } from "viem/accounts";
 import { baseSepolia, base } from "viem/chains";
 import { env } from "../config/env.js";
 
@@ -21,6 +23,7 @@ export const INDICO_LEDGER_ABI = parseAbi([
   "function extend(uint256 loanId) external",
   "function liquidate(uint256 loanId) external",
   "function deposit(uint256 amount) external",
+  "function syncDeposit(address merchant, uint256 amount) external",
   "function withdraw(uint256 assets) external",
   "function withdrawAll() external",
   "function setUserApproved(address user, bool approved, bytes32 accountRef) external",
@@ -110,6 +113,7 @@ export const INDICO_LEDGER_ABI = parseAbi([
 ]);
 
 export const ERC20_ABI = parseAbi([
+  "event Transfer(address indexed from, address indexed to, uint256 value)",
   "function approve(address spender, uint256 amount) external returns (bool)",
   "function allowance(address owner, address spender) external view returns (uint256)",
   "function balanceOf(address account) external view returns (uint256)",
@@ -121,6 +125,18 @@ export const publicClient = createPublicClient({
   chain,
   transport: http(env.RPC_URL),
 });
+
+export const keeperAccount = env.KEEPER_PRIVATE_KEY
+  ? privateKeyToAccount(env.KEEPER_PRIVATE_KEY as Hex)
+  : undefined;
+
+export const keeperWalletClient = keeperAccount
+  ? createWalletClient({
+      account: keeperAccount,
+      chain,
+      transport: http(env.RPC_URL),
+    })
+  : undefined;
 
 export interface PreparedTransaction {
   to: Address;
