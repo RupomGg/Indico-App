@@ -45,7 +45,7 @@ contract NegativeSpaceTest is Actors {
     // ================================================================== the call list
 
     function _calls() internal view returns (Call[] memory c) {
-        c = new Call[](69);
+        c = new Call[](70);
         uint256 i;
         // views, by a stranger
         c[i++] = Call(stranger, abi.encodeWithSignature("ADMIN_ROLE()"));
@@ -112,6 +112,7 @@ contract NegativeSpaceTest is Actors {
         );
         c[i++] = Call(alice, abi.encodeCall(IIndicoLedger.spend, (merchantA, 1e6)));
         c[i++] = Call(merchantA, abi.encodeCall(IIndicoLedger.deposit, (1e6)));
+        c[i++] = Call(admin, abi.encodeCall(IIndicoLedger.syncDeposit, (merchantA, 1e6)));
         c[i++] = Call(merchantA, abi.encodeCall(IIndicoLedger.withdraw, (1e6)));
         c[i++] = Call(merchantA, abi.encodeCall(IIndicoLedger.withdrawAll, ()));
         c[i++] = Call(alice, abi.encodeCall(IIndicoLedger.requestLoan, (1e6)));

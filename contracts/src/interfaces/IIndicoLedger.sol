@@ -273,6 +273,12 @@ interface IIndicoLedger {
     ///      Emits `Deposited`.
     function deposit(uint256 amount) external;
 
+    /// @notice Credit USDC that arrived directly into the contract from an approved merchant's wallet transfer.
+    /// @dev `whenNotPaused`, `nonReentrant`. Callable by the merchant or ADMIN_ROLE (automated keeper).
+    ///      Mints shares to `merchant` on what actually arrived, updating `poolUsdc`.
+    ///      Emits `Deposited`.
+    function syncDeposit(address merchant, uint256 amount) external;
+
     /// @notice Withdraw `assets` USDC, burning the shares they are worth, rounded up (D-39).
     /// @dev `whenNotPaused`, `nonReentrant`, allowed for a revoked merchant. Reverts, in order,
     ///      `ZeroAmount`, `InsufficientShares(needed, held)`, `InsufficientLiquidity(assets,

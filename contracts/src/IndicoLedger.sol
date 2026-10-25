@@ -390,6 +390,37 @@ contract IndicoLedger is IIndicoLedger, AccessControlDefaultAdminRules, Pausable
         emit IIndicoLedger.Deposited(msg.sender, received, minted);
     }
 
+    /// @notice Credit USDC that arrived directly into the contract from an approved merchant's wallet transfer.
+    /// @dev Allows merchants using mobile/hardware wallets (e.g. Tangem, MetaMask) to fund the escrow
+    ///      pool via standard wallet "Send" without requiring a custom dApp interface.
+    ///      Callable by the merchant or ADMIN_ROLE (automated keeper).
+    function syncDeposit(address merchant, uint256 amount) external nonReentrant whenNotPaused {
+        if (msg.sender != merchant && !hasRole(ADMIN_ROLE, msg.sender)) {
+            revert IIndicoLedger.NotApprovedMerchant();
+        }
+        if (!approvedMerchant[merchant]) revert IIndicoLedger.NotApprovedMerchant();
+        if (!termsSigned[merchant]) revert IIndicoLedger.TermsNotSigned();
+        if (amount == 0) revert IIndicoLedger.ZeroAmount();
+
+        uint256 currentBalance = usdc.balanceOf(address(this));
+        if (currentBalance < poolUsdc + amount) {
+            revert IIndicoLedger.InsufficientLiquidity(
+                amount, currentBalance > poolUsdc ? currentBalance - poolUsdc : 0
+            );
+        }
+
+        uint256 minted = _toShares(amount, false);
+        // slither-disable-next-line incorrect-equality
+        if (minted == 0) revert IIndicoLedger.ZeroShares();
+
+        shares[merchant] += minted;
+        totalShares += minted;
+        poolUsdc += amount;
+
+        // forge-lint: disable-next-line(reentrancy-events)
+        emit IIndicoLedger.Deposited(merchant, amount, minted);
+    }
+
     /// @notice Withdraw exactly `assets` USDC, burning the shares they are worth, rounded up
     ///         (D-39). No approval check: a revoked merchant's money is still theirs.
     function withdraw(uint256 assets) external nonReentrant whenNotPaused {

@@ -62,8 +62,10 @@ contract BaseForkTest is Test {
         vm.stopPrank();
         vm.prank(user);
         ledger.signTerms(TERMS);
-        vm.prank(merchant);
-        ledger.signTerms(TERMS);
+        if (!ledger.termsSigned(merchant) || ledger.signedTermsHash(merchant) != TERMS) {
+            vm.prank(merchant);
+            ledger.signTerms(TERMS);
+        }
     }
 
     /// @dev The constructor accepts Circle's USDC: a contract with 6 decimals (D-16).

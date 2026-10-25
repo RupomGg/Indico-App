@@ -1010,4 +1010,148 @@ contract PoolTest is Actors {
         assertEq(usdc.balanceOf(merchantA), FUND, "two payments are not the whole claim");
         _assertBooks();
     }
+
+    // ---------------------------------------------------------------------------------------
+    // syncDeposit (Tangem / MetaMask direct wallet transfers)
+    // ---------------------------------------------------------------------------------------
+
+    function test_syncDeposit_merchantDirectTransfer_adminSyncs_creditsSharesAndPoolUsdc() public {
+        // 1. Merchant transfers USDC directly to the contract (e.g. from Tangem or MetaMask)
+        vm.prank(merchantA);
+        usdc.transfer(address(ledger), 500e6);
+
+        // Assert surplus is in contract but not yet credited to poolUsdc
+        assertEq(usdc.balanceOf(address(ledger)), 500e6);
+        assertEq(ledger.poolUsdc(), 0);
+        assertEq(ledger.shares(merchantA), 0);
+
+        // 2. Admin / Keeper calls syncDeposit
+        vm.expectEmit(true, false, false, true, address(ledger));
+        emit IIndicoLedger.Deposited(merchantA, 500e6, 500e6 * 1e6);
+
+        vm.prank(admin);
+        ledger.syncDeposit(merchantA, 500e6);
+
+        // 3. Verify shares and poolUsdc
+        assertEq(ledger.poolUsdc(), 500e6);
+        assertEq(ledger.shares(merchantA), 500e6 * 1e6);
+        assertEq(ledger.totalShares(), 500e6 * 1e6);
+        _assertBooks();
+
+        // 4. Verify merchant can withdraw
+        _withdrawAll(merchantA);
+        assertEq(ledger.shares(merchantA), 0);
+        assertEq(usdc.balanceOf(merchantA), FUND);
+    }
+
+    function test_syncDeposit_calledByMerchant_succeeds() public {
+        vm.prank(merchantA);
+        usdc.transfer(address(ledger), 200e6);
+
+        vm.prank(merchantA);
+        ledger.syncDeposit(merchantA, 200e6);
+
+        assertEq(ledger.poolUsdc(), 200e6);
+        assertEq(ledger.shares(merchantA), 200e6 * 1e6);
+    }
+
+    function test_syncDeposit_revertNonAdminNonMerchant() public {
+        vm.prank(merchantA);
+        usdc.transfer(address(ledger), 100e6);
+
+        vm.prank(stranger);
+        vm.expectRevert(IIndicoLedger.NotApprovedMerchant.selector);
+        ledger.syncDeposit(merchantA, 100e6);
+    }
+
+    function test_syncDeposit_revertUnapprovedMerchant() public {
+        vm.prank(merchantA);
+        usdc.transfer(address(ledger), 100e6);
+
+        vm.prank(admin);
+        vm.expectRevert(IIndicoLedger.NotApprovedMerchant.selector);
+        ledger.syncDeposit(stranger, 100e6);
+    }
+
+    function test_syncDeposit_revertTermsNotSigned() public {
+        address unverifiedMerchant = makeAddr("unverifiedMerchant");
+        vm.prank(admin);
+        ledger.setMerchantApproved(unverifiedMerchant, true);
+        // Explicitly set termsSigned to false via storage cheatcode
+        vm.store(
+            address(ledger),
+            keccak256(abi.encode(unverifiedMerchant, SLOT_TERMS_SIGNED)),
+            bytes32(0)
+        );
+
+        vm.prank(merchantA);
+        usdc.transfer(address(ledger), 100e6);
+
+        vm.prank(admin);
+        vm.expectRevert(IIndicoLedger.TermsNotSigned.selector);
+        ledger.syncDeposit(unverifiedMerchant, 100e6);
+    }
+
+    function test_syncDeposit_revertZeroAmount() public {
+        vm.prank(admin);
+        vm.expectRevert(IIndicoLedger.ZeroAmount.selector);
+        ledger.syncDeposit(merchantA, 0);
+    }
+
+    function test_syncDeposit_revertInsufficientLiquidity() public {
+        // Contract has 0 surplus USDC
+        assertEq(usdc.balanceOf(address(ledger)), 0);
+
+        vm.prank(admin);
+        vm.expectRevert(
+            abi.encodeWithSelector(IIndicoLedger.InsufficientLiquidity.selector, 100e6, 0)
+        );
+        ledger.syncDeposit(merchantA, 100e6);
+    }
+
+    function test_syncDeposit_revertWhenPaused() public {
+        vm.prank(merchantA);
+        usdc.transfer(address(ledger), 100e6);
+
+        vm.prank(guardian);
+        ledger.pause();
+
+        vm.prank(admin);
+        vm.expectRevert(Pausable.EnforcedPause.selector);
+        ledger.syncDeposit(merchantA, 100e6);
+    }
+
+    /// @dev Fuzz: any valid amount transferred directly and synced produces exact accounting
+    function testFuzz_syncDeposit_matchesDepositSharesAndClaim(uint256 amount) public {
+        amount = bound(amount, 1, FUND / 2);
+
+        vm.prank(merchantA);
+        usdc.transfer(address(ledger), amount);
+
+        uint256 sharesBefore = ledger.shares(merchantA);
+        uint256 poolUsdcBefore = ledger.poolUsdc();
+
+        vm.prank(admin);
+        ledger.syncDeposit(merchantA, amount);
+
+        assertEq(ledger.poolUsdc(), poolUsdcBefore + amount);
+        assertGt(ledger.shares(merchantA), sharesBefore);
+        _assertBooks();
+    }
+
+    /// @dev Fuzz: any unauthorized non-admin, non-merchant caller reverts with NotApprovedMerchant
+    function testFuzz_syncDeposit_unauthorizedCaller_reverts(address caller, uint256 amount)
+        public
+    {
+        vm.assume(caller != admin && caller != merchantA && caller != address(0));
+        amount = bound(amount, 1, 1_000_000e6);
+
+        vm.prank(merchantA);
+        usdc.transfer(address(ledger), amount);
+
+        vm.prank(caller);
+        vm.expectRevert(IIndicoLedger.NotApprovedMerchant.selector);
+        ledger.syncDeposit(merchantA, amount);
+    }
 }
+
