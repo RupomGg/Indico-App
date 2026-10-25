@@ -19,3 +19,6 @@ coverage/
 storage/
 **/storage/
 
+# Scratch scripts and temporary files
+scratch/
+**/scratch/

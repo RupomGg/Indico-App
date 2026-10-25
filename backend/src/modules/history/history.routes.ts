@@ -74,4 +74,21 @@ export async function historyRoutes(fastify: FastifyInstance) {
       return reply.send(result);
     }
   );
+
+  // GET /history/transactions (PRD §4.3 C-01, §4.4 L-09; User on-chain transaction history)
+  fastify.get(
+    "/transactions",
+    {
+      preHandler: [authenticate],
+      schema: {
+        description: "List chronological on-chain transaction events with txHash for the user",
+        tags: ["History"],
+      },
+    },
+    async (request, reply) => {
+      const userId = request.user!.id;
+      const result = await HistoryService.getUserTransactions(userId);
+      return reply.send(result);
+    }
+  );
 }

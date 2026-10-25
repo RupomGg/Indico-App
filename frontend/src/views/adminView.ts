@@ -156,9 +156,9 @@ export class AdminView {
 
   // --- 2. ADMIN DASHBOARD ---
   private static renderDashboard() {
-    const totalDeposited = this.poolData?.totalDeposited || "0.000000";
-    const totalLentOut = this.poolData?.totalLentOut || "0.000000";
-    const availablePool = this.poolData?.availableUsdc || "0.000000";
+    const totalDeposited = this.poolData?.totalDeposited || this.poolData?.totalAssets || "0.000000";
+    const totalLentOut = this.poolData?.totalLentOut || this.poolData?.totalLent || "0.000000";
+    const availablePool = this.poolData?.availableUsdc || this.poolData?.poolCash || "0.000000";
     const safeEthBalance = this.safeStatus?.ethBalance || "0.0000";
     const isSafeLow = this.safeStatus?.isLowGas;
 
@@ -245,7 +245,7 @@ export class AdminView {
       }
 
       <!-- Navigation Tabs -->
-      <div style="display: flex; gap: 10px; margin-bottom: 24px; border-bottom: 1px solid var(--border-subtle); padding-bottom: 8px;">
+      <div style="display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 24px; border-bottom: 1px solid var(--border-subtle); padding-bottom: 8px;">
         <button id="adm-tab-users" class="btn btn-sm btn-primary">👥 Registered Users (${this.usersList.length})</button>
         <button id="adm-tab-merchants" class="btn btn-sm btn-outline">🏪 Merchants & Services (${this.merchantsList.length})</button>
         <button id="adm-tab-loans" class="btn btn-sm btn-outline">📊 Pool & Loans (${this.loansData.length})</button>
@@ -1107,12 +1107,12 @@ export class AdminView {
         <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; margin: 18px 0;">
           <div style="background: rgba(255,255,255,0.03); border: 1px solid var(--border-subtle); border-radius: 8px; padding: 14px;">
             <div style="font-size: 11px; text-transform: uppercase; color: var(--text-muted); font-weight: 700; letter-spacing: 0.5px;">Pool Liquidity (Cash)</div>
-            <div style="font-size: 22px; font-weight: 800; color: #fff; margin-top: 4px; font-family: var(--font-mono);">${formatUsdc(this.poolData?.poolAvailableUnits || "0")} USDC</div>
+            <div style="font-size: 22px; font-weight: 800; color: #fff; margin-top: 4px; font-family: var(--font-mono);">${formatUsdc(this.poolData?.poolCash || this.poolData?.availableUsdc || "0")} USDC</div>
             <div style="font-size: 11.5px; color: #10b981; margin-top: 4px;">Available for user borrowing</div>
           </div>
           <div style="background: rgba(255,255,255,0.03); border: 1px solid var(--border-subtle); border-radius: 8px; padding: 14px;">
             <div style="font-size: 11px; text-transform: uppercase; color: var(--text-muted); font-weight: 700; letter-spacing: 0.5px;">Total Lent on Active Loans</div>
-            <div style="font-size: 22px; font-weight: 800; color: #fff; margin-top: 4px; font-family: var(--font-mono);">${formatUsdc(this.poolData?.totalLentUnits || "0")} USDC</div>
+            <div style="font-size: 22px; font-weight: 800; color: #fff; margin-top: 4px; font-family: var(--font-mono);">${formatUsdc(this.poolData?.totalLent || this.poolData?.totalLentOut || "0")} USDC</div>
             <div style="font-size: 11.5px; color: var(--text-muted); margin-top: 4px;">Across ${this.loansData.filter((l: any) => l.status === "ACTIVE").length} active loan(s)</div>
           </div>
           <div style="background: rgba(255,255,255,0.03); border: 1px solid var(--border-subtle); border-radius: 8px; padding: 14px;">
@@ -1199,6 +1199,8 @@ export class AdminView {
       navigator.clipboard.writeText(INDICO_LEDGER_ADDRESS);
       showToast("Escrow address copied to clipboard!", "success");
     });
+
+
 
     // Manual Sync Merchant Deposit Modal
     document.getElementById("btn-manual-sync-deposit")?.addEventListener("click", () => {
@@ -1367,9 +1369,9 @@ export class AdminView {
         if (lower.includes("pool")) {
           botMsg.innerHTML = `
             <strong>📊 Shared Pool State:</strong><br/>
-            Available Liquidity: <strong style="color: #34d399;">${formatUsdc(this.poolData?.availableUsdc || 0)} USDC</strong><br/>
-            Total Lent Out: <strong style="color: #38bdf8;">${formatUsdc(this.poolData?.totalLentOut || 0)} USDC</strong><br/>
-            Total Merchant Deposits: <strong style="color: #a855f7;">${formatUsdc(this.poolData?.totalDeposited || 0)} USDC</strong>
+            Available Liquidity: <strong style="color: #34d399;">${formatUsdc(this.poolData?.availableUsdc || this.poolData?.poolCash || 0)} USDC</strong><br/>
+            Total Lent Out: <strong style="color: #38bdf8;">${formatUsdc(this.poolData?.totalLentOut || this.poolData?.totalLent || 0)} USDC</strong><br/>
+            Total Merchant Deposits: <strong style="color: #a855f7;">${formatUsdc(this.poolData?.totalDeposited || this.poolData?.totalAssets || 0)} USDC</strong>
           `;
         } else if (lower.includes("loan") || lower.includes("overdue")) {
           botMsg.innerHTML = `

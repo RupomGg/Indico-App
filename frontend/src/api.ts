@@ -276,6 +276,10 @@ export class ApiClient {
     return this.request(`/history/loans${query}`, { method: "GET" });
   }
 
+  static async getUserTransactions() {
+    return this.request("/history/transactions", { method: "GET" });
+  }
+
   // --- ADMIN PORTAL (AD-01 to AD-22) ---
   static async adminLogin(email: string, password: string) {
     const res = await this.request<any>(

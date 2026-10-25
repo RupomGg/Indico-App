@@ -46,3 +46,23 @@ export const loanListResponseSchema = z.object({
 });
 
 export type LoanListResponse = z.infer<typeof loanListResponseSchema>;
+
+export const userTransactionItemSchema = z.object({
+  id: z.string(),
+  txHash: z.string(),
+  logIndex: z.number(),
+  eventName: z.string(),
+  blockNumber: z.string(),
+  blockTimestamp: z.number(),
+  data: z.record(z.any()),
+  explorerUrl: z.string(),
+});
+
+export type UserTransactionItem = z.infer<typeof userTransactionItemSchema>;
+
+export const userTransactionsResponseSchema = z.object({
+  items: z.array(userTransactionItemSchema),
+  total: z.number(),
+});
+
+export type UserTransactionsResponse = z.infer<typeof userTransactionsResponseSchema>;

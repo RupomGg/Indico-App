@@ -737,9 +737,13 @@ export class AdminOperationsService {
     return {
       poolCash,
       poolCashUnits: poolCashUnits.toString(),
+      availableUsdc: poolCash,
+      poolAvailableUnits: poolCashUnits.toString(),
       totalLent,
       totalLentUnits: totalLentUnits.toString(),
+      totalLentOut: totalLent,
       totalAssets,
+      totalDeposited: totalAssets,
       depositorCount: deposits.length,
     };
   }

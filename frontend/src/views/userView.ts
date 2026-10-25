@@ -4,6 +4,7 @@
  */
 
 import { ApiClient } from "../api.js";
+import { formatUnits } from "viem";
 import { WalletManager } from "../wallet.js";
 import {
   showToast,
@@ -23,6 +24,7 @@ export class UserView {
   private static merchantsList: any[] = [];
   private static assetsList: any[] = [];
   private static loansList: any[] = [];
+  private static txHistoryList: any[] = [];
 
   static async render(target: HTMLElement) {
     this.container = target;
@@ -37,7 +39,7 @@ export class UserView {
     }
 
     try {
-      const [profileRes, termsRes, balanceRes, merchantsRes, assetsRes, loansRes] =
+      const [profileRes, termsRes, balanceRes, merchantsRes, assetsRes, loansRes, txRes] =
         await Promise.allSettled([
           ApiClient.getProfile(),
           ApiClient.getTermsStatus(),
@@ -45,6 +47,7 @@ export class UserView {
           ApiClient.listMerchants(),
           ApiClient.listAssets(),
           ApiClient.getLoansHistory(),
+          ApiClient.getUserTransactions(),
         ]);
 
       if (profileRes.status === "fulfilled") {
@@ -67,6 +70,10 @@ export class UserView {
       if (loansRes.status === "fulfilled") {
         const v = loansRes.value as any;
         this.loansList = v?.items || v?.data?.items || v?.data?.loans || v?.loans || [];
+      }
+      if (txRes.status === "fulfilled") {
+        const v = txRes.value as any;
+        this.txHistoryList = v?.items || v?.data?.items || v?.data || [];
       }
 
       this.renderDashboard();
@@ -313,11 +320,12 @@ export class UserView {
       </div>
 
       <!-- Section Navigation Tabs -->
-      <div style="display: flex; gap: 10px; margin-bottom: 24px; border-bottom: 1px solid var(--border-subtle); padding-bottom: 8px;">
+      <div style="display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 24px; border-bottom: 1px solid var(--border-subtle); padding-bottom: 8px;">
         <button id="tab-sub-assets" class="btn btn-sm btn-primary">📁 Assets & Minting</button>
         <button id="tab-sub-spend" class="btn btn-sm btn-outline">🛍️ Spend with Merchants</button>
         <button id="tab-sub-borrow" class="btn btn-sm btn-outline">🏦 Borrow USDC</button>
         <button id="tab-sub-loans" class="btn btn-sm btn-outline">📑 Active Loans (${this.loansList.length})</button>
+        <button id="tab-sub-history" class="btn btn-sm btn-outline">📜 Tx History (${this.txHistoryList.length})</button>
         <button id="tab-sub-ai" class="btn btn-sm btn-outline">🤖 Indico AI Assistant</button>
       </div>
 
@@ -342,6 +350,7 @@ export class UserView {
       { id: "tab-sub-spend", render: () => this.renderSpendTab(subContainer) },
       { id: "tab-sub-borrow", render: () => this.renderBorrowTab(subContainer) },
       { id: "tab-sub-loans", render: () => this.renderLoansTab(subContainer) },
+      { id: "tab-sub-history", render: () => this.renderHistoryTab(subContainer) },
       { id: "tab-sub-ai", render: () => this.renderAiTab(subContainer) },
     ];
 
@@ -896,38 +905,42 @@ export class UserView {
             <tbody>
               ${
                 this.loansList.length === 0
-                  ? `<tr><td colspan="7" style="text-align: center; color: var(--text-muted); padding: 32px;">No active or past loans found.</td></tr>`
+                  ? `<tr><td colspan="7" style="text-align: center; color: var(--text-muted); padding: 32px;">No active or past loans found. Use the "Borrow USDC" tab to request your first loan.</td></tr>`
                   : this.loansList
-                      .map(
-                        (l) => `
-                <tr>
-                  <td style="font-family: var(--font-mono); font-weight: 700;">#${l.id.slice(0, 8)}</td>
-                  <td style="font-family: var(--font-mono); font-weight: 700; color: #38bdf8;">${formatUsdc(l.principal)} USDC</td>
-                  <td style="font-family: var(--font-mono); color: #fbbf24;">${formatUsdc(l.collateralAmount)} USDC</td>
-                  <td>${formatDate(l.dueDate)}</td>
-                  <td>${l.extensionCount || 0} time(s)</td>
-                  <td>
-                    ${
-                      l.status === "ACTIVE"
-                        ? `<span class="badge badge-success">ACTIVE</span>`
-                        : l.status === "REPAID"
-                        ? `<span class="badge badge-purple">REPAID</span>`
-                        : `<span class="badge badge-danger">DEFAULTED</span>`
-                    }
-                  </td>
-                  <td>
-                    ${
-                      l.status === "ACTIVE"
-                        ? `
-                      <button class="btn btn-sm btn-primary btn-repay-loan" data-id="${l.id}">Repay</button>
-                      <button class="btn btn-sm btn-outline btn-extend-loan" data-id="${l.id}" title="Extend by 90 days">Extend</button>
-                    `
-                        : `<span style="font-size: 11px; color: var(--text-faint);">Settled</span>`
-                    }
-                  </td>
-                </tr>
-              `
-                      )
+                      .map((l) => {
+                        const loanId = String(l.loanId || l.id || "1");
+                        const principal = l.principal || l.principalUnits || "0";
+                        const collateral = l.collateral || l.collateralAmount || l.collateralUnits || "0";
+
+                        return `
+                          <tr>
+                            <td style="font-family: var(--font-mono); font-weight: 700;">#${loanId}</td>
+                            <td style="font-family: var(--font-mono); font-weight: 700; color: #38bdf8;">${formatUsdc(principal)} USDC</td>
+                            <td style="font-family: var(--font-mono); color: #fbbf24;">${formatUsdc(collateral)} USDC</td>
+                            <td>${formatDate(l.dueDate)}</td>
+                            <td>${l.extensionCount || 0} time(s)</td>
+                            <td>
+                              ${
+                                l.status === "ACTIVE"
+                                  ? `<span class="badge badge-success">ACTIVE</span>`
+                                  : l.status === "REPAID"
+                                  ? `<span class="badge badge-purple">REPAID</span>`
+                                  : `<span class="badge badge-danger">DEFAULTED</span>`
+                              }
+                            </td>
+                            <td>
+                              ${
+                                l.status === "ACTIVE"
+                                  ? `
+                                <button class="btn btn-sm btn-primary btn-repay-loan" data-id="${loanId}">Repay</button>
+                                <button class="btn btn-sm btn-outline btn-extend-loan" data-id="${loanId}" title="Extend by 90 days">Extend</button>
+                              `
+                                  : `<span style="font-size: 11px; color: var(--text-faint);">Settled</span>`
+                              }
+                            </td>
+                          </tr>
+                        `;
+                      })
                       .join("")
               }
             </tbody>
@@ -940,19 +953,32 @@ export class UserView {
       btn.addEventListener("click", async () => {
         const loanId = (btn as HTMLElement).dataset.id!;
         showModal({
-          title: "Repay Loan in Full",
+          title: `Repay Loan #${loanId} in Full`,
           contentHtml: `
-            <p style="font-size: 13.5px; color: var(--text-muted); margin-bottom: 12px;">
-              Repay the exact principal in USDC to release your locked credit collateral. No interest or fees apply.
+            <div style="background: rgba(52, 211, 153, 0.08); border: 1px solid rgba(52, 211, 153, 0.2); border-radius: 8px; padding: 12px; margin-bottom: 14px; font-size: 13px; color: #6ee7b7;">
+              ✓ Repaying principal in USDC releases your locked credit collateral immediately.
+            </div>
+            <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 12px;">
+              No interest or fees apply ($0.00). If your USDC allowance is not yet approved, you will be prompted to approve it first.
             </p>
           `,
           confirmText: "⚡ Repay Loan",
           onConfirm: async () => {
-            showToast("Preparing repay transaction...", "info");
-            const prepared = await ApiClient.prepareRepay(loanId);
-            const txHash = await WalletManager.sendPreparedTx(prepared.transaction || prepared);
-            showToast(`Loan repaid! Collateral released. Tx: ${truncateAddress(txHash)}`, "success");
-            await this.refresh();
+            try {
+              showToast("Preparing repay transaction...", "info");
+              const prepared = await ApiClient.prepareRepay(loanId);
+              if (prepared.requiresApproval && prepared.approvalTx) {
+                showToast("Step 1/2: Approving USDC allowance for loan repayment...", "info");
+                await WalletManager.sendPreparedTx(prepared.approvalTx);
+                showToast("USDC approved! Step 2/2: Repaying loan on-chain...", "info");
+              }
+              const txToBroadcast = prepared.repayTx || prepared.transaction || prepared;
+              const txHash = await WalletManager.sendPreparedTx(txToBroadcast);
+              showToast(`Loan repaid! Collateral unlocked. Tx: ${truncateAddress(txHash)}`, "success");
+              await this.refresh();
+            } catch (err: any) {
+              showToast(err.message || "Failed to repay loan", "error");
+            }
           },
         });
       });
@@ -962,23 +988,141 @@ export class UserView {
       btn.addEventListener("click", async () => {
         const loanId = (btn as HTMLElement).dataset.id!;
         showModal({
-          title: "Extend Loan Term",
+          title: `Extend Loan #${loanId} Term`,
           contentHtml: `
             <p style="font-size: 13.5px; color: var(--text-muted); margin-bottom: 12px;">
-              Extend this loan's due date by another 90 days. Per Confirmed Feature List §1, loans can be extended as many times as needed.
+              Extend this loan's due date by another 90 days. Per Confirmed Feature List §1, loans can be extended as many times as needed during the 30-day window before expiry.
             </p>
           `,
           confirmText: "Extend by 90 Days",
           onConfirm: async () => {
-            showToast("Preparing extension transaction...", "info");
-            const prepared = await ApiClient.prepareExtend(loanId);
-            const txHash = await WalletManager.sendPreparedTx(prepared.transaction || prepared);
-            showToast(`Loan extended by 90 days! Tx: ${truncateAddress(txHash)}`, "success");
-            await this.refresh();
+            try {
+              showToast("Preparing extension transaction...", "info");
+              const prepared = await ApiClient.prepareExtend(loanId);
+              const txHash = await WalletManager.sendPreparedTx(prepared.transaction || prepared);
+              showToast(`Loan extended by 90 days! Tx: ${truncateAddress(txHash)}`, "success");
+              await this.refresh();
+            } catch (err: any) {
+              showToast(err.message || "Failed to extend loan", "error");
+            }
           },
         });
       });
     });
+  }
+
+  // --- SUB-TAB 5: ON-CHAIN TRANSACTION HISTORY ---
+  private static renderHistoryTab(container: HTMLElement) {
+    container.innerHTML = `
+      <div class="card">
+        <div class="card-header">
+          <h3 class="card-title">📜 On-Chain Transaction History (${this.txHistoryList.length})</h3>
+          <span class="badge badge-success">Base Sepolia Verified</span>
+        </div>
+
+        <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 18px;">
+          Chronological immutable history of your on-chain interactions with the Indico Ledger contract. Every transaction has a verifiable on-chain hash.
+        </p>
+
+        <div class="table-responsive">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Operation</th>
+                <th>Details</th>
+                <th>Block #</th>
+                <th>Date / Time</th>
+                <th>Transaction Hash</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${
+                this.txHistoryList.length === 0
+                  ? `<tr><td colspan="6" style="text-align: center; color: var(--text-muted); padding: 32px;">No on-chain transactions found yet. As you mint credit, borrow, spend, or repay, they will appear here.</td></tr>`
+                  : this.txHistoryList
+                      .map((tx) => {
+                        let badgeClass = "badge-neutral";
+                        let opName = tx.eventName;
+                        let details = "";
+
+                        switch (tx.eventName) {
+                          case "CreditMinted":
+                            badgeClass = "badge-success";
+                            opName = "🟢 Credit Minted";
+                            details = `+${formatUsdc(formatUnits(BigInt(tx.data?.amount || 0), 6))} Credit`;
+                            break;
+                          case "CreditBurned":
+                            badgeClass = "badge-danger";
+                            opName = "🔴 Credit Burned";
+                            details = `-${formatUsdc(formatUnits(BigInt(tx.data?.amount || 0), 6))} Credit`;
+                            break;
+                          case "Spent":
+                            badgeClass = "badge-purple";
+                            opName = "🛍️ Merchant Spend";
+                            details = `-${formatUsdc(formatUnits(BigInt(tx.data?.amount || 0), 6))} Credit to ${truncateAddress(tx.data?.merchant || "")}`;
+                            break;
+                          case "MerchantReceipt":
+                            badgeClass = "badge-purple";
+                            opName = "🧾 Receipt Issued";
+                            details = `${formatUsdc(formatUnits(BigInt(tx.data?.amount || 0), 6))} USDC to ${truncateAddress(tx.data?.merchant || "")}`;
+                            break;
+                          case "LoanOpened":
+                            badgeClass = "badge-info";
+                            opName = "🏦 Loan Opened";
+                            details = `Borrowed ${formatUsdc(formatUnits(BigInt(tx.data?.principal || 0), 6))} USDC (Locked ${formatUsdc(formatUnits(BigInt(tx.data?.collateral || 0), 6))} Credit)`;
+                            break;
+                          case "LoanRepaid":
+                            badgeClass = "badge-success";
+                            opName = "✓ Loan Repaid";
+                            details = `Repaid #${tx.data?.loanId} (Collateral Unlocked)`;
+                            break;
+                          case "LoanExtended":
+                            badgeClass = "badge-warning";
+                            opName = "⏳ Loan Extended";
+                            details = `Extended #${tx.data?.loanId} by 90 days`;
+                            break;
+                          case "AssetRegistered":
+                            badgeClass = "badge-cyan";
+                            opName = "📁 Asset Fingerprinted";
+                            details = `Doc Hash: ${truncateAddress(tx.data?.docHash || "")}`;
+                            break;
+                          case "TermsSigned":
+                            badgeClass = "badge-success";
+                            opName = "✍️ Terms Signed";
+                            details = `Terms accepted on-chain`;
+                            break;
+                          case "UserApprovalSet":
+                            badgeClass = "badge-purple";
+                            opName = "🛡️ User Authorized";
+                            details = `Onboarding authorized`;
+                            break;
+                          default:
+                            details = JSON.stringify(tx.data || {});
+                        }
+
+                        return `
+                          <tr>
+                            <td><span class="badge ${badgeClass}" style="font-weight: 700;">${opName}</span></td>
+                            <td style="font-family: var(--font-mono); font-size: 12.5px;">${details}</td>
+                            <td style="font-family: var(--font-mono); font-size: 12px; color: var(--text-muted);">${tx.blockNumber}</td>
+                            <td style="font-size: 12px; color: var(--text-muted);">${formatDate(tx.blockTimestamp)}</td>
+                            <td>
+                              <a href="${tx.explorerUrl}" target="_blank" rel="noreferrer" style="color: #38bdf8; font-family: var(--font-mono); text-decoration: none; font-size: 12px; display: inline-flex; align-items: center; gap: 4px;">
+                                ${truncateAddress(tx.txHash)} ↗
+                              </a>
+                            </td>
+                            <td><span class="badge badge-success" style="font-size: 11px;">✓ Confirmed</span></td>
+                          </tr>
+                        `;
+                      })
+                      .join("")
+              }
+            </tbody>
+          </table>
+        </div>
+      </div>
+    `;
   }
 
   // --- SUB-TAB 5: INDICO AI ASSISTANT ---

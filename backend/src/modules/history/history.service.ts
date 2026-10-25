@@ -6,6 +6,7 @@ import type {
   LoanListQuery,
   LoanListResponse,
   LoanItem,
+  UserTransactionsResponse,
 } from "./history.schemas.js";
 
 export class HistoryService {
@@ -162,4 +163,52 @@ export class HistoryService {
       defaultedAtBlock: loan.defaultedAtBlock ? loan.defaultedAtBlock.toString() : null,
     };
   }
+
+  /**
+   * Retrieves chronological on-chain transaction history for the authenticated user.
+   */
+  static async getUserTransactions(userId: string): Promise<UserTransactionsResponse> {
+    const binding = await prisma.walletBinding.findUnique({
+      where: { userId },
+    });
+
+    if (!binding) {
+      return { items: [], total: 0 };
+    }
+
+    const walletAddress = binding.walletAddress.toLowerCase();
+
+    const allEvents = await prisma.chainEvent.findMany({
+      orderBy: [{ blockNumber: "desc" }, { logIndex: "desc" }],
+    });
+
+    const userEvents = allEvents.filter((e) => {
+      const data = (e.data || {}) as Record<string, any>;
+      const user = (data["user"] || "").toString().toLowerCase();
+      const borrower = (data["borrower"] || "").toString().toLowerCase();
+      const signer = (data["signer"] || "").toString().toLowerCase();
+      const merchant = (data["merchant"] || "").toString().toLowerCase();
+      return (
+        user === walletAddress ||
+        borrower === walletAddress ||
+        signer === walletAddress ||
+        merchant === walletAddress
+      );
+    });
+
+    return {
+      items: userEvents.map((e) => ({
+        id: e.id,
+        txHash: e.txHash,
+        logIndex: e.logIndex,
+        eventName: e.eventName,
+        blockNumber: e.blockNumber.toString(),
+        blockTimestamp: Number(e.blockTimestamp),
+        data: (e.data || {}) as Record<string, any>,
+        explorerUrl: `https://sepolia.basescan.org/tx/${e.txHash}`,
+      })),
+      total: userEvents.length,
+    };
+  }
 }
+
