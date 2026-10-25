@@ -410,9 +410,6 @@ contract IndicoLedger is IIndicoLedger, AccessControlDefaultAdminRules, Pausable
         }
 
         uint256 minted = _toShares(amount, false);
-        // slither-disable-next-line incorrect-equality
-        if (minted == 0) revert IIndicoLedger.ZeroShares();
-
         shares[merchant] += minted;
         totalShares += minted;
         poolUsdc += amount;
