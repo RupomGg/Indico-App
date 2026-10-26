@@ -353,7 +353,7 @@ export async function adminRoutes(fastify: FastifyInstance) {
       "/audit-logs",
       {
         schema: {
-          description: "Complete immutable audit log query (AD-16)",
+          description: "Complete immutable audit log query (AD-16) with system/transaction categories, user audit, and date filtering",
           tags: ["Admin"],
           querystring: adminAuditLogQuerySchema,
         },
@@ -363,5 +363,27 @@ export async function adminRoutes(fastify: FastifyInstance) {
         return reply.send(result);
       }
     );
+
+    // GET /admin/audit-logs/user/:userId (AD-16 User-Specific Audit Trail)
+    adminScope.get(
+      "/audit-logs/user/:userId",
+      {
+        schema: {
+          description: "User-specific immutable audit trail query (AD-16) across system actions and financial transactions",
+          tags: ["Admin"],
+          params: z.object({ userId: z.string() }),
+          querystring: adminAuditLogQuerySchema.omit({ userId: true }),
+        },
+      },
+      async (request, reply) => {
+        const query = {
+          ...(request.query as any),
+          userId: (request.params as any).userId,
+        };
+        const result = await AdminOperationsService.listAuditLogs(query);
+        return reply.send(result);
+      }
+    );
   });
 }
+

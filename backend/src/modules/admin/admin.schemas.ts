@@ -63,8 +63,15 @@ export type AdminUpdateServiceInput = z.infer<typeof adminUpdateServiceSchema>;
 export const adminAuditLogQuerySchema = z.object({
   action: z.string().optional(),
   actorId: z.string().optional(),
+  userId: z.string().optional(),
+  category: z.enum(["ALL", "SYSTEM", "TRANSACTION"]).default("ALL").optional(),
+  startDate: z.string().optional(),
+  endDate: z.string().optional(),
+  from: z.string().optional(),
+  to: z.string().optional(),
   page: z.coerce.number().int().positive().default(1),
-  limit: z.coerce.number().int().positive().max(100).default(50),
+  limit: z.coerce.number().int().positive().max(500).default(50),
 });
 
 export type AdminAuditLogQuery = z.infer<typeof adminAuditLogQuerySchema>;
+

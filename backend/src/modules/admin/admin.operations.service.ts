@@ -822,32 +822,302 @@ export class AdminOperationsService {
 
   /**
    * Retrieves paginated immutable audit logs (PRD §4.7 AD-16).
+   * Supports:
+   * - 2 distinct categories: "SYSTEM" (admin actions) & "TRANSACTION" (on-chain events) or "ALL"
+   * - User-specific audit across ID, email, or wallet address
+   * - Time range filtering (startDate / from to endDate / to)
    */
   static async listAuditLogs(query: AdminAuditLogQuery) {
     const page = query.page ?? 1;
-    const limit = Math.min(query.limit ?? 50, 100);
+    const limit = Math.min(query.limit ?? 50, 500);
     const skip = (page - 1) * limit;
+    const category = (query.category || "ALL").toUpperCase();
 
-    const where: any = {};
-    if (query.action) where.action = query.action;
-    if (query.actorId) where.actorId = query.actorId;
+    // 1. Parse date boundaries
+    const startDateStr = query.startDate || query.from;
+    const endDateStr = query.endDate || query.to;
+    let startDate: Date | null = null;
+    let endDate: Date | null = null;
 
-    const [logs, total] = await Promise.all([
-      prisma.auditLog.findMany({
-        where,
+    if (startDateStr) {
+      const d = new Date(startDateStr);
+      if (!isNaN(d.getTime())) startDate = d;
+    }
+    if (endDateStr) {
+      const d = new Date(endDateStr);
+      if (!isNaN(d.getTime())) endDate = d;
+    }
+
+    // 2. Resolve User Context (UUID, Email, or 0x Wallet Address)
+    let resolvedUserId: string | null = null;
+    let userEmail: string | null = null;
+    let userWallet: string | null = null;
+
+    if (query.userId?.trim()) {
+      const rawUser = query.userId.trim();
+      if (rawUser.startsWith("0x")) {
+        userWallet = rawUser.toLowerCase();
+        const binding = await prisma.walletBinding.findUnique({
+          where: { walletAddress: userWallet },
+          include: { user: true },
+        });
+        if (binding) {
+          resolvedUserId = binding.userId;
+          userEmail = binding.user.email;
+        }
+      } else if (rawUser.includes("@")) {
+        userEmail = rawUser.toLowerCase();
+        const user = await prisma.user.findUnique({
+          where: { email: userEmail },
+          include: { walletBinding: true },
+        });
+        if (user) {
+          resolvedUserId = user.id;
+          userWallet = user.walletBinding?.walletAddress?.toLowerCase() ?? null;
+        }
+      } else {
+        // Treat as UUID
+        const user = await prisma.user.findUnique({
+          where: { id: rawUser },
+          include: { walletBinding: true },
+        });
+        if (user) {
+          resolvedUserId = user.id;
+          userEmail = user.email;
+          userWallet = user.walletBinding?.walletAddress?.toLowerCase() ?? null;
+        } else {
+          resolvedUserId = rawUser;
+        }
+      }
+    }
+
+    const unifiedItems: any[] = [];
+    let systemTotalCount = 0;
+    let transactionTotalCount = 0;
+
+    // 3. Fetch SYSTEM Audit Logs (Administrative actions)
+    if (category === "ALL" || category === "SYSTEM") {
+      const systemWhere: any = {};
+
+      if (query.action) {
+        systemWhere.action = {
+          equals: query.action,
+          mode: "insensitive",
+        };
+      }
+      if (query.actorId) {
+        systemWhere.actorId = query.actorId;
+      }
+
+      if (startDate || endDate) {
+        systemWhere.timestamp = {};
+        if (startDate) systemWhere.timestamp.gte = startDate;
+        if (endDate) systemWhere.timestamp.lte = endDate;
+      }
+
+      if (query.userId?.trim()) {
+        const orConditions: any[] = [];
+        if (resolvedUserId) {
+          orConditions.push({ actorId: resolvedUserId });
+          orConditions.push({ resourceId: resolvedUserId });
+        }
+        if (userEmail) {
+          orConditions.push({
+            payload: {
+              path: ["email"],
+              equals: userEmail,
+            },
+          });
+        }
+        if (userWallet) {
+          orConditions.push({
+            payload: {
+              path: ["walletAddress"],
+              equals: userWallet,
+            },
+          });
+        }
+        if (orConditions.length > 0) {
+          systemWhere.OR = orConditions;
+        }
+      }
+
+      const systemLogs = await prisma.auditLog.findMany({
+        where: systemWhere,
         orderBy: { timestamp: "desc" },
-        skip,
-        take: limit,
-      }),
-      prisma.auditLog.count({ where }),
-    ]);
+        take: 500,
+      });
+
+      systemTotalCount = systemLogs.length;
+
+      for (const log of systemLogs) {
+        unifiedItems.push({
+          id: log.id,
+          category: "SYSTEM",
+          timestamp: log.timestamp.toISOString(),
+          action: log.action,
+          actorType: log.actorType,
+          actorId: log.actorId,
+          resource: log.resource,
+          resourceId: log.resourceId,
+          ipAddress: log.ipAddress || "system",
+          userAgent: log.userAgent || "internal",
+          payload: log.payload || {},
+          txHash: null,
+          blockNumber: null,
+          amountDisplay: null,
+        });
+      }
+    }
+
+    // 4. Fetch TRANSACTION Audit Logs (On-chain financial events from chainEvent)
+    if (category === "ALL" || category === "TRANSACTION") {
+      const chainWhere: any = {};
+
+      if (query.action) {
+        chainWhere.eventName = {
+          equals: query.action,
+          mode: "insensitive",
+        };
+      }
+
+      if (startDate || endDate) {
+        chainWhere.createdAt = {};
+        if (startDate) chainWhere.createdAt.gte = startDate;
+        if (endDate) chainWhere.createdAt.lte = endDate;
+      }
+
+      const chainEvents = await prisma.chainEvent.findMany({
+        where: chainWhere,
+        orderBy: [{ blockNumber: "desc" }, { logIndex: "desc" }],
+        take: 500,
+      });
+
+      // Filter events by user if user criteria specified
+      const filteredChainEvents = chainEvents.filter((ev) => {
+        if (!query.userId?.trim()) return true;
+        const targetWallet = (userWallet || query.userId.trim()).toLowerCase();
+        const d = (ev.data || {}) as Record<string, any>;
+
+        const eventAddresses = [
+          d.user,
+          d.borrower,
+          d.payer,
+          d.signer,
+          d.merchant,
+          d.from,
+          d.to,
+        ]
+          .filter(Boolean)
+          .map((a) => String(a).toLowerCase());
+
+        return eventAddresses.includes(targetWallet);
+      });
+
+      transactionTotalCount = filteredChainEvents.length;
+
+      for (const ev of filteredChainEvents) {
+        const d = (ev.data || {}) as Record<string, any>;
+        const eventUser =
+          d.borrower || d.user || d.payer || d.merchant || d.signer || null;
+
+        // Compute human-friendly resource & amount displays
+        let resource = "Contract";
+        let resourceId = ev.txHash;
+        let amountDisplay: string | null = null;
+
+        if (ev.eventName.includes("Loan") || d.loanId) {
+          resource = "Loan";
+          resourceId = d.loanId ? `Loan #${d.loanId}` : "Loan";
+          if (d.principal) {
+            amountDisplay = `${(Number(d.principal) / 1e6).toFixed(2)} USDC`;
+          }
+        } else if (ev.eventName.includes("Credit")) {
+          resource = "CreditLedger";
+          resourceId = eventUser ? String(eventUser) : "Credit";
+          if (d.amount) {
+            amountDisplay = `${(Number(d.amount) / 1e6).toFixed(2)} Credit`;
+          }
+        } else if (ev.eventName === "Spent" || ev.eventName === "MerchantReceipt") {
+          resource = "MerchantSpend";
+          resourceId = d.merchant ? String(d.merchant) : "Merchant";
+          if (d.amount) {
+            amountDisplay = `${(Number(d.amount) / 1e6).toFixed(2)} Credit`;
+          }
+        } else if (ev.eventName === "Deposited" || ev.eventName === "Deposit" || ev.eventName === "Withdraw") {
+          resource = "LiquidityPool";
+          resourceId = d.merchant ? String(d.merchant) : "Pool";
+          if (d.assets) {
+            amountDisplay = `${(Number(d.assets) / 1e6).toFixed(2)} USDC`;
+          }
+        } else if (ev.eventName === "CollateralLocked" || ev.eventName === "CollateralReleased") {
+          resource = "Collateral";
+          resourceId = d.loanId ? `Loan #${d.loanId}` : "Collateral";
+          if (d.amount) {
+            amountDisplay = `${(Number(d.amount) / 1e6).toFixed(2)} Credit`;
+          }
+        } else if (ev.eventName === "AssetRegistered") {
+          resource = "AssetRWA";
+          resourceId = d.docHash ? String(d.docHash) : "Asset";
+          if (d.value) {
+            amountDisplay = `${(Number(d.value) / 1e6).toFixed(2)} USDC Value`;
+          }
+        }
+
+        const blockTs = Number(ev.blockTimestamp);
+        const eventDate =
+          blockTs > 0 ? new Date(blockTs * 1000) : ev.createdAt;
+
+        unifiedItems.push({
+          id: `tx-${ev.id}`,
+          category: "TRANSACTION",
+          timestamp: eventDate.toISOString(),
+          action: ev.eventName,
+          actorType: eventUser ? "WALLET" : "ON_CHAIN",
+          actorId: eventUser ? String(eventUser) : null,
+          resource,
+          resourceId,
+          ipAddress: `tx: ${ev.txHash.slice(0, 10)}...`,
+          userAgent: `block: ${ev.blockNumber.toString()}`,
+          payload: {
+            ...d,
+            txHash: ev.txHash,
+            blockNumber: ev.blockNumber.toString(),
+            amountDisplay,
+          },
+          txHash: ev.txHash,
+          blockNumber: ev.blockNumber.toString(),
+          amountDisplay,
+        });
+      }
+    }
+
+    // 5. Sort Unified Items Chronologically (newest first)
+    unifiedItems.sort(
+      (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+    );
+
+    const total = unifiedItems.length;
+    const paginatedItems = unifiedItems.slice(skip, skip + limit);
 
     return {
-      items: logs,
+      items: paginatedItems,
       total,
+      systemCount: systemTotalCount,
+      transactionCount: transactionTotalCount,
       page,
       limit,
       totalPages: total === 0 ? 0 : Math.ceil(total / limit),
+      filters: {
+        category,
+        userId: query.userId || null,
+        resolvedUser: resolvedUserId
+          ? { id: resolvedUserId, email: userEmail, wallet: userWallet }
+          : null,
+        startDate: startDateStr || null,
+        endDate: endDateStr || null,
+      },
     };
   }
 }
+

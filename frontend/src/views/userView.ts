@@ -315,7 +315,7 @@ export class UserView {
         <div class="metric-box">
           <span class="metric-label">Max Borrow Capacity</span>
           <span class="metric-value" style="color: #38bdf8;">${formatUsdc(parseFloat(availableCredit) * 0.8)}</span>
-          <span class="metric-hint">80% Borrowing Ratio per PRD §1</span>
+          <span class="metric-hint">80% Borrowing Ratio</span>
         </div>
       </div>
 
@@ -381,7 +381,7 @@ export class UserView {
 
           <form id="asset-upload-form" style="display: flex; flex-direction: column; gap: 14px;">
             <div class="form-group">
-              <label class="form-label">Asset Type (PRD §1)</label>
+              <label class="form-label">Asset Type</label>
               <select id="asset-type" class="form-select">
                 <option value="1">Arbitration Award (1)</option>
                 <option value="2">Bill of Exchange (2)</option>

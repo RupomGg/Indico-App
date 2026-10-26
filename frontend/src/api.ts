@@ -420,19 +420,46 @@ export class ApiClient {
   }
 
   static async adminGetAuditLogs(params?: {
-    actionType?: string;
-    entityType?: string;
-    adminId?: string;
+    category?: "ALL" | "SYSTEM" | "TRANSACTION";
+    userId?: string;
+    startDate?: string;
+    endDate?: string;
+    action?: string;
+    actorId?: string;
     page?: number;
     limit?: number;
   }) {
     const qs = new URLSearchParams();
-    if (params?.actionType) qs.append("actionType", params.actionType);
-    if (params?.entityType) qs.append("entityType", params.entityType);
-    if (params?.adminId) qs.append("adminId", params.adminId);
+    if (params?.category) qs.append("category", params.category);
+    if (params?.userId) qs.append("userId", params.userId);
+    if (params?.startDate) qs.append("startDate", params.startDate);
+    if (params?.endDate) qs.append("endDate", params.endDate);
+    if (params?.action) qs.append("action", params.action);
+    if (params?.actorId) qs.append("actorId", params.actorId);
     if (params?.page) qs.append("page", String(params.page));
     if (params?.limit) qs.append("limit", String(params.limit));
     const query = qs.toString() ? `?${qs.toString()}` : "";
     return this.request(`/admin/audit-logs${query}`, { method: "GET" }, "admin");
   }
+
+  static async adminGetAuditLogsForUser(
+    userId: string,
+    params?: {
+      category?: "ALL" | "SYSTEM" | "TRANSACTION";
+      startDate?: string;
+      endDate?: string;
+      page?: number;
+      limit?: number;
+    }
+  ) {
+    const qs = new URLSearchParams();
+    if (params?.category) qs.append("category", params.category);
+    if (params?.startDate) qs.append("startDate", params.startDate);
+    if (params?.endDate) qs.append("endDate", params.endDate);
+    if (params?.page) qs.append("page", String(params.page));
+    if (params?.limit) qs.append("limit", String(params.limit));
+    const query = qs.toString() ? `?${qs.toString()}` : "";
+    return this.request(`/admin/audit-logs/user/${encodeURIComponent(userId)}${query}`, { method: "GET" }, "admin");
+  }
 }
+

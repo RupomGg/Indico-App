@@ -13,7 +13,11 @@ import {
   truncateAddress,
   formatDate,
   explorerAddressLink,
+  explorerTxLink,
 } from "../ui.js";
+
+export const INDICO_LEDGER_ADDRESS = "0x422D36E2198863C5b2A6B8E2865fBf5196de96cF";
+export const INDICO_LEDGER_BASESCAN = "https://sepolia.basescan.org/address/0x422D36E2198863C5b2A6B8E2865fBf5196de96cF";
 
 export class AdminView {
   private static container: HTMLElement;
@@ -24,6 +28,13 @@ export class AdminView {
   private static loansData: any[] = [];
   private static safeStatus: any = null;
   private static auditLogs: any[] = [];
+  private static auditTotalCount: number = 0;
+  private static auditSystemCount: number = 0;
+  private static auditTxCount: number = 0;
+  private static auditCategory: "ALL" | "SYSTEM" | "TRANSACTION" = "ALL";
+  private static auditUserFilter: string = "";
+  private static auditStartDate: string = "";
+  private static auditEndDate: string = "";
   private static termsData: any = null;
 
   static async render(target: HTMLElement) {
@@ -47,7 +58,13 @@ export class AdminView {
           ApiClient.adminListMerchants(),
           ApiClient.adminGetLoans(),
           ApiClient.adminGetSafeStatus(),
-          ApiClient.adminGetAuditLogs({ limit: 50 }),
+          ApiClient.adminGetAuditLogs({
+            category: this.auditCategory,
+            userId: this.auditUserFilter || undefined,
+            startDate: this.auditStartDate || undefined,
+            endDate: this.auditEndDate || undefined,
+            limit: 100,
+          }),
           ApiClient.getCurrentTerms(),
         ]);
 
@@ -85,6 +102,9 @@ export class AdminView {
       if (auditRes.status === "fulfilled") {
         const v = auditRes.value as any;
         this.auditLogs = v?.items || v?.data?.items || v?.data?.logs || v?.logs || [];
+        this.auditTotalCount = v?.total ?? this.auditLogs.length;
+        this.auditSystemCount = v?.systemCount ?? 0;
+        this.auditTxCount = v?.transactionCount ?? 0;
       }
       if (termsRes.status === "fulfilled") {
         this.termsData = termsRes.value as any;
@@ -109,7 +129,7 @@ export class AdminView {
           <div style="text-align: center; margin-bottom: 24px;">
             <div class="brand-logo-icon" style="margin: 0 auto 16px auto; width: 48px; height: 48px; font-size: 24px; background: linear-gradient(135deg, #db2777, #7c3aed);">A</div>
             <h2 style="font-size: 22px; font-weight: 800;">Indico Admin Portal</h2>
-            <p style="font-size: 13px; color: var(--text-muted); margin-top: 4px;">PRD §3 Confirmed Scope Operations</p>
+            <p style="font-size: 13px; color: var(--text-muted); margin-top: 4px;">Platform Management & Governance</p>
           </div>
 
           <form id="admin-login-form" style="display: flex; flex-direction: column; gap: 16px;">
@@ -124,12 +144,12 @@ export class AdminView {
             </div>
 
             <button type="submit" id="admin-submit-btn" class="btn btn-accent" style="width: 100%; margin-top: 8px;">
-              🛡️ Authenticate Administrator
+              🛡️ Sign In as Admin
             </button>
           </form>
 
           <div style="margin-top: 20px; font-size: 12px; color: var(--text-faint); text-align: center;">
-            Separate secure login for platform operators and compliance.
+            Secure admin portal for platform operations and audit inspection.
           </div>
         </div>
       </div>
@@ -169,20 +189,23 @@ export class AdminView {
           <div>
             <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 4px;">
               <h2 style="font-size: 20px; font-weight: 800;">Operator: ${this.adminData?.email || "System Admin"}</h2>
-              <span class="badge badge-purple">🛡️ MASTER OPERATOR</span>
+              <span class="badge badge-purple">🛡️ ADMIN OPERATOR</span>
               ${
                 isSafeLow
                   ? `<span class="badge badge-danger">⚠️ LOW SAFE GAS (${safeEthBalance} ETH)</span>`
                   : `<span class="badge badge-success">✓ SAFE GAS OK (${safeEthBalance} ETH)</span>`
               }
             </div>
-            <div style="font-size: 12.5px; color: var(--text-muted);">
-              PRD §3 Supervised Operations & Immutable Audit Trail
+            <div style="font-size: 12px; color: var(--text-muted); display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+              <span>Protocol Operations &amp; Audit Trail</span>
+              <span>&bull;</span>
+              <span>Contract: <a href="${INDICO_LEDGER_BASESCAN}" target="_blank" rel="noopener noreferrer" style="color: var(--cyan-accent); font-family: var(--font-mono); font-weight: 600; text-decoration: underline;">${INDICO_LEDGER_ADDRESS} ↗</a></span>
             </div>
           </div>
 
-          <div style="display: flex; gap: 10px;">
+          <div style="display: flex; gap: 10px; flex-wrap: wrap;">
             <button id="btn-export-audit" class="btn btn-outline btn-sm">📥 Export CSV Audit</button>
+            <button id="btn-print-audit-header" class="btn btn-purple btn-sm">📄 Print / PDF Report</button>
             <button id="btn-admin-logout" class="btn btn-outline btn-sm">Log Out</button>
           </div>
         </div>
@@ -249,7 +272,7 @@ export class AdminView {
         <button id="adm-tab-users" class="btn btn-sm btn-primary">👥 Registered Users (${this.usersList.length})</button>
         <button id="adm-tab-merchants" class="btn btn-sm btn-outline">🏪 Merchants & Services (${this.merchantsList.length})</button>
         <button id="adm-tab-loans" class="btn btn-sm btn-outline">📊 Pool & Loans (${this.loansData.length})</button>
-        <button id="adm-tab-audit" class="btn btn-sm btn-outline">📋 Audit Logs (${this.auditLogs.length})</button>
+        <button id="adm-tab-audit" class="btn btn-sm btn-outline">📋 Audit Logs (${this.auditTotalCount || this.auditLogs.length})</button>
         <button id="adm-tab-console" class="btn btn-sm btn-outline">⚡ Admin AI Console</button>
       </div>
 
@@ -307,6 +330,7 @@ export class AdminView {
     });
 
     document.getElementById("btn-export-audit")?.addEventListener("click", () => this.exportAuditCsv());
+    document.getElementById("btn-print-audit-header")?.addEventListener("click", () => this.exportAuditPdf());
 
     // Switcher listeners
     const subContainer = document.getElementById("admin-subtab-container")!;
@@ -550,10 +574,10 @@ export class AdminView {
         <div class="card">
           <div class="card-header">
             <h3 class="card-title">🏪 Single-Step Merchant Onboarding</h3>
-            <span class="badge badge-purple">PRD §4.7 AD-04</span>
+            <span class="badge badge-purple">Merchant Onboarding</span>
           </div>
           <p style="font-size: 12.5px; color: var(--text-muted); margin-bottom: 14px;">
-            Merchants sign physical agreements off-platform (AD-07). Onboard the merchant and broadcast on-chain verification in one single operation with your Admin wallet.
+            Onboard the merchant and broadcast on-chain verification in one single operation with your Admin wallet.
           </p>
 
           <form id="form-create-merchant" style="display: flex; flex-direction: column; gap: 12px;">
@@ -976,7 +1000,7 @@ export class AdminView {
           title: "Upload & Record Signed Arbitration Agreement",
           contentHtml: `
             <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 12px;">
-              Per Feature List §3, mark the merchant's arbitration agreement as executed and record storage key.
+              Mark the merchant's arbitration agreement as executed and record the storage key.
             </p>
             <div class="form-group">
               <label class="form-label">Storage Key / Document Ref</label>
@@ -1001,15 +1025,15 @@ export class AdminView {
         const name = (btn as HTMLElement).dataset.name!;
 
         showModal({
-          title: "⚡ Authorize Merchant On Base Sepolia (ADMIN_ROLE)",
+          title: "⚡ Authorize Merchant On Base Sepolia",
           contentHtml: `
             <div style="background: rgba(168, 85, 247, 0.1); border: 1px solid rgba(168, 85, 247, 0.3); border-radius: 8px; padding: 14px; margin-bottom: 14px; font-size: 13px; color: #d8b4fe;">
-              <strong>ON-CHAIN MERCHANT AUTHORIZATION (PRD §4.7 AD-04):</strong><br/>
+              <strong>ON-CHAIN MERCHANT AUTHORIZATION:</strong><br/>
               Approving merchant <strong>${name}</strong> on the smart contract:<br/>
               <code>${truncateAddress(wallet)}</code> (${wallet})
             </div>
             <p style="font-size: 12.5px; color: var(--text-muted); line-height: 1.6;">
-              Please make sure your MetaMask is connected with your <strong>Admin Wallet (0xb9B4...F677)</strong> to sign this transaction.
+              Please ensure your connected wallet has admin authorization to sign this transaction.
             </p>
           `,
           confirmText: "Broadcast setMerchantApproved",
@@ -1045,7 +1069,7 @@ export class AdminView {
           title: `✍️ Sign On-Chain Terms for ${name}`,
           contentHtml: `
             <div style="background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.3); border-radius: 8px; padding: 14px; margin-bottom: 14px; font-size: 13px; color: #fbbf24;">
-              <strong>MERCHANT ON-CHAIN TERMS SIGNATURE (PRD S-02, D-37):</strong><br/>
+              <strong>MERCHANT ON-CHAIN TERMS SIGNATURE:</strong><br/>
               To receive payments, the merchant's wallet must sign platform terms on-chain.<br/>
               Target Merchant Wallet: <code>${wallet}</code>
             </div>
@@ -1253,46 +1277,206 @@ export class AdminView {
     });
   }
 
+  // --- RELOAD AUDIT TAB WITH CURRENT FILTERS ---
+  private static async reloadAuditTab(container: HTMLElement) {
+    try {
+      const res = (await ApiClient.adminGetAuditLogs({
+        category: this.auditCategory,
+        userId: this.auditUserFilter || undefined,
+        startDate: this.auditStartDate || undefined,
+        endDate: this.auditEndDate || undefined,
+        limit: 100,
+      })) as any;
+
+      this.auditLogs = res?.items || res?.data?.items || res?.data?.logs || res?.logs || [];
+      this.auditTotalCount = res?.total ?? this.auditLogs.length;
+      this.auditSystemCount = res?.systemCount ?? 0;
+      this.auditTxCount = res?.transactionCount ?? 0;
+
+      const tabBtn = document.getElementById("adm-tab-audit");
+      if (tabBtn) {
+        tabBtn.textContent = `📋 Audit Logs (${this.auditTotalCount || this.auditLogs.length})`;
+      }
+
+      this.renderAuditTab(container);
+    } catch (err: any) {
+      showToast(err.message || "Failed to load filtered audit logs", "error");
+    }
+  }
+
   // --- SUB-TAB 4: AUDIT LOGS BROWSER (AD-16) ---
   private static renderAuditTab(container: HTMLElement) {
+    const hasActiveFilters =
+      Boolean(this.auditUserFilter) ||
+      Boolean(this.auditStartDate) ||
+      Boolean(this.auditEndDate) ||
+      this.auditCategory !== "ALL";
+
     container.innerHTML = `
       <div class="card">
-        <div class="card-header">
-          <h3 class="card-title">📋 Immutable Audit Trail (${this.auditLogs.length} events)</h3>
-          <button id="btn-export-csv-tab" class="btn btn-outline btn-sm">📥 Export CSV</button>
+        <div class="card-header" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+          <div>
+            <h3 class="card-title">📋 Audit Logs (${this.auditLogs.length} displayed / ${this.auditTotalCount || this.auditLogs.length} total)</h3>
+            <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+              <span>Contract:</span>
+              <a href="${INDICO_LEDGER_BASESCAN}" target="_blank" rel="noopener noreferrer" style="color: var(--cyan-accent); font-family: var(--font-mono); font-weight: 600; text-decoration: underline;">
+                ${INDICO_LEDGER_ADDRESS} ↗
+              </a>
+              <span style="color: var(--text-faint);">(Base Sepolia)</span>
+            </div>
+          </div>
+          <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+            <button id="btn-export-csv-tab" class="btn btn-outline btn-sm">📥 Export CSV</button>
+            <button id="btn-print-pdf-tab" class="btn btn-purple btn-sm">📄 Print / PDF Report</button>
+          </div>
         </div>
 
+        <!-- 1. Audit Category Switcher Pills -->
+        <div style="display: flex; gap: 10px; margin-bottom: 18px; flex-wrap: wrap;">
+          <button id="btn-audit-cat-all" class="btn btn-sm ${this.auditCategory === "ALL" ? "btn-primary" : "btn-outline"}" style="font-weight: 700;">
+            🌐 All Audits (${this.auditTotalCount || this.auditLogs.length})
+          </button>
+          <button id="btn-audit-cat-system" class="btn btn-sm ${this.auditCategory === "SYSTEM" ? "btn-primary" : "btn-outline"}" style="font-weight: 700;">
+            🛡️ System & Admin Actions (${this.auditSystemCount})
+          </button>
+          <button id="btn-audit-cat-tx" class="btn btn-sm ${this.auditCategory === "TRANSACTION" ? "btn-primary" : "btn-outline"}" style="font-weight: 700;">
+            💸 Financial & Transactions (${this.auditTxCount})
+          </button>
+        </div>
+
+        <!-- 2. Audit Filter by User & Time Range (AD-16) -->
+        <div style="background: rgba(255,255,255,0.02); border: 1px solid var(--border-subtle); border-radius: 10px; padding: 14px 18px; margin-bottom: 20px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+            <div style="font-size: 11.5px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px;">
+              🔍 User Audit & Date Range Filter
+            </div>
+            ${
+              hasActiveFilters
+                ? `<span class="badge badge-purple" style="font-size: 11px;">Active Filters Applied</span>`
+                : `<span style="font-size: 11px; color: var(--text-faint);">Showing unfiltered platform trail</span>`
+            }
+          </div>
+
+          <div style="display: grid; grid-template-columns: 2.2fr 1.3fr 1.3fr auto auto; gap: 10px; align-items: end;">
+            <div>
+              <label class="form-label" style="font-size: 11px; margin-bottom: 4px;">Target User (ID, Email, or 0x Wallet):</label>
+              <input type="text" id="input-audit-user" class="form-input" style="padding: 7px 12px; font-size: 12px;" placeholder="e.g. 0xd785... or testuser1@indico.com" value="${this.auditUserFilter}" />
+            </div>
+            <div>
+              <label class="form-label" style="font-size: 11px; margin-bottom: 4px;">Start Date (From):</label>
+              <input type="date" id="input-audit-start" class="form-input" style="padding: 6px 10px; font-size: 12px;" value="${this.auditStartDate}" />
+            </div>
+            <div>
+              <label class="form-label" style="font-size: 11px; margin-bottom: 4px;">End Date (To):</label>
+              <input type="date" id="input-audit-end" class="form-input" style="padding: 6px 10px; font-size: 12px;" value="${this.auditEndDate}" />
+            </div>
+            <div>
+              <button id="btn-audit-apply" class="btn btn-accent btn-sm" style="height: 35px; white-space: nowrap;">🔍 Filter</button>
+            </div>
+            <div>
+              <button id="btn-audit-reset" class="btn btn-outline btn-sm" style="height: 35px; white-space: nowrap;">↺ Reset</button>
+            </div>
+          </div>
+
+          <div style="display: flex; gap: 8px; margin-top: 12px; font-size: 11px; align-items: center; flex-wrap: wrap;">
+            <span style="color: var(--text-faint);">Quick Date Presets:</span>
+            <button id="preset-today" class="btn btn-outline btn-sm" style="padding: 2px 8px; font-size: 10.5px;">Today</button>
+            <button id="preset-7d" class="btn btn-outline btn-sm" style="padding: 2px 8px; font-size: 10.5px;">Last 7 Days</button>
+            <button id="preset-30d" class="btn btn-outline btn-sm" style="padding: 2px 8px; font-size: 10.5px;">Last 30 Days</button>
+            <button id="preset-all" class="btn btn-outline btn-sm" style="padding: 2px 8px; font-size: 10.5px;">All Time</button>
+            ${
+              this.usersList.length > 0
+                ? `
+              <span style="color: var(--text-faint); margin-left: 12px;">Quick Pick User:</span>
+              <select id="select-audit-user" class="form-input" style="padding: 2px 8px; font-size: 11px; width: auto; max-width: 260px;">
+                <option value="">-- Select Registered User --</option>
+                ${this.usersList
+                  .map(
+                    (u) =>
+                      `<option value="${u.walletBinding?.walletAddress || u.id}" ${
+                        this.auditUserFilter === (u.walletBinding?.walletAddress || u.id) ? "selected" : ""
+                      }>${u.email} (${truncateAddress(u.walletBinding?.walletAddress || "")})</option>`
+                  )
+                  .join("")}
+              </select>
+            `
+                : ""
+            }
+          </div>
+        </div>
+
+        <!-- 3. Audit Trail Data Table -->
         <div class="table-responsive">
           <table class="data-table">
             <thead>
               <tr>
-                <th>Timestamp</th>
-                <th>Action Type</th>
-                <th>Entity</th>
-                <th>Admin ID</th>
-                <th>IP / Context</th>
-                <th>Payload</th>
+                <th style="width: 140px;">Timestamp</th>
+                <th style="width: 140px;">Category & Action</th>
+                <th>Event Summary</th>
+                <th style="width: 160px;">Actor / Account</th>
+                <th style="width: 150px;">Tx Hash / Context</th>
+                <th style="width: 65px; text-align: center;">Raw</th>
               </tr>
             </thead>
             <tbody>
               ${
                 this.auditLogs.length === 0
-                  ? `<tr><td colspan="6" style="text-align: center; color: var(--text-muted); padding: 32px;">No audit events recorded yet.</td></tr>`
+                  ? `<tr><td colspan="6" style="text-align: center; color: var(--text-muted); padding: 36px;">No audit events match the selected criteria.</td></tr>`
                   : this.auditLogs
-                      .map(
-                        (log) => `
+                      .map((log) => {
+                        const isTx = log.category === "TRANSACTION" || log.id?.startsWith("tx-");
+                        const action = log.action || log.actionType || "UNKNOWN";
+                        const actorType = log.actorType || (isTx ? "WALLET" : "ADMIN");
+                        const actorId = log.actorId || log.adminId || "";
+                        const timestamp = log.timestamp || log.createdAt;
+                        const summary = AdminView.getAuditReadableDescription(log);
+
+                        // Action badge coloring
+                        let badgeClass = "badge-purple";
+                        if (action.includes("LOGIN")) badgeClass = "badge-info";
+                        else if (action.includes("APPROVED") || action.includes("SUCCESS") || action === "UserApprovalSet") badgeClass = "badge-success";
+                        else if (action.includes("DELETE") || action.includes("REVOKE") || action.includes("Defaulted")) badgeClass = "badge-danger";
+                        else if (action.includes("Loan") || action.includes("Credit") || action === "Spent") badgeClass = "badge-cyan";
+
+                        const categoryBadge = isTx
+                          ? `<span class="badge" style="background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3); font-size: 10px;">TX</span>`
+                          : `<span class="badge" style="background: rgba(168, 85, 247, 0.15); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.3); font-size: 10px;">SYS</span>`;
+
+                        const contextCell = log.txHash
+                          ? explorerTxLink(log.txHash)
+                          : `<span style="font-size: 11px; color: var(--text-faint);">${log.ipAddress || "system"}</span>`;
+
+                        return `
                 <tr>
-                  <td style="font-size: 11.5px; color: var(--text-muted);">${formatDate(log.createdAt)}</td>
-                  <td><span class="badge badge-purple">${log.actionType}</span></td>
-                  <td style="font-family: var(--font-mono); font-size: 11px;">${log.entityType}:${truncateAddress(log.entityId || "")}</td>
-                  <td style="font-family: var(--font-mono); font-size: 11px;">${truncateAddress(log.adminId || "")}</td>
-                  <td style="font-size: 11px; color: var(--text-faint);">${log.ipAddress || "system"}</td>
+                  <td style="font-size: 11.5px; color: var(--text-muted); white-space: nowrap;">
+                    ${formatDate(timestamp)}
+                  </td>
                   <td>
-                    <button class="btn btn-sm btn-outline btn-inspect-log" data-log='${JSON.stringify(log.payload || {})}' style="padding: 2px 8px; font-size: 11px;">Inspect</button>
+                    <div style="display: flex; align-items: center; gap: 6px;">
+                      ${categoryBadge}
+                      <span class="badge ${badgeClass}" style="font-weight: 700;">${action}</span>
+                    </div>
+                  </td>
+                  <td style="font-size: 12px; line-height: 1.5; color: var(--text-main);">
+                    ${summary}
+                  </td>
+                  <td style="font-family: var(--font-mono); font-size: 11px;">
+                    <span style="color: var(--cyan-accent); font-weight: 600;">${actorType}</span>
+                    ${
+                      actorId
+                        ? actorId.startsWith("0x")
+                          ? `<br/>${explorerAddressLink(actorId)}`
+                          : `<br/><span style="color: var(--text-muted); font-size: 10px;">${truncateAddress(actorId)}</span>`
+                        : ""
+                    }
+                  </td>
+                  <td>${contextCell}</td>
+                  <td style="text-align: center;">
+                    <button class="btn btn-sm btn-outline btn-inspect-log" data-log='${JSON.stringify(log.payload || {}).replace(/'/g, "&apos;")}' style="padding: 2px 8px; font-size: 11px;">Inspect</button>
                   </td>
                 </tr>
-              `
-                      )
+              `;
+                      })
                       .join("")
               }
             </tbody>
@@ -1301,8 +1485,89 @@ export class AdminView {
       </div>
     `;
 
-    document.getElementById("btn-export-csv-tab")?.addEventListener("click", () => this.exportAuditCsv());
+    // Category button listeners
+    document.getElementById("btn-audit-cat-all")?.addEventListener("click", () => {
+      this.auditCategory = "ALL";
+      this.reloadAuditTab(container);
+    });
+    document.getElementById("btn-audit-cat-system")?.addEventListener("click", () => {
+      this.auditCategory = "SYSTEM";
+      this.reloadAuditTab(container);
+    });
+    document.getElementById("btn-audit-cat-tx")?.addEventListener("click", () => {
+      this.auditCategory = "TRANSACTION";
+      this.reloadAuditTab(container);
+    });
 
+    // Filter submit & reset
+    document.getElementById("btn-audit-apply")?.addEventListener("click", () => {
+      this.auditUserFilter = (document.getElementById("input-audit-user") as HTMLInputElement).value.trim();
+      this.auditStartDate = (document.getElementById("input-audit-start") as HTMLInputElement).value;
+      this.auditEndDate = (document.getElementById("input-audit-end") as HTMLInputElement).value;
+      this.reloadAuditTab(container);
+    });
+
+    document.getElementById("btn-audit-reset")?.addEventListener("click", () => {
+      this.auditUserFilter = "";
+      this.auditStartDate = "";
+      this.auditEndDate = "";
+      this.auditCategory = "ALL";
+      this.reloadAuditTab(container);
+    });
+
+    // Quick pick user dropdown listener
+    document.getElementById("select-audit-user")?.addEventListener("change", (e) => {
+      const selected = (e.target as HTMLSelectElement).value;
+      (document.getElementById("input-audit-user") as HTMLInputElement).value = selected;
+      this.auditUserFilter = selected;
+      this.reloadAuditTab(container);
+    });
+
+    // Date presets
+    document.getElementById("preset-today")?.addEventListener("click", () => {
+      const today = new Date().toISOString().slice(0, 10);
+      this.auditStartDate = today;
+      this.auditEndDate = today;
+      (document.getElementById("input-audit-start") as HTMLInputElement).value = today;
+      (document.getElementById("input-audit-end") as HTMLInputElement).value = today;
+      this.reloadAuditTab(container);
+    });
+
+    document.getElementById("preset-7d")?.addEventListener("click", () => {
+      const now = new Date();
+      const past7 = new Date(now.getTime() - 7 * 24 * 3600 * 1000).toISOString().slice(0, 10);
+      const today = now.toISOString().slice(0, 10);
+      this.auditStartDate = past7;
+      this.auditEndDate = today;
+      (document.getElementById("input-audit-start") as HTMLInputElement).value = past7;
+      (document.getElementById("input-audit-end") as HTMLInputElement).value = today;
+      this.reloadAuditTab(container);
+    });
+
+    document.getElementById("preset-30d")?.addEventListener("click", () => {
+      const now = new Date();
+      const past30 = new Date(now.getTime() - 30 * 24 * 3600 * 1000).toISOString().slice(0, 10);
+      const today = now.toISOString().slice(0, 10);
+      this.auditStartDate = past30;
+      this.auditEndDate = today;
+      (document.getElementById("input-audit-start") as HTMLInputElement).value = past30;
+      (document.getElementById("input-audit-end") as HTMLInputElement).value = today;
+      this.reloadAuditTab(container);
+    });
+
+    document.getElementById("preset-all")?.addEventListener("click", () => {
+      this.auditStartDate = "";
+      this.auditEndDate = "";
+      (document.getElementById("input-audit-start") as HTMLInputElement).value = "";
+      (document.getElementById("input-audit-end") as HTMLInputElement).value = "";
+      this.reloadAuditTab(container);
+    });
+
+    // Export buttons
+    document.getElementById("btn-export-csv-tab")?.addEventListener("click", () => this.exportAuditCsv());
+    document.getElementById("btn-print-pdf-tab")?.addEventListener("click", () => this.exportAuditPdf());
+
+    // Payload inspector modal
     container.querySelectorAll(".btn-inspect-log").forEach((btn) => {
       btn.addEventListener("click", () => {
         const raw = (btn as HTMLElement).dataset.log;
@@ -1321,12 +1586,12 @@ export class AdminView {
       <div class="card">
         <div class="card-header">
           <h3 class="card-title">⚡ Admin AI Console</h3>
-          <span class="badge badge-purple">Feature List §3 Compliant</span>
+          <span class="badge badge-purple">Interactive Console</span>
         </div>
 
         <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 16px;">
-          Execute administrative operations or query platform status via natural language.
-          Per Feature List §3: <strong>Look-up questions answered immediately; anything moving money requires summary & confirmation.</strong>
+          Query platform status and execute administrative operations using natural language.
+          <strong>Look-up questions are answered immediately; actions modifying balances or contracts require review and confirmation.</strong>
         </p>
 
         <div id="admin-ai-chat" style="background: rgba(0,0,0,0.4); border: 1px solid var(--border-subtle); border-radius: 12px; padding: 18px; min-height: 280px; max-height: 400px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; margin-bottom: 16px;">
@@ -1391,34 +1656,564 @@ export class AdminView {
     });
   }
 
-  // --- CSV EXPORT ---
-  private static exportAuditCsv() {
-    if (this.auditLogs.length === 0) {
-      showToast("No audit logs to export", "info");
+  // --- CSV EXPORT (AD-16) ---
+  private static async exportAuditCsv() {
+    let logs = this.auditLogs;
+    try {
+      const fullRes = (await ApiClient.adminGetAuditLogs({
+        category: this.auditCategory,
+        userId: this.auditUserFilter || undefined,
+        startDate: this.auditStartDate || undefined,
+        endDate: this.auditEndDate || undefined,
+        limit: 500,
+      })) as any;
+
+      const fetched = fullRes?.items || fullRes?.data?.items || fullRes?.data?.logs || fullRes?.logs;
+      if (Array.isArray(fetched) && fetched.length > 0) {
+        logs = fetched;
+      }
+    } catch {
+      // fallback to currently loaded logs
+    }
+
+    if (!logs || logs.length === 0) {
+      showToast("No audit logs match current filters to export", "info");
       return;
     }
 
-    const headers = ["ID", "Timestamp", "ActionType", "EntityType", "EntityId", "AdminId", "IPAddress", "Payload"];
-    const rows = this.auditLogs.map((log) => [
-      log.id,
-      new Date(log.createdAt).toISOString(),
-      log.actionType,
-      log.entityType,
-      log.entityId || "",
-      log.adminId || "",
-      log.ipAddress || "",
-      JSON.stringify(log.payload || {}).replace(/"/g, '""'),
-    ]);
+    const headers = [
+      "ID",
+      "Category",
+      "Timestamp (UTC)",
+      "Action",
+      "Event Summary",
+      "Contract Address",
+      "Actor Type",
+      "Actor ID / Wallet",
+      "Amount",
+      "Tx Hash",
+      "Block / IP",
+    ];
+
+    const rows = logs.map((log) => {
+      const rawDate = log.timestamp || log.createdAt;
+      const isoDate = rawDate ? new Date(rawDate).toISOString() : new Date().toISOString();
+      const isTx = log.category === "TRANSACTION" || log.id?.startsWith("tx-");
+      const summaryText = AdminView.getAuditReadableDescription(log).replace(/<[^>]+>/g, "").trim();
+
+      return [
+        log.id || "",
+        isTx ? "TRANSACTION" : "SYSTEM",
+        isoDate,
+        log.action || log.actionType || "",
+        summaryText,
+        isTx || log.txHash ? INDICO_LEDGER_ADDRESS : "",
+        log.actorType || (isTx ? "WALLET" : "ADMIN"),
+        log.actorId || log.adminId || "",
+        log.amountDisplay || log.payload?.amountDisplay || "",
+        log.txHash || "",
+        log.blockNumber ? `Block #${log.blockNumber}` : (log.ipAddress || "Internal"),
+      ];
+    });
 
     const csvContent = [headers.join(","), ...rows.map((r) => r.map((c) => `"${c}"`).join(","))].join("\n");
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.setAttribute("href", url);
-    link.setAttribute("download", `indico-audit-log-${new Date().toISOString().slice(0, 10)}.csv`);
+
+    const filterTag = this.auditUserFilter ? "-user-filtered" : "";
+    const catTag = this.auditCategory.toLowerCase();
+    link.setAttribute("download", `indico-audit-${catTag}${filterTag}-${new Date().toISOString().slice(0, 10)}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-    showToast("Audit logs exported to CSV!", "success");
+    URL.revokeObjectURL(url);
+    showToast(`Exported ${logs.length} ${catTag} audit records to CSV!`, "success");
+  }
+
+  // --- STRUCTURED PDF / PRINT REPORT EXPORT (AD-16) ---
+  private static async exportAuditPdf() {
+    let logs = this.auditLogs;
+    let systemCount = this.auditSystemCount;
+    let txCount = this.auditTxCount;
+
+    try {
+      const fullRes = (await ApiClient.adminGetAuditLogs({
+        category: this.auditCategory,
+        userId: this.auditUserFilter || undefined,
+        startDate: this.auditStartDate || undefined,
+        endDate: this.auditEndDate || undefined,
+        limit: 500,
+      })) as any;
+
+      const fetched = fullRes?.items || fullRes?.data?.items || fullRes?.data?.logs || fullRes?.logs;
+      if (Array.isArray(fetched) && fetched.length > 0) {
+        logs = fetched;
+        if (fullRes.systemCount !== undefined) systemCount = fullRes.systemCount;
+        if (fullRes.transactionCount !== undefined) txCount = fullRes.transactionCount;
+      }
+    } catch {
+      // fallback to current logs
+    }
+
+    if (!logs || logs.length === 0) {
+      showToast("No audit events match current filters for report generation", "info");
+      return;
+    }
+
+    const printWin = window.open("", "_blank");
+    if (!printWin) {
+      showToast("Popup blocked! Please allow popups to view or print the audit report.", "warning");
+      return;
+    }
+
+    const now = new Date();
+    const generatedDate = now.toUTCString();
+    const operatorEmail = this.adminData?.email || "admin@indico.example";
+    const availablePool = this.poolData?.availableUsdc || this.poolData?.poolCash || "0.00";
+
+    const rowsHtml = logs
+      .map((log, idx) => {
+        const isTx = log.category === "TRANSACTION" || log.id?.startsWith("tx-");
+        const action = log.action || log.actionType || "UNKNOWN";
+        const actorType = log.actorType || (isTx ? "WALLET" : "ADMIN");
+        const actorId = log.actorId || log.adminId || "";
+        const rawDate = log.timestamp || log.createdAt;
+        const description = AdminView.getAuditReadableDescription(log);
+
+        const formattedDate = rawDate
+          ? new Date(rawDate).toLocaleString("en-US", {
+              month: "short",
+              day: "2-digit",
+              year: "numeric",
+              hour: "2-digit",
+              minute: "2-digit",
+              second: "2-digit",
+              timeZoneName: "short",
+            })
+          : "-";
+
+        let badgeColor = "#7c3aed";
+        let badgeBg = "#f5f3ff";
+        let badgeBorder = "#ddd6fe";
+        if (action.includes("LOGIN")) {
+          badgeColor = "#0284c7";
+          badgeBg = "#f0f9ff";
+          badgeBorder = "#bae6fd";
+        } else if (action.includes("APPROVED") || action.includes("SUCCESS") || action === "UserApprovalSet") {
+          badgeColor = "#059669";
+          badgeBg = "#ecfdf5";
+          badgeBorder = "#a7f3d0";
+        } else if (action.includes("DELETE") || action.includes("REVOKE") || action.includes("Defaulted")) {
+          badgeColor = "#dc2626";
+          badgeBg = "#fef2f2";
+          badgeBorder = "#fecaca";
+        } else if (action.includes("Loan") || action.includes("Credit") || action === "Spent") {
+          badgeColor = "#0891b2";
+          badgeBg = "#ecfeff";
+          badgeBorder = "#a5f3fc";
+        }
+
+        const categoryTag = isTx
+          ? `<span style="background: #ecfdf5; color: #059669; border: 1px solid #a7f3d0; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: 800;">TX</span>`
+          : `<span style="background: #f5f3ff; color: #7c3aed; border: 1px solid #ddd6fe; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: 800;">SYS</span>`;
+
+        // Clickable Tx Hash link
+        const txLink = log.txHash
+          ? `
+            <div>
+              <a href="https://sepolia.basescan.org/tx/${log.txHash}" target="_blank" rel="noopener noreferrer" style="color: #0284c7; font-family: monospace; font-weight: 700; text-decoration: underline; font-size: 11px;">
+                ${truncateAddress(log.txHash)} ↗
+              </a>
+              ${log.blockNumber ? `<div style="font-size: 9.5px; color: #64748b; font-family: monospace;">Block #${log.blockNumber}</div>` : ""}
+            </div>
+          `
+          : `<span style="font-size: 11px; color: #64748b;">${log.ipAddress || "System Internal"}</span>`;
+
+        // Clickable Involved Party link if 0x address
+        const partyLink =
+          actorId && actorId.startsWith("0x")
+            ? `
+              <a href="https://sepolia.basescan.org/address/${actorId}" target="_blank" rel="noopener noreferrer" style="color: #0284c7; font-family: monospace; font-weight: 700; text-decoration: underline; font-size: 11px;">
+                ${truncateAddress(actorId)} ↗
+              </a>
+              <div style="font-size: 10px; color: #64748b; font-weight: 600;">${actorType}</div>
+            `
+            : `
+              <div style="font-weight: 700; color: #0f172a; font-size: 11px;">${actorId ? (actorId.length > 20 ? truncateAddress(actorId) : actorId) : "N/A"}</div>
+              <div style="font-size: 10px; color: #64748b; font-weight: 600;">${actorType}</div>
+            `;
+
+        return `
+          <tr>
+            <td style="text-align: center; color: #64748b; font-weight: 600;">#${idx + 1}</td>
+            <td style="white-space: nowrap; font-size: 11px; color: #334155;">
+              <strong>${formattedDate}</strong>
+              <div style="font-size: 9.5px; color: #94a3b8; font-family: monospace;">ID: ${truncateAddress(log.id || "")}</div>
+            </td>
+            <td>
+              <div style="display: flex; align-items: center; gap: 5px;">
+                ${categoryTag}
+                <span class="badge" style="background: ${badgeBg}; color: ${badgeColor}; border: 1px solid ${badgeBorder}; padding: 2px 7px; border-radius: 5px; font-weight: 700; font-size: 11px; display: inline-block;">
+                  ${action}
+                </span>
+              </div>
+            </td>
+            <td>
+              ${partyLink}
+            </td>
+            <td style="font-size: 12px; color: #1e293b; line-height: 1.5;">
+              ${description}
+            </td>
+            <td>
+              ${txLink}
+            </td>
+          </tr>
+        `;
+      })
+      .join("");
+
+    const reportHtml = `
+      <!DOCTYPE html>
+      <html lang="en">
+      <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Indico Protocol — System & Transaction Audit Report</title>
+        <style>
+          * { box-sizing: border-box; margin: 0; padding: 0; }
+          body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: #f8fafc;
+            color: #0f172a;
+            padding: 32px;
+            font-size: 13px;
+            line-height: 1.5;
+          }
+          .container {
+            max-width: 1250px;
+            margin: 0 auto;
+            background: #ffffff;
+            border: 1px solid #e2e8f0;
+            border-radius: 12px;
+            padding: 36px;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -2px rgba(0, 0, 0, 0.05);
+          }
+          .no-print {
+            margin-bottom: 24px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: #0f172a;
+            color: #ffffff;
+            padding: 14px 20px;
+            border-radius: 8px;
+          }
+          .btn {
+            cursor: pointer;
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-weight: 600;
+            font-size: 12.5px;
+            border: none;
+            transition: opacity 0.2s;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+          }
+          .btn-primary { background: #7c3aed; color: #fff; }
+          .btn-secondary { background: #334155; color: #fff; }
+          .btn:hover { opacity: 0.9; }
+
+          .report-header {
+            border-bottom: 2px solid #e2e8f0;
+            padding-bottom: 20px;
+            margin-bottom: 24px;
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+          }
+          .logo-title h1 {
+            font-size: 24px;
+            font-weight: 800;
+            letter-spacing: -0.5px;
+            color: #0f172a;
+          }
+          .logo-title p {
+            color: #64748b;
+            font-size: 12px;
+            margin-top: 4px;
+          }
+          .meta-box {
+            text-align: right;
+            font-size: 12px;
+            color: #475569;
+            line-height: 1.6;
+          }
+          .meta-box strong { color: #0f172a; }
+
+          .filter-banner {
+            background: #f1f5f9;
+            border-left: 4px solid #7c3aed;
+            padding: 10px 16px;
+            border-radius: 6px;
+            margin-bottom: 24px;
+            font-size: 12px;
+            color: #334155;
+          }
+
+          .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 16px;
+            margin-bottom: 28px;
+          }
+          .metric-card {
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            padding: 14px 18px;
+          }
+          .metric-card .label {
+            font-size: 11px;
+            font-weight: 600;
+            color: #64748b;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+          }
+          .metric-card .value {
+            font-size: 18px;
+            font-weight: 800;
+            color: #0f172a;
+            margin-top: 4px;
+          }
+
+          table.audit-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+            margin-bottom: 24px;
+          }
+          table.audit-table th {
+            background: #f1f5f9;
+            color: #334155;
+            text-align: left;
+            padding: 10px 12px;
+            font-weight: 700;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            border-top: 1px solid #cbd5e1;
+            border-bottom: 1px solid #cbd5e1;
+          }
+          table.audit-table td {
+            padding: 12px;
+            border-bottom: 1px solid #e2e8f0;
+            vertical-align: top;
+          }
+          table.audit-table tr:nth-child(even) td {
+            background: #fafafa;
+          }
+
+          .footer {
+            border-top: 1px solid #e2e8f0;
+            padding-top: 16px;
+            display: flex;
+            justify-content: space-between;
+            color: #94a3b8;
+            font-size: 11px;
+          }
+
+          @media print {
+            body {
+              background: #fff;
+              padding: 0;
+            }
+            .container {
+              border: none;
+              box-shadow: none;
+              padding: 0;
+              max-width: 100%;
+            }
+            .no-print {
+              display: none !important;
+            }
+            table.audit-table tr {
+              page-break-inside: avoid;
+            }
+            a {
+              text-decoration: underline !important;
+              color: #0284c7 !important;
+            }
+            @page {
+              margin: 10mm 8mm;
+              size: landscape;
+            }
+          }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="no-print">
+            <div style="font-weight: 600; font-size: 13px;">
+              📄 Audit Report — Ready to Print or Save as PDF
+            </div>
+            <div style="display: flex; gap: 8px;">
+              <button class="btn btn-primary" onclick="window.print()">🖨️ Print / Save as PDF</button>
+              <button class="btn btn-secondary" onclick="window.close()">✕ Close</button>
+            </div>
+          </div>
+
+          <div class="report-header">
+            <div class="logo-title">
+              <h1>INDICO PROTOCOL</h1>
+              <p>System Audit &amp; Transaction Log</p>
+            </div>
+            <div class="meta-box">
+              <div><strong>Contract:</strong> <a href="${INDICO_LEDGER_BASESCAN}" target="_blank" rel="noopener noreferrer" style="color: #0284c7; font-family: monospace; font-weight: 700; text-decoration: underline;">${INDICO_LEDGER_ADDRESS} ↗</a></div>
+              <div><strong>Network:</strong> Base Sepolia (Chain ID: 84532)</div>
+              <div><strong>Generated:</strong> ${generatedDate}</div>
+              <div><strong>Admin:</strong> ${operatorEmail}</div>
+              <div><strong>Scope:</strong> ${this.auditCategory} Events</div>
+            </div>
+          </div>
+
+          <div class="filter-banner">
+            <strong>Filters:</strong> Category: <code>${this.auditCategory}</code> &bull; User: <code>${this.auditUserFilter || "All Users"}</code> &bull; Date Range: <code>${this.auditStartDate || "All Time"}</code> to <code>${this.auditEndDate || "Present"}</code> &bull; Total Matched: <strong>${logs.length} events</strong>
+          </div>
+
+          <div class="metrics-grid">
+            <div class="metric-card">
+              <div class="label">Total Events</div>
+              <div class="value" style="color: #7c3aed;">${logs.length}</div>
+            </div>
+            <div class="metric-card">
+              <div class="label">System Logs</div>
+              <div class="value" style="color: #6366f1;">${systemCount}</div>
+            </div>
+            <div class="metric-card">
+              <div class="label">Transactions</div>
+              <div class="value" style="color: #059669;">${txCount}</div>
+            </div>
+            <div class="metric-card">
+              <div class="label">Pool Cash</div>
+              <div class="value" style="color: #0284c7;">${formatUsdc(availablePool)} USDC</div>
+            </div>
+          </div>
+
+          <table class="audit-table">
+            <thead>
+              <tr>
+                <th style="width: 35px; text-align: center;">#</th>
+                <th style="width: 155px;">Date &amp; Time</th>
+                <th style="width: 130px;">Type</th>
+                <th style="width: 160px;">Actor / Wallet</th>
+                <th>Event Summary</th>
+                <th style="width: 170px;">Tx Hash / Block</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rowsHtml}
+            </tbody>
+          </table>
+
+          <div class="footer">
+            <span>Indico Protocol &bull; Contract: <a href="${INDICO_LEDGER_BASESCAN}" target="_blank" rel="noopener noreferrer" style="color: #0284c7; font-family: monospace; text-decoration: underline;">${INDICO_LEDGER_ADDRESS}</a> &bull; Base Sepolia</span>
+            <span>Report generated on ${generatedDate}</span>
+          </div>
+        </div>
+
+        <script>
+          window.addEventListener("DOMContentLoaded", () => {
+            setTimeout(() => {
+              window.print();
+            }, 400);
+          });
+        </script>
+      </body>
+      </html>
+    `;
+
+    printWin.document.open();
+    printWin.document.write(reportHtml);
+    printWin.document.close();
+    showToast("Audit report prepared! Print / Save as PDF window opened.", "success");
+  }
+
+  // --- HUMAN-READABLE EVENT DESCRIPTION BUILDER ---
+  private static getAuditReadableDescription(log: any): string {
+    const action = log.action || log.actionType || "UNKNOWN";
+    const p = log.payload || {};
+    const amount = log.amountDisplay || p.amountDisplay;
+
+    switch (action) {
+      case "LoanOpened":
+        return `Opened Loan #${p.loanId || ""}: <strong style="color: #0284c7;">${amount || "USDC"}</strong>${
+          p.collateral ? ` (${(Number(p.collateral) / 1e6).toFixed(2)} Credit collateral locked)` : ""
+        }`;
+      case "LoanRepaid":
+        return `Repaid Loan #${p.loanId || ""}: <strong style="color: #059669;">${amount || "USDC"}</strong> (collateral returned to borrower)`;
+      case "LoanDefaulted":
+        return `Loan #${p.loanId || ""} defaulted (collateral seized to pool)`;
+      case "LoanExtended":
+        return `Extended repayment due date for Loan #${p.loanId || ""}`;
+      case "CollateralLocked":
+        return `Locked <strong style="color: #7c3aed;">${amount || (p.amount ? (Number(p.amount) / 1e6).toFixed(2) + " Credit" : "collateral")}</strong> (Loan #${p.loanId || ""})`;
+      case "CollateralReleased":
+        return `Released <strong style="color: #059669;">${amount || (p.amount ? (Number(p.amount) / 1e6).toFixed(2) + " Credit" : "collateral")}</strong> (Loan #${p.loanId || ""})`;
+      case "CreditMinted":
+        return `Minted <strong style="color: #059669;">${amount || (p.amount ? (Number(p.amount) / 1e6).toFixed(2) + " Credit" : "Credit")}</strong> to user wallet`;
+      case "CreditBurned":
+        return `Burned <strong style="color: #dc2626;">${amount || (p.amount ? (Number(p.amount) / 1e6).toFixed(2) + " Credit" : "Credit")}</strong>`;
+      case "Spent":
+        return `Payment to merchant: <strong style="color: #0284c7;">${amount || (p.amount ? (Number(p.amount) / 1e6).toFixed(2) + " Credit" : "Credit")}</strong>`;
+      case "MerchantReceipt":
+        return `Merchant received payment: <strong style="color: #059669;">${amount || (p.amount ? (Number(p.amount) / 1e6).toFixed(2) + " Credit" : "Credit")}</strong>`;
+      case "Deposited":
+      case "Deposit":
+        return `Pool deposit: <strong style="color: #059669;">${amount || (p.assets ? (Number(p.assets) / 1e6).toFixed(2) + " USDC" : "USDC")}</strong>`;
+      case "Withdraw":
+        return `Pool withdrawal: <strong style="color: #d97706;">${amount || (p.assets ? (Number(p.assets) / 1e6).toFixed(2) + " USDC" : "USDC")}</strong>`;
+      case "AssetRegistered":
+        return `Asset registered: <strong style="color: #7c3aed;">${amount || (p.value ? (Number(p.value) / 1e6).toFixed(2) + " USDC" : "")}</strong>`;
+      case "TermsSigned":
+        return `Signed platform terms on-chain`;
+      case "UserApprovalSet":
+        return `User wallet ${p.approved ? "approved" : "revoked"} on-chain`;
+      case "MerchantApprovalSet":
+        return `Merchant wallet ${p.approved ? "approved" : "revoked"} on-chain`;
+      case "TermsHashSet":
+        return `Platform terms hash updated on-chain`;
+
+      // System Administrative Actions
+      case "USER_APPROVED":
+        return `Approved user <strong style="color: #059669;">${p.email || ""}</strong>${
+          p.walletAddress ? ` (${truncateAddress(p.walletAddress)})` : ""
+        }`;
+      case "USER_REJECTED":
+        return `Rejected user <strong style="color: #dc2626;">${p.email || ""}</strong>`;
+      case "MERCHANT_CREATED":
+        return `Created merchant <strong style="color: #7c3aed;">"${p.name || ""}"</strong>${
+          p.walletAddress ? ` (${truncateAddress(p.walletAddress)})` : ""
+        }`;
+      case "SERVICE_ADDED":
+        return `Added service <strong style="color: #0f172a;">"${p.name || ""}"</strong> (<strong style="color: #0284c7;">${p.price || ""} Credit</strong>)`;
+      case "SERVICE_UPDATED":
+        return `Updated service ${p.name ? `"${p.name}"` : ""} ${p.price ? `(${p.price} Credit)` : ""}`;
+      case "SERVICE_DELETED":
+        return `Deleted service from catalog`;
+      case "AGREEMENT_SENT":
+        return `Sent arbitration agreement to merchant`;
+      case "AGREEMENT_SIGNED":
+        return `Merchant signed arbitration agreement`;
+      case "ADMIN_LOGIN":
+        return `Admin login (<span style="color: #64748b;">${p.email || "admin@indico.example"}</span>)`;
+      default:
+        return `${action.replace(/_/g, " ")}${log.resource ? ` on ${log.resource}` : ""}`;
+    }
   }
 }
+
+

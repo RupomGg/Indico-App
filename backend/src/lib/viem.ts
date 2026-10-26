@@ -1,6 +1,7 @@
 import {
   createPublicClient,
   createWalletClient,
+  fallback,
   http,
   parseAbi,
   decodeErrorResult,
@@ -123,7 +124,11 @@ const chain = env.CHAIN_ID === 8453 ? base : baseSepolia;
 
 export const publicClient = createPublicClient({
   chain,
-  transport: http(env.RPC_URL),
+  transport: fallback([
+    http(env.RPC_URL),
+    http("https://sepolia.base.org"),
+    http("https://base-sepolia-rpc.publicnode.com"),
+  ]),
 });
 
 export const keeperAccount = env.KEEPER_PRIVATE_KEY

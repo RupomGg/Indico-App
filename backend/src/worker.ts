@@ -3,9 +3,8 @@ import { prisma } from "./lib/prisma.js";
 import { env } from "./config/env.js";
 import { IndexerService } from "./modules/indexer/indexer.service.js";
 
-const CONFIRMATIONS = 5n;
-const MAX_BATCH_BLOCKS = 100n; // Public RPC limits getLogs range to 200 blocks
-const POLL_INTERVAL_MS = 5000; // 5 seconds
+const CONFIRMATIONS = 2n;
+const POLL_INTERVAL_MS = 3000; // 3 seconds when caught up
 
 let isRunning = true;
 
@@ -15,6 +14,7 @@ async function runIndexerLoop() {
   console.log(`⛓️  [Worker] Connected to RPC: ${env.RPC_URL} (Chain ID: ${env.CHAIN_ID})`);
 
   while (isRunning) {
+    let caughtUp = true;
     try {
       // 1. Fetch latest on-chain head block
       const latestBlock = await publicClient.getBlockNumber();
@@ -31,16 +31,19 @@ async function runIndexerLoop() {
         : (safeHead > 50n ? safeHead - 50n : 0n);
 
       if (currentProcessed < safeHead) {
+        const remaining = safeHead - currentProcessed;
+        const batchSize = remaining > 2000n ? 2000n : (remaining > 500n ? 500n : remaining);
         const fromBlock = currentProcessed + 1n;
         const toBlock =
-          fromBlock + MAX_BATCH_BLOCKS - 1n < safeHead
-            ? fromBlock + MAX_BATCH_BLOCKS - 1n
+          fromBlock + batchSize - 1n < safeHead
+            ? fromBlock + batchSize - 1n
             : safeHead;
 
         const result = await IndexerService.syncBlockRange(fromBlock, toBlock);
         console.log(
-          `📦 [Indexer] Synced blocks [${fromBlock} -> ${toBlock}] (head: ${latestBlock}). Processed ${result.eventsProcessed} event(s).`
+          `📦 [Indexer] Synced blocks [${fromBlock} -> ${toBlock}] (${safeHead - toBlock} behind, head: ${latestBlock}). Processed ${result.eventsProcessed} event(s).`
         );
+        caughtUp = toBlock >= safeHead;
       }
 
       // 3. Periodic Overdue Loan Check (Liquidation Keeper Alert)
@@ -61,8 +64,12 @@ async function runIndexerLoop() {
       console.error("❌ [Worker] Error during sync loop:", err?.message || err);
     }
 
-    // Wait before next tick
-    await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+    // If still catching up, wait 500ms to avoid Infura 429
+    if (!caughtUp) {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    } else {
+      await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+    }
   }
 }
 
