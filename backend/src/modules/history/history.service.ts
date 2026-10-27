@@ -179,34 +179,35 @@ export class HistoryService {
 
     const walletAddress = binding.walletAddress.toLowerCase();
 
-    const allEvents = await prisma.chainEvent.findMany({
-      orderBy: [{ blockNumber: "desc" }, { logIndex: "desc" }],
-    });
-
-    const userEvents = allEvents.filter((e) => {
-      const data = (e.data || {}) as Record<string, any>;
-      const user = (data["user"] || "").toString().toLowerCase();
-      const borrower = (data["borrower"] || "").toString().toLowerCase();
-      const signer = (data["signer"] || "").toString().toLowerCase();
-      const merchant = (data["merchant"] || "").toString().toLowerCase();
-      return (
-        user === walletAddress ||
-        borrower === walletAddress ||
-        signer === walletAddress ||
-        merchant === walletAddress
-      );
-    });
+    // Query matching events directly in PostgreSQL using JSON operators instead of loading all table events into RAM
+    const userEvents: Array<{
+      id: string;
+      tx_hash: string;
+      log_index: number;
+      event_name: string;
+      block_number: bigint;
+      block_timestamp: bigint;
+      data: any;
+    }> = await prisma.$queryRaw`
+      SELECT id, tx_hash, log_index, event_name, block_number, block_timestamp, data
+      FROM chain_events
+      WHERE lower(data->>'user') = ${walletAddress}
+         OR lower(data->>'borrower') = ${walletAddress}
+         OR lower(data->>'signer') = ${walletAddress}
+         OR lower(data->>'merchant') = ${walletAddress}
+      ORDER BY block_number DESC, log_index DESC
+    `;
 
     return {
       items: userEvents.map((e) => ({
         id: e.id,
-        txHash: e.txHash,
-        logIndex: e.logIndex,
-        eventName: e.eventName,
-        blockNumber: e.blockNumber.toString(),
-        blockTimestamp: Number(e.blockTimestamp),
+        txHash: e.tx_hash,
+        logIndex: e.log_index,
+        eventName: e.event_name,
+        blockNumber: e.block_number.toString(),
+        blockTimestamp: Number(e.block_timestamp),
         data: (e.data || {}) as Record<string, any>,
-        explorerUrl: `${env.CHAIN_ID === 8453 ? "https://basescan.org/tx/" : "https://sepolia.basescan.org/tx/"}${e.txHash}`,
+        explorerUrl: `${env.CHAIN_ID === 8453 ? "https://basescan.org/tx/" : "https://sepolia.basescan.org/tx/"}${e.tx_hash}`,
       })),
       total: userEvents.length,
     };

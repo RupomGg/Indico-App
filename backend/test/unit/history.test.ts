@@ -284,6 +284,45 @@ describe("History Module (PRD §4.3 C-01, C-02; §4.4 L-09; Rule 9 Read-Model Ta
     });
   });
 
+  describe("getUserTransactions", () => {
+    it("returns empty items and total 0 if user has no bound wallet", async () => {
+      vi.spyOn(prisma.walletBinding, "findUnique").mockResolvedValue(null);
+
+      const res = await HistoryService.getUserTransactions(mockUserId);
+      expect(res.items).toEqual([]);
+      expect(res.total).toBe(0);
+    });
+
+    it("queries matching chain events using database query and maps explorerUrl", async () => {
+      vi.spyOn(prisma.walletBinding, "findUnique").mockResolvedValue({
+        id: "b-1",
+        userId: mockUserId,
+        walletAddress: mockWallet,
+      } as any);
+
+      vi.spyOn(prisma, "$queryRaw").mockResolvedValue([
+        {
+          id: "ev-1",
+          tx_hash: "0xabcdef1234567890",
+          log_index: 1,
+          event_name: "LoanOpened",
+          block_number: 1000n,
+          block_timestamp: 1793000000n,
+          data: { borrower: mockWallet, principal: "5000000" },
+        },
+      ] as any);
+
+      const res = await HistoryService.getUserTransactions(mockUserId);
+      expect(res.total).toBe(1);
+      expect(res.items.length).toBe(1);
+      expect(res.items[0]!.txHash).toBe("0xabcdef1234567890");
+      expect(res.items[0]!.eventName).toBe("LoanOpened");
+      expect(res.items[0]!.blockNumber).toBe("1000");
+      expect(res.items[0]!.blockTimestamp).toBe(1793000000);
+      expect(res.items[0]!.explorerUrl).toContain("0xabcdef1234567890");
+    });
+  });
+
   describe("Rule 9 Invariant Check (Application logic never writes to read-models)", () => {
     it("HistoryService never calls write methods on read_credit_balances, read_loans, or read_pool_deposits", () => {
       // Introspect HistoryService methods
