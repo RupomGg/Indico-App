@@ -100,16 +100,23 @@ export function buildApp(options?: BuildAppOptions): FastifyInstance {
     return { status: "ok", timestamp: new Date().toISOString() };
   });
 
-  // API Routes
-  app.register(authRoutes, { prefix: "/api/v1/auth" });
-  app.register(profileRoutes, { prefix: "/api/v1/profile" });
-  app.register(termsRoutes, { prefix: "/api/v1/terms" });
-  app.register(assetsRoutes, { prefix: "/api/v1/assets" });
-  app.register(loansRoutes, { prefix: "/api/v1/loans" });
-  app.register(creditRoutes, { prefix: "/api/v1/credit" });
-  app.register(merchantsRoutes, { prefix: "/api/v1/merchants" });
-  app.register(historyRoutes, { prefix: "/api/v1/history" });
-  app.register(adminRoutes, { prefix: "/api/v1/admin" });
+  // API Routes (mounted under both /api/v1 and root prefixes for mobile client compatibility)
+  const routeModules = [
+    { plugin: authRoutes, prefix: "/auth" },
+    { plugin: profileRoutes, prefix: "/profile" },
+    { plugin: termsRoutes, prefix: "/terms" },
+    { plugin: assetsRoutes, prefix: "/assets" },
+    { plugin: loansRoutes, prefix: "/loans" },
+    { plugin: creditRoutes, prefix: "/credit" },
+    { plugin: merchantsRoutes, prefix: "/merchants" },
+    { plugin: historyRoutes, prefix: "/history" },
+    { plugin: adminRoutes, prefix: "/admin" },
+  ];
+
+  for (const { plugin, prefix } of routeModules) {
+    app.register(plugin, { prefix: `/api/v1${prefix}` });
+    app.register(plugin, { prefix });
+  }
 
   // Global Error Handler (PRD §Input Testing requirement)
   app.setErrorHandler(globalErrorHandler);
