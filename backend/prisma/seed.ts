@@ -91,6 +91,27 @@ async function main() {
       console.log(`✓ Approved user created: ${userEmail} (Password: UserPass2026!)`);
     }
 
+    const testuser1Email = "testuser1@indico.com";
+    const existingTestUser = await prisma.user.findUnique({ where: { email: testuser1Email } });
+    if (!existingTestUser) {
+      const testUserPasswordHash = await hashPassword("12345678");
+      await prisma.user.create({
+        data: {
+          email: testuser1Email,
+          passwordHash: testUserPasswordHash,
+          isEmailVerified: true,
+          isApproved: true,
+          walletBinding: {
+            create: {
+              walletAddress: "0xd785f1668d59710199d8b9af37ed31883621aa65",
+              accountRef: "INDICO-TESTUSER1-001",
+            },
+          },
+        },
+      });
+      console.log(`✓ Approved user created: ${testuser1Email} (Password: 12345678)`);
+    }
+
     const merchant1Addr = "0x90F79bf6EB2c4f870365E785982E1f101E93b906".toLowerCase();
     const existingM1 = await prisma.merchant.findUnique({ where: { walletAddress: merchant1Addr } });
     if (!existingM1) {
