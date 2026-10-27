@@ -22,3 +22,10 @@ storage/
 # Scratch scripts and temporary files
 scratch/
 **/scratch/
+
+# Local reviews, testing notes, and infrastructure guides
+ADMIN_DASHBOARD_REVIEW.md
+ADMIN_DASHBOARD_TESTING*.md
+INFRASTRUCTURE_SETUP_GUIDE.md
+INFRASTRUCTURE_SETUP_REQUIREMENT.pdf
+*.pdf

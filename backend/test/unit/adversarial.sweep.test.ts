@@ -65,6 +65,7 @@ describe("Generic No-500 Adversarial Route Sweep & Integration (P4.7 / PRD §Inp
 
   const validAdminToken = jwt.sign(
     {
+      id: "test-admin-uuid-1234",
       adminId: "test-admin-uuid-1234",
       email: env.ADMIN_EMAIL,
       role: "ADMIN",
@@ -89,6 +90,8 @@ describe("Generic No-500 Adversarial Route Sweep & Integration (P4.7 / PRD §Inp
       "creditBalance",
       "loan",
       "poolDeposit",
+      "chainEvent",
+      "indexerState",
     ] as const;
 
     for (const m of models) {
@@ -302,13 +305,17 @@ describe("Generic No-500 Adversarial Route Sweep & Integration (P4.7 / PRD §Inp
 
       for (const route of postRoutes) {
         const testUrl = resolveRouteUrl(route.url, { id: "123", loanId: "1", serviceId: "1" });
+        const token =
+          route.url.includes("/admin") && !route.url.includes("/admin/auth/login")
+            ? validAdminToken
+            : validUserToken;
 
         const response = await app.inject({
           method: "POST",
           url: testUrl,
           headers: {
             "content-type": "text/plain",
-            authorization: `Bearer ${validUserToken}`,
+            authorization: `Bearer ${token}`,
           },
           payload: "plain text unparseable body",
         });
@@ -326,13 +333,17 @@ describe("Generic No-500 Adversarial Route Sweep & Integration (P4.7 / PRD §Inp
 
       for (const route of postRoutes) {
         const testUrl = resolveRouteUrl(route.url, { id: "123", loanId: "1", serviceId: "1" });
+        const token =
+          route.url.includes("/admin") && !route.url.includes("/admin/auth/login")
+            ? validAdminToken
+            : validUserToken;
 
         const response = await app.inject({
           method: "POST",
           url: testUrl,
           headers: {
             "content-type": "application/json",
-            authorization: `Bearer ${validUserToken}`,
+            authorization: `Bearer ${token}`,
           },
           payload: "{ unquoted_key: invalid_json, ",
         });
