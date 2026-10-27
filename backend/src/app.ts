@@ -95,6 +95,17 @@ export function buildApp(options?: BuildAppOptions): FastifyInstance {
     },
   });
 
+  // Root welcome endpoint
+  app.get("/", async () => {
+    return {
+      name: "Indico Asset Ledger API",
+      version: "1.0.0",
+      status: "online",
+      documentation: "/docs",
+      health: "/health",
+    };
+  });
+
   // Health check endpoint
   app.get("/health", async () => {
     return { status: "ok", timestamp: new Date().toISOString() };
