@@ -9,6 +9,7 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
     "start:test-server": "prisma db push --skip-generate && SEED_MOCK_DATA=true npx tsx prisma/seed.ts && node dist/index.js",
+    "db:clone-to-neon": "tsx scripts/sync_to_neon.ts",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "test": "vitest run",
