@@ -27,6 +27,7 @@ const envSchema = z.object({
     .string()
     .regex(/^0x[a-fA-F0-9]{64}$/, "Invalid keeper private key")
     .optional(),
+  RUN_WORKER: z.string().optional().default("false"),
 });
 
 export type Env = z.infer<typeof envSchema>;

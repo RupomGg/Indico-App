@@ -8,7 +8,7 @@ const POLL_INTERVAL_MS = 3000; // 3 seconds when caught up
 
 let isRunning = true;
 
-async function runIndexerLoop() {
+export async function runIndexerLoop() {
   console.log("⚙️  [Worker] Starting Indico Background Event Indexer & Keeper...");
   console.log(`📡 [Worker] Monitoring IndicoLedger contract at ${env.INDICO_LEDGER_ADDRESS}`);
   console.log(`⛓️  [Worker] Connected to RPC: ${env.RPC_URL} (Chain ID: ${env.CHAIN_ID})`);
@@ -86,4 +86,8 @@ process.on("SIGTERM", () => {
   process.exit(0);
 });
 
-runIndexerLoop();
+// Run directly when executed as standalone script (npm run worker)
+const isDirectEntry = process.argv[1]?.replace(/\\/g, "/").endsWith("worker.ts") || process.argv[1]?.replace(/\\/g, "/").endsWith("worker.js");
+if (isDirectEntry) {
+  runIndexerLoop();
+}
