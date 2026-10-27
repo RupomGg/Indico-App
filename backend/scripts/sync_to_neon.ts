@@ -21,8 +21,8 @@ async function main() {
     for (const a of admins) {
       await targetPrisma.adminUser.upsert({
         where: { id: a.id },
-        update: a,
-        create: a,
+        update: a as any,
+        create: a as any,
       });
     }
     console.log(`✓ Copied ${admins.length} Admin User(s)`);
@@ -32,8 +32,8 @@ async function main() {
     for (const u of users) {
       await targetPrisma.user.upsert({
         where: { id: u.id },
-        update: u,
-        create: u,
+        update: u as any,
+        create: u as any,
       });
     }
     console.log(`✓ Copied ${users.length} User(s) (including testuser1@indico.com & alice)`);
@@ -43,8 +43,8 @@ async function main() {
     for (const w of wallets) {
       await targetPrisma.walletBinding.upsert({
         where: { id: w.id },
-        update: w,
-        create: w,
+        update: w as any,
+        create: w as any,
       });
     }
     console.log(`✓ Copied ${wallets.length} Wallet Binding(s)`);
@@ -54,8 +54,8 @@ async function main() {
     for (const asset of assets) {
       await targetPrisma.asset.upsert({
         where: { id: asset.id },
-        update: asset,
-        create: asset,
+        update: asset as any,
+        create: asset as any,
       });
     }
     console.log(`✓ Copied ${assets.length} Asset(s)`);
@@ -65,8 +65,8 @@ async function main() {
     for (const m of merchants) {
       await targetPrisma.merchant.upsert({
         where: { id: m.id },
-        update: m,
-        create: m,
+        update: m as any,
+        create: m as any,
       });
     }
     console.log(`✓ Copied ${merchants.length} Merchant(s)`);
@@ -76,8 +76,8 @@ async function main() {
     for (const s of services) {
       await targetPrisma.merchantService.upsert({
         where: { id: s.id },
-        update: s,
-        create: s,
+        update: s as any,
+        create: s as any,
       });
     }
     console.log(`✓ Copied ${services.length} Merchant Service(s)`);
@@ -88,7 +88,7 @@ async function main() {
       await targetPrisma.auditLog.upsert({
         where: { id: log.id },
         update: {},
-        create: log,
+        create: log as any,
       });
     }
     console.log(`✓ Copied ${auditLogs.length} Admin Audit Log(s)`);
@@ -98,8 +98,8 @@ async function main() {
     for (const ev of chainEvents) {
       await targetPrisma.chainEvent.upsert({
         where: { txHash_logIndex: { txHash: ev.txHash, logIndex: ev.logIndex } },
-        update: ev,
-        create: ev,
+        update: ev as any,
+        create: ev as any,
       });
     }
     console.log(`✓ Copied ${chainEvents.length} Chain Event(s)`);
@@ -109,8 +109,8 @@ async function main() {
     for (const b of balances) {
       await targetPrisma.creditBalance.upsert({
         where: { walletAddress: b.walletAddress },
-        update: b,
-        create: b,
+        update: b as any,
+        create: b as any,
       });
     }
     console.log(`✓ Copied ${balances.length} Credit Balance record(s)`);
@@ -119,8 +119,8 @@ async function main() {
     for (const l of loans) {
       await targetPrisma.loan.upsert({
         where: { loanId: l.loanId },
-        update: l,
-        create: l,
+        update: l as any,
+        create: l as any,
       });
     }
     console.log(`✓ Copied ${loans.length} Loan record(s)`);
@@ -130,8 +130,8 @@ async function main() {
     for (const cp of checkpoints) {
       await targetPrisma.indexerCheckpoint.upsert({
         where: { id: cp.id },
-        update: cp,
-        create: cp,
+        update: cp as any,
+        create: cp as any,
       });
     }
     console.log(`✓ Copied ${checkpoints.length} Indexer Checkpoint(s)`);
