@@ -47,7 +47,8 @@ export class AuthService {
       userId: user.id,
       email: user.email,
       message: "Registration successful. Please verify your email.",
-      verificationToken: rawVerificationToken,
+      verificationToken:
+        process.env["NODE_ENV"] !== "production" ? rawVerificationToken : undefined,
     };
   }
 

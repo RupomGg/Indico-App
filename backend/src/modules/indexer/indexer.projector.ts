@@ -422,9 +422,26 @@ export async function projectChainLog(
       eventName: log.eventName,
       blockNumber: log.blockNumber,
       blockTimestamp: log.blockTimestamp,
-      data: log.args,
+      data: toJsonSafe(log.args),
     },
   });
 
   return { processed: true };
+}
+
+/**
+ * Recursively converts BigInt values to string representation for Prisma JSON storage.
+ */
+export function toJsonSafe(val: any): any {
+  if (val === null || val === undefined) return val;
+  if (typeof val === "bigint") return val.toString();
+  if (Array.isArray(val)) return val.map(toJsonSafe);
+  if (typeof val === "object" && !(val instanceof Date)) {
+    const res: Record<string, any> = {};
+    for (const [k, v] of Object.entries(val)) {
+      res[k] = toJsonSafe(v);
+    }
+    return res;
+  }
+  return val;
 }

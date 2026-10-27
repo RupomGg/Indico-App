@@ -33,6 +33,14 @@ export class AdminOperationsService {
     const updated = await prisma.user.update({
       where: { id: userId },
       data: { isApproved: true },
+      select: {
+        id: true,
+        email: true,
+        isEmailVerified: true,
+        isApproved: true,
+        createdAt: true,
+        updatedAt: true,
+      },
     });
 
     await prisma.auditLog.create({
@@ -69,6 +77,14 @@ export class AdminOperationsService {
     const updated = await prisma.user.update({
       where: { id: userId },
       data: { isApproved: false },
+      select: {
+        id: true,
+        email: true,
+        isEmailVerified: true,
+        isApproved: true,
+        createdAt: true,
+        updatedAt: true,
+      },
     });
 
     await prisma.auditLog.create({
@@ -340,19 +356,20 @@ export class AdminOperationsService {
    * Automatically records agreement as signed if marked off-platform (PRD §4.7 AD-07).
    */
   static async createMerchant(adminId: string, input: AdminCreateMerchantInput) {
-    const isSigned = input.agreementStatus === "SIGNED" || input.agreementStatus === undefined || true;
+    const isSigned = input.agreementStatus === "SIGNED";
+    const isSent = input.agreementStatus === "SENT";
     const now = new Date();
     const wallet = input.walletAddress.toLowerCase();
-    const storageKey = `signed-agreements/${wallet}-onboarding.pdf`;
+    const storageKey = isSigned ? `signed-agreements/${wallet}-onboarding.pdf` : null;
 
     const merchant = await prisma.merchant.create({
       data: {
         name: input.name,
         contactEmail: input.contactEmail,
         walletAddress: wallet,
-        isApproved: input.isApproved ?? true,
-        agreementStatus: input.agreementStatus || "SIGNED",
-        agreementSentAt: isSigned ? now : null,
+        isApproved: input.isApproved ?? false,
+        agreementStatus: input.agreementStatus || "NOT_SENT",
+        agreementSentAt: isSigned || isSent ? now : null,
         agreementSignedAt: isSigned ? now : null,
         agreementStorageKey: storageKey,
       },

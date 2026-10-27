@@ -9,6 +9,7 @@ import {
   adminAddServiceSchema,
   adminUpdateServiceSchema,
   adminAuditLogQuerySchema,
+  adminUserOperationResponseSchema,
 } from "./admin.schemas.js";
 import { authenticateAdmin } from "../../middleware/auth.js";
 import { z } from "zod";
@@ -36,7 +37,7 @@ export async function adminRoutes(fastify: FastifyInstance) {
 
   // All subsequent routes require Admin authentication (PRD §4.7 AD-01; Gate G10)
   fastify.register(async (adminScope) => {
-    adminScope.addHook("preHandler", authenticateAdmin);
+    adminScope.addHook("onRequest", authenticateAdmin);
 
     // GET /admin/auth/me
     adminScope.get(
@@ -93,6 +94,9 @@ export async function adminRoutes(fastify: FastifyInstance) {
           description: "Approve a user account; warns that on-chain role becomes permanent (AD-02, D-22)",
           tags: ["Admin"],
           params: z.object({ id: z.string() }),
+          response: {
+            200: adminUserOperationResponseSchema,
+          },
         },
       },
       async (request, reply) => {
@@ -110,6 +114,9 @@ export async function adminRoutes(fastify: FastifyInstance) {
           description: "Decline or revoke a user account (AD-02)",
           tags: ["Admin"],
           params: z.object({ id: z.string() }),
+          response: {
+            200: adminUserOperationResponseSchema,
+          },
         },
       },
       async (request, reply) => {

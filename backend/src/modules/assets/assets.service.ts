@@ -182,6 +182,20 @@ export class AssetsService {
       args: [docHash, assetType, valueUnits],
     });
 
+    // Up-front on-chain approval check (PRD §4.1 U-02; consistent 403 Forbidden)
+    const isUserApproved = await publicClient.readContract({
+      address: env.INDICO_LEDGER_ADDRESS as Address,
+      abi: INDICO_LEDGER_ABI,
+      functionName: "approvedUser",
+      args: [walletAddress],
+    });
+
+    if (!isUserApproved) {
+      throw new ForbiddenError(
+        "User wallet is not approved on-chain. Contact administrator for approval."
+      );
+    }
+
     // Simulate contract execution to detect reverts (NotApprovedUser, TermsNotSigned, CreditCapExceeded)
     await simulatePreparedTransaction({
       to: env.INDICO_LEDGER_ADDRESS as Address,

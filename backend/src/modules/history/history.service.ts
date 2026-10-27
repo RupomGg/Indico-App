@@ -1,6 +1,7 @@
 import { prisma } from "../../lib/prisma.js";
 import { formatAmount } from "../../lib/amount.js";
 import { NotFoundError, BadRequestError } from "../../lib/errors.js";
+import { env } from "../../config/env.js";
 import type {
   UserBalanceResponse,
   LoanListQuery,
@@ -205,7 +206,7 @@ export class HistoryService {
         blockNumber: e.blockNumber.toString(),
         blockTimestamp: Number(e.blockTimestamp),
         data: (e.data || {}) as Record<string, any>,
-        explorerUrl: `https://sepolia.basescan.org/tx/${e.txHash}`,
+        explorerUrl: `${env.CHAIN_ID === 8453 ? "https://basescan.org/tx/" : "https://sepolia.basescan.org/tx/"}${e.txHash}`,
       })),
       total: userEvents.length,
     };

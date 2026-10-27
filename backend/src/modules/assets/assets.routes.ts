@@ -193,9 +193,34 @@ export async function assetsRoutes(fastify: FastifyInstance) {
       const userId = request.user!.id;
       const { id } = request.params as { id: string };
       const doc = await AssetsService.getDecryptedDocument(userId, id);
-      reply.header("Content-Type", "application/octet-stream");
-      reply.header("Content-Disposition", `attachment; filename="${doc.docHash}.pdf"`);
+      const { mime, ext } = detectMimeAndExt(doc.buffer);
+      reply.header("Content-Type", mime);
+      reply.header("Content-Disposition", `attachment; filename="${doc.docHash}.${ext}"`);
       return reply.send(doc.buffer);
     }
   );
+}
+
+function detectMimeAndExt(buffer: Buffer): { mime: string; ext: string } {
+  if (
+    buffer.length >= 4 &&
+    buffer[0] === 0x89 &&
+    buffer[1] === 0x50 &&
+    buffer[2] === 0x4e &&
+    buffer[3] === 0x47
+  ) {
+    return { mime: "image/png", ext: "png" };
+  }
+  if (
+    buffer.length >= 3 &&
+    buffer[0] === 0xff &&
+    buffer[1] === 0xd8 &&
+    buffer[2] === 0xff
+  ) {
+    return { mime: "image/jpeg", ext: "jpg" };
+  }
+  if (buffer.length >= 5 && buffer.subarray(0, 5).toString("utf8") === "%PDF-") {
+    return { mime: "application/pdf", ext: "pdf" };
+  }
+  return { mime: "application/octet-stream", ext: "bin" };
 }

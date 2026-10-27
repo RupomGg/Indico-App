@@ -98,32 +98,34 @@ export class IndexerService {
     await prisma.$transaction(
       async (tx) => {
         for (const log of rawLogs) {
+          let decoded: any;
           try {
-            const decoded = decodeEventLog({
+            decoded = decodeEventLog({
               abi: INDICO_LEDGER_ABI,
               data: log.data,
               topics: log.topics,
             });
-
-            const block = await publicClient.getBlock({
-              blockNumber: log.blockNumber,
-            });
-
-            const decodedLog: DecodedChainLog = {
-              txHash: log.transactionHash,
-              logIndex: log.logIndex,
-              eventName: decoded.eventName,
-              blockNumber: log.blockNumber,
-              blockTimestamp: block.timestamp,
-              args: (decoded.args || {}) as Record<string, any>,
-            };
-
-            const res = await projectChainLog(tx, decodedLog);
-            if (res.processed) {
-              eventsProcessed++;
-            }
           } catch {
             // Ignore logs that do not match the Indico contract ABI
+            continue;
+          }
+
+          const block = await publicClient.getBlock({
+            blockNumber: log.blockNumber,
+          });
+
+          const decodedLog: DecodedChainLog = {
+            txHash: log.transactionHash,
+            logIndex: log.logIndex,
+            eventName: decoded.eventName,
+            blockNumber: log.blockNumber,
+            blockTimestamp: block.timestamp,
+            args: (decoded.args || {}) as Record<string, any>,
+          };
+
+          const res = await projectChainLog(tx, decodedLog);
+          if (res.processed) {
+            eventsProcessed++;
           }
         }
 
