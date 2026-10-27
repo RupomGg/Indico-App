@@ -1,12 +1,13 @@
+import process from "node:process";
 import { PrismaClient } from "@prisma/client";
-import { prisma as localPrisma } from "../src/lib/prisma.js";
+import { prisma as localPrisma } from "../lib/prisma.js";
 
 async function main() {
   const targetUrl = process.argv[2] || process.env.TARGET_DATABASE_URL;
 
   if (!targetUrl) {
     console.error("❌ Error: Missing target Neon connection string.");
-    console.log("Usage: npx tsx scripts/sync_to_neon.ts \"postgresql://...neon.tech/neondb?sslmode=require\"");
+    console.log("Usage: npx tsx src/scripts/sync_to_neon.ts \"postgresql://...neon.tech/neondb?sslmode=require\"");
     process.exit(1);
   }
 
