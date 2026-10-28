@@ -1300,6 +1300,7 @@ export class UserView {
 
   private static getAssetTypeName(type: number): string {
     switch (type) {
+      case 0:
       case 1:
         return "Arbitration Award";
       case 2:

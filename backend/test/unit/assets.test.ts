@@ -35,8 +35,8 @@ describe("Assets Module (PRD §4.2 A-01 to A-09)", () => {
       uploadId: "valid-upload-session-id",
     };
 
-    it("accepts valid asset types 1, 2, 3, 4, 5", () => {
-      for (let type = 1; type <= 5; type++) {
+    it("accepts valid asset types 0, 1, 2, 3, 4, 5", () => {
+      for (let type = 0; type <= 5; type++) {
         const result = SubmitAssetInputSchema.safeParse({
           ...validPayload,
           assetType: type,
@@ -45,13 +45,7 @@ describe("Assets Module (PRD §4.2 A-01 to A-09)", () => {
       }
     });
 
-    it("rejects asset type 0 and asset type > 5 (Contract Spec D-29)", () => {
-      const result0 = SubmitAssetInputSchema.safeParse({
-        ...validPayload,
-        assetType: 0,
-      });
-      expect(result0.success).toBe(false);
-
+    it("rejects asset type < 0 and asset type > 5 (Contract Spec D-29)", () => {
       const result6 = SubmitAssetInputSchema.safeParse({
         ...validPayload,
         assetType: 6,

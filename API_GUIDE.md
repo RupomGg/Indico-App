@@ -470,18 +470,19 @@ When any request fails (validation, authentication, business logic), the server 
 #### `POST /api/v1/assets/submit`
 - **Auth**: User Bearer Token (Approved User)
 - **Description**: Step 3 of asset registration. Validates metadata, checks for duplicate `docHash`, verifies valuation format, and saves the off-chain asset record.
-- **Asset Types**:
-  - `1`: Arbitration Award
-  - `2`: Bill of Exchange
-  - `3`: Promissory Note
-  - `4`: Bond
-  - `5`: Commercial Invoice
+- **Asset Types (0 to 5)**:
+  - `0`: Arbitration Award
+  - `1`: Bill of Exchange
+  - `2`: Promissory Note
+  - `3`: Bond
+  - `4`: Commercial Invoice / Paper
+  - `5`: Other Real-World Asset (Real Estate, Jewelry, etc.)
 - **Request Body**:
 ```json
 {
   "uploadId": "upl_89af3b64c012",
   "docHash": "0xc859bf549520e588c800806461a9ba46c48325a7eb8e305e7144e1327171e8bf",
-  "assetType": 1,
+  "assetType": 0,
   "declaredValueUsdc": "50000.000000",
   "referenceNumber": "ARB-2026-904",
   "issueDate": "2026-10-20",

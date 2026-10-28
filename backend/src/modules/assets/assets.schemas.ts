@@ -35,8 +35,8 @@ export const SubmitAssetInputSchema = z.object({
   assetType: z
     .number()
     .int()
-    .min(1, "assetType must be between 1 and 5")
-    .max(5, "assetType must be between 1 and 5 (PRD D-29)"),
+    .min(0, "assetType must be between 0 and 5")
+    .max(5, "assetType must be between 0 and 5 (PRD D-29)"),
   declaredValueUsdc: z
     .string()
     .regex(/^\d+\.\d{6}$/, "declaredValueUsdc must be a decimal string with exactly 6 decimal places")
