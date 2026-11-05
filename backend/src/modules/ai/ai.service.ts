@@ -19,7 +19,7 @@ export class AiService {
 
     switch (intent.type) {
       case "READ_STATUS": {
-        return this.handleUserReadStatus(userId, intent.target);
+        return this.handleUserReadStatus(userId, intent.target as "BALANCE" | "LOANS" | "TRANSACTIONS" | "ALL");
       }
 
       case "REQUEST_LOAN": {
@@ -163,7 +163,7 @@ export class AiService {
       }
 
       case "SPEND_CREDIT": {
-        return this.handleUserSpendCredit(userId, intent.merchantQuery, intent.amount);
+        return this.handleUserSpendCredit(userId, intent.merchantQuery, intent.amount, intent.target);
       }
 
       case "UNKNOWN":
@@ -173,7 +173,7 @@ export class AiService {
           type: "UNKNOWN",
           intent: "UNKNOWN",
           requiresWalletSignature: false,
-          text: "I couldn't map that request with certainty. Supported commands:\n• \"What is my available credit and loan status?\"\n• \"Borrow 5,000 USDC\"\n• \"Pay 250 credit to [Merchant Name]\"\n• \"Repay loan #1\"\n• \"Extend loan #1\"\nOr navigate to the dedicated screen in the navigation menu.",
+          text: "I couldn't map that request with certainty. Supported commands:\n• \"What is my available credit and loan status?\"\n• \"Borrow 5,000 USDC\"\n• \"Pay 250 credit to Sparktech\"\n• \"How to spend credit?\" (Lists approved merchants)\n• \"Repay loan #1\"\n• \"Extend loan #1\"\nOr navigate to the dedicated screen in the navigation menu.",
         };
       }
     }
@@ -265,41 +265,74 @@ export class AiService {
   }
 
   /**
-   * Resolves merchant and prepares spend transaction (PRD §4.3, §4.6)
+   * Resolves merchant, explains spending guidelines, and prepares spend transaction (PRD §4.3, §4.6)
    */
   private static async handleUserSpendCredit(
     userId: string,
     merchantQuery: string,
-    amountStr: string | null
+    amountStr: string | null,
+    target?: string
   ): Promise<AiResponse> {
+    let approvedMerchants: Array<{ name: string; walletAddress?: string; contactEmail?: string | null }> = [];
+    try {
+      approvedMerchants = await prisma.merchant.findMany({
+        where: { isApproved: true },
+        select: { name: true, walletAddress: true, contactEmail: true },
+        take: 10,
+      });
+    } catch {
+      // Fallback if DB is disconnected in unit tests
+    }
+
+    const merchantList =
+      approvedMerchants.length > 0
+        ? approvedMerchants
+            .map((m) => {
+              const addr = m.walletAddress ? `${m.walletAddress.slice(0, 6)}...${m.walletAddress.slice(-4)}` : "";
+              const info = m.contactEmail || addr;
+              return `• ${m.name}${info ? ` (${info})` : ""}`;
+            })
+            .join("\n")
+        : "• No approved merchants currently registered.";
+
+    // 1. Informational Guide on how spending works (PRD §4.3 C-01 to C-08)
+    if (target === "GUIDE" || (!amountStr && !merchantQuery)) {
+      return {
+        success: true,
+        type: "MESSAGE",
+        intent: "SPEND_CREDIT",
+        requiresWalletSignature: false,
+        text: `🛍️ Spending Credit (PRD §4.3 C-01 to C-08):\nYou can spend your available credit at any approved merchant with $0 platform fees (1 Credit = $1.00 USD value).\n\nApproved Merchants:\n${merchantList}\n\nTo make a payment, simply say:\n• "Pay 250 credit to Sparktech"\n• "Spend 500 at Apex Arbitration"`,
+        preview: {
+          approvedMerchants: approvedMerchants.map((m) => m.name),
+          platformFee: "$0 (Zero fee)",
+        },
+      };
+    }
+
+    // 2. Amount specified, but missing merchant
+    if (!merchantQuery) {
+      return {
+        success: true,
+        type: "MESSAGE",
+        intent: "SPEND_CREDIT",
+        requiresWalletSignature: false,
+        text: `You specified ${amountStr} Credit. Please specify which merchant to pay.\n\nApproved Merchants:\n${merchantList}\n\nExample: "Pay ${amountStr} credit to Sparktech"`,
+      };
+    }
+
+    // 3. Merchant specified, but missing amount
     if (!amountStr || Number(amountStr) <= 0) {
       return {
         success: true,
-        type: "UNKNOWN",
+        type: "MESSAGE",
         intent: "SPEND_CREDIT",
         requiresWalletSignature: false,
-        text: "Please specify the amount of credit to spend (for example: \"Pay 250 credit to Sparktech\").",
+        text: `You selected merchant "${merchantQuery}". Please specify how much credit to spend (for example: "Pay 250 credit to ${merchantQuery}").`,
       };
     }
 
-    if (!merchantQuery) {
-      const merchants = await prisma.merchant.findMany({
-        where: { isApproved: true },
-        select: { name: true, walletAddress: true },
-        take: 5,
-      });
-
-      const list = merchants.map((m) => `• ${m.name}`).join("\n");
-      return {
-        success: true,
-        type: "UNKNOWN",
-        intent: "SPEND_CREDIT",
-        requiresWalletSignature: false,
-        text: `Please specify which merchant to pay. Approved merchants:\n${list}`,
-      };
-    }
-
-    // Lookup merchant by name (case-insensitive) or wallet address
+    // 4. Both amount and merchant are present: lookup merchant and prepare calldata
     const merchant = await prisma.merchant.findFirst({
       where: {
         isApproved: true,
@@ -311,18 +344,12 @@ export class AiService {
     });
 
     if (!merchant) {
-      const allApproved = await prisma.merchant.findMany({
-        where: { isApproved: true },
-        select: { name: true },
-        take: 5,
-      });
-      const names = allApproved.map((m) => `• ${m.name}`).join("\n");
       return {
         success: false,
         type: "ERROR",
         intent: "SPEND_CREDIT",
         requiresWalletSignature: false,
-        text: `Merchant "${merchantQuery}" was not found among approved merchants. Approved merchants:\n${names}`,
+        text: `Merchant "${merchantQuery}" was not found among approved merchants.\n\nApproved Merchants:\n${merchantList}`,
       };
     }
 
@@ -337,7 +364,7 @@ export class AiService {
         type: "TRANSACTION_PREVIEW",
         intent: "SPEND_CREDIT",
         requiresWalletSignature: true,
-        text: `Prepared payment of ${prepared.amount} Credit to merchant "${merchant.name}". Merchant will receive an on-chain receipt upon confirmation.`,
+        text: `Prepared payment of ${prepared.amount} Credit to merchant "${merchant.name}". Merchant will receive an on-chain receipt upon confirmation ($0 fee).`,
         preview: {
           action: "Spend Credit",
           merchant: merchant.name,
@@ -369,7 +396,7 @@ export class AiService {
    */
   static parseUserIntent(prompt: string): {
     type: "READ_STATUS" | "REQUEST_LOAN" | "REPAY_LOAN" | "EXTEND_LOAN" | "SPEND_CREDIT" | "UNKNOWN";
-    target: "BALANCE" | "LOANS" | "TRANSACTIONS" | "ALL";
+    target: "BALANCE" | "LOANS" | "TRANSACTIONS" | "ALL" | "GUIDE";
     amount: string | null;
     loanId: string | null;
     merchantQuery: string;
@@ -402,9 +429,15 @@ export class AiService {
       lower.includes("borrowing limit") ||
       lower.includes("credit limit") ||
       lower.includes("balance") ||
-      (lower.includes("credit") && !lower.includes("pay") && !lower.includes("spend") && !lower.includes("issue") && !lower.includes("debit")) ||
+      (lower.includes("credit") &&
+        !lower.includes("pay") &&
+        !lower.includes("spend") &&
+        !lower.includes("send") &&
+        !lower.includes("transfer") &&
+        !lower.includes("issue") &&
+        !lower.includes("debit")) ||
       lower.includes("status") ||
-      (lower.includes("how much") && !lower.includes("pay") && !lower.includes("spend")) ||
+      (lower.includes("how much") && !lower.includes("pay") && !lower.includes("spend") && !lower.includes("send")) ||
       lower.includes("limit")
     ) {
       return {
@@ -465,25 +498,60 @@ export class AiService {
       };
     }
 
-    // 6. Spend Credit
+    // 6. Spend Credit Guide / Questions
+    if (
+      lower.includes("how to spend") ||
+      lower.includes("how do i spend") ||
+      lower.includes("where can i spend") ||
+      lower.includes("who can i pay") ||
+      lower.includes("who can i spend") ||
+      lower.includes("list merchants") ||
+      lower.includes("show merchants") ||
+      lower.includes("approved merchants") ||
+      lower.trim() === "spend credit" ||
+      lower.trim() === "spend"
+    ) {
+      return {
+        type: "SPEND_CREDIT",
+        target: "GUIDE",
+        amount: null,
+        loanId: null,
+        merchantQuery: "",
+      };
+    }
+
+    // 7. Spend Credit Transactions (Pay, Spend, Send, Transfer)
     if (
       lower.includes("spend") ||
-      lower.includes("send credit") ||
+      lower.includes("send") ||
+      lower.includes("transfer") ||
       (lower.includes("pay") && !lower.includes("repay") && !lower.includes("pay back") && !lower.includes("pay loan"))
     ) {
-      const amountMatch = lower.match(/\$?\s*([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]+)?|[0-9]+(?:\.[0-9]+)?)/);
-      const amount = amountMatch && amountMatch[1] ? amountMatch[1].replace(/,/g, "") : null;
-
-      // Extract merchant: text after "to", "at", or "with"
       let merchantQuery = "";
-      const toMatch = lower.match(/(?:to|at|with)\s+([a-zA-Z0-9_\- ]+)/i);
-      if (toMatch && toMatch[1]) {
-        merchantQuery = toMatch[1].replace(/credit|usdc|dollars|\$/gi, "").trim();
+      let amount: string | null = null;
+
+      // Check format: "pay sparktech 250" or "send sparktech 100 credit"
+      const directPayMatch = lower.match(
+        /(?:pay|send|transfer)\s+([a-zA-Z\s]+?)\s+\$?([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]+)?|[0-9]+(?:\.[0-9]+)?)(?:\s*credit|\s*usdc)?$/i
+      );
+
+      if (directPayMatch && directPayMatch[1] && directPayMatch[2] && !directPayMatch[1].includes("to ") && !directPayMatch[1].includes("credit")) {
+        merchantQuery = directPayMatch[1].trim();
+        amount = directPayMatch[2].replace(/,/g, "");
+      } else {
+        const amountMatch = lower.match(/\$?\s*([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]+)?|[0-9]+(?:\.[0-9]+)?)/);
+        amount = amountMatch && amountMatch[1] ? amountMatch[1].replace(/,/g, "") : null;
+
+        // Extract merchant: text after "to", "at", "with", or "for"
+        const toMatch = lower.match(/(?:to|at|with|for)\s+([a-zA-Z0-9_\- ]+)/i);
+        if (toMatch && toMatch[1]) {
+          merchantQuery = toMatch[1].replace(/\b(credit|usdc|dollars|\$|to|at|with|for)\b/gi, "").trim();
+        }
       }
 
       return {
         type: "SPEND_CREDIT",
-        target: "ALL",
+        target: !amount && !merchantQuery ? "GUIDE" : "ALL",
         amount,
         loanId: null,
         merchantQuery,

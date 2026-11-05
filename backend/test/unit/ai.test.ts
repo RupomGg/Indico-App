@@ -227,9 +227,20 @@ describe("AI Assistant Module (PRD §4.6 AI-01 to AI-07; PRD §4.7 AD-19; Rule D
       expect(intent2.amount).toBe("100");
       expect(intent2.merchantQuery.toLowerCase()).toContain("alpha logistics");
 
-      const intent3 = AiService.parseUserIntent("Spend credit");
+      const intent3 = AiService.parseUserIntent("pay Sparktech 500");
       expect(intent3.type).toBe("SPEND_CREDIT");
-      expect(intent3.amount).toBeNull();
+      expect(intent3.amount).toBe("500");
+      expect(intent3.merchantQuery.toLowerCase()).toBe("sparktech");
+
+      const intent4 = AiService.parseUserIntent("send 200 credit to Sparktech");
+      expect(intent4.type).toBe("SPEND_CREDIT");
+      expect(intent4.amount).toBe("200");
+      expect(intent4.merchantQuery.toLowerCase()).toContain("sparktech");
+
+      const intentGuide = AiService.parseUserIntent("how to spend credit");
+      expect(intentGuide.type).toBe("SPEND_CREDIT");
+      expect(intentGuide.target).toBe("GUIDE");
+      expect(intentGuide.amount).toBeNull();
     });
 
     it("safely handles adversarial prompts and injection attempts by falling back to UNKNOWN", () => {
@@ -492,6 +503,34 @@ describe("AI Assistant Module (PRD §4.6 AI-01 to AI-07; PRD §4.7 AD-19; Rule D
       expect(res.type).toBe("ERROR");
       expect(res.requiresWalletSignature).toBe(false);
       expect(res.text).toContain("not found among approved merchants");
+    });
+
+    it("handles SPEND_CREDIT educational guide when asked 'how to spend credit' or 'where can i spend'", async () => {
+      vi.spyOn(prisma.merchant, "findMany").mockResolvedValue([
+        { name: "Sparktech", walletAddress: mockMerchantWallet, contactEmail: "sparktech@example.com" } as any,
+      ]);
+
+      const res = await AiService.handleUserPrompt(mockUserId, "How do I spend credit?");
+      expect(res.success).toBe(true);
+      expect(res.type).toBe("MESSAGE");
+      expect(res.intent).toBe("SPEND_CREDIT");
+      expect(res.requiresWalletSignature).toBe(false);
+      expect(res.text).toContain("Spending Credit (PRD §4.3");
+      expect(res.text).toContain("Sparktech");
+      expect(res.text).toContain("$0 platform fees");
+    });
+
+    it("handles SPEND_CREDIT with amount but missing merchant by listing approved merchants", async () => {
+      vi.spyOn(prisma.merchant, "findMany").mockResolvedValue([
+        { name: "Sparktech", walletAddress: mockMerchantWallet, contactEmail: "sparktech@example.com" } as any,
+      ]);
+
+      const res = await AiService.handleUserPrompt(mockUserId, "Spend 100 credit");
+      expect(res.success).toBe(true);
+      expect(res.type).toBe("MESSAGE");
+      expect(res.intent).toBe("SPEND_CREDIT");
+      expect(res.text).toContain("You specified 100 Credit");
+      expect(res.text).toContain("Sparktech");
     });
 
     it("returns helpful command list on UNKNOWN intent (PRD §4.6 AI-05)", async () => {
