@@ -163,7 +163,13 @@ export class AiService {
       }
 
       case "SPEND_CREDIT": {
-        return this.handleUserSpendCredit(userId, intent.merchantQuery, intent.amount, intent.target);
+        return this.handleUserSpendCredit(
+          userId,
+          intent.merchantQuery,
+          intent.serviceQuery,
+          intent.amount,
+          intent.target
+        );
       }
 
       case "UNKNOWN":
@@ -173,7 +179,7 @@ export class AiService {
           type: "UNKNOWN",
           intent: "UNKNOWN",
           requiresWalletSignature: false,
-          text: "I couldn't map that request with certainty. Supported commands:\n• \"What is my available credit and loan status?\"\n• \"Borrow 5,000 USDC\"\n• \"Pay 250 credit to Sparktech\"\n• \"How to spend credit?\" (Lists approved merchants)\n• \"Repay loan #1\"\n• \"Extend loan #1\"\nOr navigate to the dedicated screen in the navigation menu.",
+          text: "I couldn't map that request with certainty. Supported commands:\n• \"What is my available credit and loan status?\"\n• \"What services can I buy?\"\n• \"Buy Software Dev package 1 from Sparktech\"\n• \"Borrow 5,000 USDC\"\n• \"Repay loan #1\"\n• \"Extend loan #1\"\nOr navigate to the dedicated screen in the navigation menu.",
         };
       }
     }
@@ -265,129 +271,279 @@ export class AiService {
   }
 
   /**
-   * Resolves merchant, explains spending guidelines, and prepares spend transaction (PRD §4.3, §4.6)
+   * Resolves merchant and services, presents service catalog, and prepares service purchase calldata (PRD §4.3, §4.6)
    */
   private static async handleUserSpendCredit(
     userId: string,
     merchantQuery: string,
+    serviceQuery: string,
     amountStr: string | null,
     target?: string
   ): Promise<AiResponse> {
-    let approvedMerchants: Array<{ name: string; walletAddress?: string; contactEmail?: string | null }> = [];
+    // 1. Fetch approved merchants with their cataloged services
+    let merchantsWithServices: Array<any> = [];
     try {
-      approvedMerchants = await prisma.merchant.findMany({
+      merchantsWithServices = await prisma.merchant.findMany({
         where: { isApproved: true },
-        select: { name: true, walletAddress: true, contactEmail: true },
-        take: 10,
+        include: {
+          services: true,
+        },
       });
     } catch {
       // Fallback if DB is disconnected in unit tests
     }
 
-    const merchantList =
-      approvedMerchants.length > 0
-        ? approvedMerchants
-            .map((m) => {
-              const addr = m.walletAddress ? `${m.walletAddress.slice(0, 6)}...${m.walletAddress.slice(-4)}` : "";
-              const info = m.contactEmail || addr;
-              return `• ${m.name}${info ? ` (${info})` : ""}`;
-            })
-            .join("\n")
-        : "• No approved merchants currently registered.";
+    // Collect all services flattened with their merchant
+    const allServices = merchantsWithServices.flatMap((m) =>
+      (m.services || []).map((s: any) => ({
+        ...s,
+        merchant: m,
+      }))
+    );
 
-    // 1. Informational Guide on how spending works (PRD §4.3 C-01 to C-08)
-    if (target === "GUIDE" || (!amountStr && !merchantQuery)) {
-      return {
-        success: true,
-        type: "MESSAGE",
-        intent: "SPEND_CREDIT",
-        requiresWalletSignature: false,
-        text: `🛍️ Spending Credit (PRD §4.3 C-01 to C-08):\nYou can spend your available credit at any approved merchant with $0 platform fees (1 Credit = $1.00 USD value).\n\nApproved Merchants:\n${merchantList}\n\nTo make a payment, simply say:\n• "Pay 250 credit to Sparktech"\n• "Spend 500 at Apex Arbitration"`,
-        preview: {
-          approvedMerchants: approvedMerchants.map((m) => m.name),
-          platformFee: "$0 (Zero fee)",
-        },
-      };
-    }
+    // 2. Target = SERVICES or General Inquiry: List service catalog
+    if (target === "SERVICES" || (!merchantQuery && !serviceQuery && !amountStr)) {
+      // If user asked about a specific merchant's offerings (e.g. "what does sparktech offer?")
+      if (merchantQuery) {
+        const targetMerchant = merchantsWithServices.find(
+          (m) =>
+            m.name.toLowerCase().includes(merchantQuery.toLowerCase()) ||
+            (isAddress(merchantQuery) && m.walletAddress.toLowerCase() === merchantQuery.toLowerCase())
+        );
 
-    // 2. Amount specified, but missing merchant
-    if (!merchantQuery) {
-      return {
-        success: true,
-        type: "MESSAGE",
-        intent: "SPEND_CREDIT",
-        requiresWalletSignature: false,
-        text: `You specified ${amountStr} Credit. Please specify which merchant to pay.\n\nApproved Merchants:\n${merchantList}\n\nExample: "Pay ${amountStr} credit to Sparktech"`,
-      };
-    }
+        if (targetMerchant) {
+          const servicesList =
+            targetMerchant.services && targetMerchant.services.length > 0
+              ? targetMerchant.services
+                  .map(
+                    (s: any) =>
+                      `• **${s.name}**: ${formatAmount(BigInt(s.priceUnits))} Credit\n  _${s.description || "No description provided"}_`
+                  )
+                  .join("\n")
+              : "• No specific services currently listed for this merchant.";
 
-    // 3. Merchant specified, but missing amount
-    if (!amountStr || Number(amountStr) <= 0) {
-      return {
-        success: true,
-        type: "MESSAGE",
-        intent: "SPEND_CREDIT",
-        requiresWalletSignature: false,
-        text: `You selected merchant "${merchantQuery}". Please specify how much credit to spend (for example: "Pay 250 credit to ${merchantQuery}").`,
-      };
-    }
+          return {
+            success: true,
+            type: "MESSAGE",
+            intent: "SPEND_CREDIT",
+            requiresWalletSignature: false,
+            text: `🛍️ **${targetMerchant.name} Service Catalog**:\n${servicesList}\n\nTo purchase a service, simply say:\n• "Buy [Service Name] from ${targetMerchant.name}"\n• "Pay for [Service Name]"`,
+            preview: {
+              merchant: targetMerchant.name,
+              services: (targetMerchant.services || []).map((s: any) => ({
+                name: s.name,
+                price: `${formatAmount(BigInt(s.priceUnits))} Credit`,
+              })),
+            },
+          };
+        }
+      }
 
-    // 4. Both amount and merchant are present: lookup merchant and prepare calldata
-    const merchant = await prisma.merchant.findFirst({
-      where: {
-        isApproved: true,
-        OR: [
-          { name: { contains: merchantQuery, mode: "insensitive" } },
-          ...(isAddress(merchantQuery) ? [{ walletAddress: merchantQuery.toLowerCase() }] : []),
-        ],
-      },
-    });
-
-    if (!merchant) {
-      return {
-        success: false,
-        type: "ERROR",
-        intent: "SPEND_CREDIT",
-        requiresWalletSignature: false,
-        text: `Merchant "${merchantQuery}" was not found among approved merchants.\n\nApproved Merchants:\n${merchantList}`,
-      };
-    }
-
-    try {
-      const prepared = await CreditService.prepareSpendCalldata(userId, {
-        merchantAddress: merchant.walletAddress,
-        amount: amountStr,
+      // Overall Catalog of all merchants and their services
+      const catalogSections = merchantsWithServices.map((m) => {
+        const sList =
+          m.services && m.services.length > 0
+            ? m.services
+                .map((s: any) => `  - **${s.name}**: ${formatAmount(BigInt(s.priceUnits))} Credit (${s.description})`)
+                .join("\n")
+            : "  - _Custom credit settlement_";
+        return `🏢 **${m.name}**:\n${sList}`;
       });
 
+      const catalogText =
+        catalogSections.length > 0
+          ? catalogSections.join("\n\n")
+          : "No approved merchants or services are currently registered.";
+
       return {
         success: true,
-        type: "TRANSACTION_PREVIEW",
-        intent: "SPEND_CREDIT",
-        requiresWalletSignature: true,
-        text: `Prepared payment of ${prepared.amount} Credit to merchant "${merchant.name}". Merchant will receive an on-chain receipt upon confirmation ($0 fee).`,
-        preview: {
-          action: "Spend Credit",
-          merchant: merchant.name,
-          merchantWallet: merchant.walletAddress,
-          amountToSpend: `${prepared.amount} Credit`,
-          fee: "$0 (No fee)",
-        },
-        preparedTx: {
-          to: prepared.to,
-          data: prepared.data,
-          value: prepared.value,
-          estimatedGasEth: prepared.gasCostEth,
-        },
-      };
-    } catch (err: any) {
-      return {
-        success: false,
-        type: "ERROR",
+        type: "MESSAGE",
         intent: "SPEND_CREDIT",
         requiresWalletSignature: false,
-        text: err?.message || "Failed to prepare spend transaction.",
+        text: `🛍️ **Available Merchant Services Directory** (PRD §4.3):\nClients spend credit on specific cataloged services provided by approved merchants ($0 platform fees):\n\n${catalogText}\n\nTo purchase, simply say:\n• "Buy [Service Name] from [Merchant Name]"\n• "Pay for [Service Name]"`,
+        preview: {
+          totalServices: allServices.length,
+          platformFee: "$0 (Zero Fee)",
+        },
       };
     }
+
+    // 3. User wants to buy a specific service: match service by name
+    let matchedService: any = null;
+    if (serviceQuery) {
+      const sq = serviceQuery.toLowerCase();
+      matchedService = allServices.find((s) => {
+        const sName = s.name.toLowerCase();
+        return sName.includes(sq) || sq.includes(sName);
+      });
+    }
+
+    // Also check if merchantQuery matches a service name (e.g. user typed "pay for ICC Emergency Arbitrator Filing")
+    if (!matchedService && merchantQuery) {
+      const mq = merchantQuery.toLowerCase();
+      matchedService = allServices.find((s) => s.name.toLowerCase().includes(mq));
+    }
+
+    // If a service was matched, we know the exact merchant and the exact fixed price!
+    if (matchedService) {
+      const servicePrice = formatAmount(BigInt(matchedService.priceUnits));
+      const merchant = matchedService.merchant;
+
+      try {
+        const prepared = await CreditService.prepareSpendCalldata(userId, {
+          merchantAddress: merchant.walletAddress,
+          amount: servicePrice,
+        });
+
+        return {
+          success: true,
+          type: "TRANSACTION_PREVIEW",
+          intent: "SPEND_CREDIT",
+          requiresWalletSignature: true,
+          text: `Prepared purchase preview for service **"${matchedService.name}"** from **${merchant.name}** for **${prepared.amount} Credit** ($0 fee). Please confirm with your wallet.`,
+          preview: {
+            action: "Purchase Merchant Service",
+            service: matchedService.name,
+            merchant: merchant.name,
+            merchantWallet: merchant.walletAddress,
+            servicePrice: `${prepared.amount} Credit`,
+            description: matchedService.description,
+            platformFee: "$0 (No fee)",
+          },
+          preparedTx: {
+            to: prepared.to,
+            data: prepared.data,
+            value: prepared.value,
+            estimatedGasEth: prepared.gasCostEth,
+          },
+        };
+      } catch (err: any) {
+        return {
+          success: false,
+          type: "ERROR",
+          intent: "SPEND_CREDIT",
+          requiresWalletSignature: false,
+          text: err?.message || `Failed to prepare purchase of service "${matchedService.name}".`,
+        };
+      }
+    }
+
+    // 4. User specified a merchant name, but no specific service
+    if (merchantQuery) {
+      let targetMerchant = merchantsWithServices.find(
+        (m) =>
+          m.name.toLowerCase().includes(merchantQuery.toLowerCase()) ||
+          (isAddress(merchantQuery) && m.walletAddress.toLowerCase() === merchantQuery.toLowerCase())
+      );
+
+      // Fallback query if not loaded in merchantsWithServices
+      if (!targetMerchant) {
+        try {
+          targetMerchant = await prisma.merchant.findFirst({
+            where: {
+              isApproved: true,
+              OR: [
+                { name: { contains: merchantQuery, mode: "insensitive" } },
+                ...(isAddress(merchantQuery) ? [{ walletAddress: merchantQuery.toLowerCase() }] : []),
+              ],
+            },
+            include: { services: true },
+          });
+        } catch {
+          // DB error
+        }
+      }
+
+      if (!targetMerchant) {
+        const names = merchantsWithServices.map((m) => `• ${m.name}`).join("\n");
+        return {
+          success: false,
+          type: "ERROR",
+          intent: "SPEND_CREDIT",
+          requiresWalletSignature: false,
+          text: `Merchant "${merchantQuery}" was not found among approved merchants.${names ? `\n\nApproved Merchants:\n${names}` : ""}`,
+        };
+      }
+
+      // If this merchant has cataloged services, guide the user to select one
+      if (targetMerchant.services && targetMerchant.services.length > 0) {
+        const sList = targetMerchant.services
+          .map((s: any) => `• **${s.name}**: ${formatAmount(BigInt(s.priceUnits))} Credit (${s.description})`)
+          .join("\n");
+
+        return {
+          success: true,
+          type: "MESSAGE",
+          intent: "SPEND_CREDIT",
+          requiresWalletSignature: false,
+          text: `Credit is spent on specific services. **${targetMerchant.name}** offers the following services:\n\n${sList}\n\nTo purchase one, say:\n• "Buy ${targetMerchant.services[0].name} from ${targetMerchant.name}"`,
+          preview: {
+            merchant: targetMerchant.name,
+            services: targetMerchant.services,
+          },
+        };
+      }
+
+      // Fallback if merchant has no cataloged services and an amount is provided
+      if (amountStr && Number(amountStr) > 0) {
+        try {
+          const prepared = await CreditService.prepareSpendCalldata(userId, {
+            merchantAddress: targetMerchant.walletAddress,
+            amount: amountStr,
+          });
+
+          return {
+            success: true,
+            type: "TRANSACTION_PREVIEW",
+            intent: "SPEND_CREDIT",
+            requiresWalletSignature: true,
+            text: `Prepared payment of ${prepared.amount} Credit to merchant "${targetMerchant.name}". Merchant will receive an on-chain receipt upon confirmation ($0 fee).`,
+            preview: {
+              action: "Spend Credit",
+              merchant: targetMerchant.name,
+              merchantWallet: targetMerchant.walletAddress,
+              amountToSpend: `${prepared.amount} Credit`,
+              fee: "$0 (No fee)",
+            },
+            preparedTx: {
+              to: prepared.to,
+              data: prepared.data,
+              value: prepared.value,
+              estimatedGasEth: prepared.gasCostEth,
+            },
+          };
+        } catch (err: any) {
+          return {
+            success: false,
+            type: "ERROR",
+            intent: "SPEND_CREDIT",
+            requiresWalletSignature: false,
+            text: err?.message || "Failed to prepare spend transaction.",
+          };
+        }
+      }
+    }
+
+    // 5. User specified amount but no merchant or service
+    if (amountStr && !merchantQuery && !serviceQuery) {
+      const names = merchantsWithServices.map((m) => `• ${m.name}`).join("\n");
+      return {
+        success: true,
+        type: "MESSAGE",
+        intent: "SPEND_CREDIT",
+        requiresWalletSignature: false,
+        text: `You specified ${amountStr} Credit. Credit is spent on specific services offered by approved merchants.\n\nApproved Merchants:\n${names}\n\nAsk: "What services can I buy?" to browse catalog offerings.`,
+      };
+    }
+
+    // 5. Default Fallback
+    return {
+      success: true,
+      type: "MESSAGE",
+      intent: "SPEND_CREDIT",
+      requiresWalletSignature: false,
+      text: "Please specify which service or merchant you would like to purchase from (for example: \"Buy Software Dev package 1 from Sparktech\"). Or ask: \"What services can I buy?\"",
+    };
   }
 
   /**
@@ -396,10 +552,11 @@ export class AiService {
    */
   static parseUserIntent(prompt: string): {
     type: "READ_STATUS" | "REQUEST_LOAN" | "REPAY_LOAN" | "EXTEND_LOAN" | "SPEND_CREDIT" | "UNKNOWN";
-    target: "BALANCE" | "LOANS" | "TRANSACTIONS" | "ALL" | "GUIDE";
+    target: "BALANCE" | "LOANS" | "TRANSACTIONS" | "ALL" | "GUIDE" | "SERVICES";
     amount: string | null;
     loanId: string | null;
     merchantQuery: string;
+    serviceQuery: string;
   } {
     const lower = prompt.toLowerCase();
 
@@ -416,6 +573,7 @@ export class AiService {
         amount: null,
         loanId: null,
         merchantQuery: "",
+        serviceQuery: "",
       };
     }
 
@@ -434,10 +592,12 @@ export class AiService {
         !lower.includes("spend") &&
         !lower.includes("send") &&
         !lower.includes("transfer") &&
+        !lower.includes("buy") &&
+        !lower.includes("purchase") &&
         !lower.includes("issue") &&
         !lower.includes("debit")) ||
       lower.includes("status") ||
-      (lower.includes("how much") && !lower.includes("pay") && !lower.includes("spend") && !lower.includes("send")) ||
+      (lower.includes("how much") && !lower.includes("pay") && !lower.includes("spend") && !lower.includes("send") && !lower.includes("buy")) ||
       lower.includes("limit")
     ) {
       return {
@@ -446,6 +606,7 @@ export class AiService {
         amount: null,
         loanId: null,
         merchantQuery: "",
+        serviceQuery: "",
       };
     }
 
@@ -456,6 +617,7 @@ export class AiService {
         amount: null,
         loanId: null,
         merchantQuery: "",
+        serviceQuery: "",
       };
     }
 
@@ -469,6 +631,7 @@ export class AiService {
         amount: null,
         loanId,
         merchantQuery: "",
+        serviceQuery: "",
       };
     }
 
@@ -482,6 +645,7 @@ export class AiService {
         amount: null,
         loanId,
         merchantQuery: "",
+        serviceQuery: "",
       };
     }
 
@@ -495,66 +659,106 @@ export class AiService {
         amount,
         loanId: null,
         merchantQuery: "",
+        serviceQuery: "",
       };
     }
 
-    // 6. Spend Credit Guide / Questions
+    // 6. Spend Credit & Services Catalog Inquiries
     if (
+      lower.includes("service") ||
+      lower.includes("catalog") ||
+      lower.includes("offering") ||
+      lower.includes("what can i buy") ||
+      lower.includes("what can i purchase") ||
+      lower.includes("what does") ||
       lower.includes("how to spend") ||
       lower.includes("how do i spend") ||
       lower.includes("where can i spend") ||
       lower.includes("who can i pay") ||
-      lower.includes("who can i spend") ||
       lower.includes("list merchants") ||
       lower.includes("show merchants") ||
       lower.includes("approved merchants") ||
       lower.trim() === "spend credit" ||
       lower.trim() === "spend"
     ) {
+      let merchantQuery = "";
+      const toMatch = lower.match(/(?:from|at|by|of|for|with|does)\s+([a-zA-Z0-9_\- ]+)/i);
+      if (toMatch && toMatch[1]) {
+        merchantQuery = toMatch[1].replace(/\b(offer|services|service|credit|usdc|\?)\b/gi, "").trim();
+      }
+
       return {
         type: "SPEND_CREDIT",
-        target: "GUIDE",
+        target: "SERVICES",
         amount: null,
         loanId: null,
-        merchantQuery: "",
+        merchantQuery,
+        serviceQuery: "",
       };
     }
 
-    // 7. Spend Credit Transactions (Pay, Spend, Send, Transfer)
+    // 7. Spend Credit Transactions (Pay, Spend, Send, Transfer, Buy, Purchase)
     if (
       lower.includes("spend") ||
       lower.includes("send") ||
       lower.includes("transfer") ||
+      lower.includes("buy") ||
+      lower.includes("purchase") ||
+      lower.includes("order") ||
+      lower.includes("hire") ||
       (lower.includes("pay") && !lower.includes("repay") && !lower.includes("pay back") && !lower.includes("pay loan"))
     ) {
       let merchantQuery = "";
+      let serviceQuery = "";
       let amount: string | null = null;
 
-      // Check format: "pay sparktech 250" or "send sparktech 100 credit"
-      const directPayMatch = lower.match(
-        /(?:pay|send|transfer)\s+([a-zA-Z\s]+?)\s+\$?([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]+)?|[0-9]+(?:\.[0-9]+)?)(?:\s*credit|\s*usdc)?$/i
+      // Extract amount if present
+      const amountMatch = lower.match(/\$?\s*([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]+)?|[0-9]+(?:\.[0-9]+)?)/);
+      amount = amountMatch && amountMatch[1] ? amountMatch[1].replace(/,/g, "") : null;
+
+      // Check for format: "buy <service> from/at/by/with <merchant>"
+      const buyWithMerchantMatch = lower.match(
+        /(?:buy|purchase|order|hire|pay for)\s+([a-zA-Z0-9_\- ]+?)\s+(?:from|at|by|with)\s+([a-zA-Z0-9_\- ]+)/i
       );
 
-      if (directPayMatch && directPayMatch[1] && directPayMatch[2] && !directPayMatch[1].includes("to ") && !directPayMatch[1].includes("credit")) {
-        merchantQuery = directPayMatch[1].trim();
-        amount = directPayMatch[2].replace(/,/g, "");
+      if (buyWithMerchantMatch && buyWithMerchantMatch[1] && buyWithMerchantMatch[2]) {
+        serviceQuery = buyWithMerchantMatch[1].replace(/\b(credit|usdc)\b/gi, "").trim();
+        merchantQuery = buyWithMerchantMatch[2].replace(/\b(credit|usdc)\b/gi, "").trim();
       } else {
-        const amountMatch = lower.match(/\$?\s*([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]+)?|[0-9]+(?:\.[0-9]+)?)/);
-        amount = amountMatch && amountMatch[1] ? amountMatch[1].replace(/,/g, "") : null;
+        // Extract merchant if after "from", "at", "by", "with", "to"
+        const merchantMatch = lower.match(/(?:from|at|by|with|to)\s+([a-zA-Z0-9_\- ]+)/i);
+        if (merchantMatch && merchantMatch[1]) {
+          merchantQuery = merchantMatch[1].replace(/\b(credit|usdc|dollars|\$|merchant|company|corp)\b/gi, "").trim();
+        }
 
-        // Extract merchant: text after "to", "at", "with", or "for"
-        const toMatch = lower.match(/(?:to|at|with|for)\s+([a-zA-Z0-9_\- ]+)/i);
-        if (toMatch && toMatch[1]) {
-          merchantQuery = toMatch[1].replace(/\b(credit|usdc|dollars|\$|to|at|with|for)\b/gi, "").trim();
+        // Extract service name if after "buy", "purchase", "order", "hire", "pay for"
+        const serviceMatch = lower.match(
+          /(?:buy|purchase|order|hire|pay for)\s+([a-zA-Z0-9_\- ]+?)(?:\s*$)/i
+        );
+        if (serviceMatch && serviceMatch[1]) {
+          serviceQuery = serviceMatch[1].replace(/\b(credit|usdc)\b/gi, "").trim();
+        }
+      }
+
+      // Check direct format: "pay sparktech 250"
+      if (!merchantQuery) {
+        const directPayMatch = lower.match(
+          /(?:pay|send|transfer)\s+([a-zA-Z\s]+?)\s+\$?([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]+)?|[0-9]+(?:\.[0-9]+)?)(?:\s*credit|\s*usdc)?$/i
+        );
+
+        if (directPayMatch && directPayMatch[1] && directPayMatch[2] && !directPayMatch[1].includes("to ") && !directPayMatch[1].includes("credit")) {
+          merchantQuery = directPayMatch[1].trim();
+          amount = directPayMatch[2].replace(/,/g, "");
         }
       }
 
       return {
         type: "SPEND_CREDIT",
-        target: !amount && !merchantQuery ? "GUIDE" : "ALL",
+        target: !amount && !merchantQuery && !serviceQuery ? "SERVICES" : "ALL",
         amount,
         loanId: null,
         merchantQuery,
+        serviceQuery,
       };
     }
 
@@ -564,6 +768,7 @@ export class AiService {
       amount: null,
       loanId: null,
       merchantQuery: "",
+      serviceQuery: "",
     };
   }
 

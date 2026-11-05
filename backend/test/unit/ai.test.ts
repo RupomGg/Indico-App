@@ -239,8 +239,13 @@ describe("AI Assistant Module (PRD §4.6 AI-01 to AI-07; PRD §4.7 AD-19; Rule D
 
       const intentGuide = AiService.parseUserIntent("how to spend credit");
       expect(intentGuide.type).toBe("SPEND_CREDIT");
-      expect(intentGuide.target).toBe("GUIDE");
+      expect(intentGuide.target).toBe("SERVICES");
       expect(intentGuide.amount).toBeNull();
+
+      const intentService = AiService.parseUserIntent("buy Software Dev package 1 from Sparktech");
+      expect(intentService.type).toBe("SPEND_CREDIT");
+      expect(intentService.serviceQuery.toLowerCase()).toContain("software dev package 1");
+      expect(intentService.merchantQuery.toLowerCase()).toContain("sparktech");
     });
 
     it("safely handles adversarial prompts and injection attempts by falling back to UNKNOWN", () => {
@@ -505,19 +510,60 @@ describe("AI Assistant Module (PRD §4.6 AI-01 to AI-07; PRD §4.7 AD-19; Rule D
       expect(res.text).toContain("not found among approved merchants");
     });
 
-    it("handles SPEND_CREDIT educational guide when asked 'how to spend credit' or 'where can i spend'", async () => {
+    it("handles SPEND_CREDIT educational guide when asked 'how to spend credit' or 'what services can i buy'", async () => {
       vi.spyOn(prisma.merchant, "findMany").mockResolvedValue([
-        { name: "Sparktech", walletAddress: mockMerchantWallet, contactEmail: "sparktech@example.com" } as any,
+        {
+          name: "Sparktech",
+          walletAddress: mockMerchantWallet,
+          contactEmail: "sparktech@example.com",
+          services: [{ name: "Software Dev package 1", priceUnits: "2121000000", description: "Dev" }],
+        } as any,
       ]);
 
-      const res = await AiService.handleUserPrompt(mockUserId, "How do I spend credit?");
+      const res = await AiService.handleUserPrompt(mockUserId, "What services can I buy?");
       expect(res.success).toBe(true);
       expect(res.type).toBe("MESSAGE");
       expect(res.intent).toBe("SPEND_CREDIT");
       expect(res.requiresWalletSignature).toBe(false);
-      expect(res.text).toContain("Spending Credit (PRD §4.3");
+      expect(res.text).toContain("Available Merchant Services Directory");
       expect(res.text).toContain("Sparktech");
-      expect(res.text).toContain("$0 platform fees");
+      expect(res.text).toContain("Software Dev package 1");
+    });
+
+    it("handles SPEND_CREDIT by purchasing a specific service by name", async () => {
+      vi.spyOn(prisma.merchant, "findMany").mockResolvedValue([
+        {
+          name: "Sparktech",
+          walletAddress: mockMerchantWallet,
+          contactEmail: "sparktech@example.com",
+          services: [{ name: "Software Dev package 1", priceUnits: "2121000000", description: "Dev" }],
+        } as any,
+      ]);
+
+      vi.spyOn(CreditService, "prepareSpendCalldata").mockResolvedValue({
+        to: env.INDICO_LEDGER_ADDRESS,
+        data: "0xspendservicecalldata",
+        value: "0",
+        merchantAddress: mockMerchantWallet,
+        amount: "2121.000000",
+        amountUnits: "2121000000",
+        estimatedGasUnits: "90000",
+        gasCostEth: "0.00015",
+        gasCostUsd: "0.45",
+        userEthBalance: "0.05",
+        ethShortfall: "0",
+        ethShortfallUnits: "0",
+        canAfford: true,
+      });
+
+      const res = await AiService.handleUserPrompt(mockUserId, "Buy Software Dev package 1 from Sparktech");
+      expect(res.success).toBe(true);
+      expect(res.type).toBe("TRANSACTION_PREVIEW");
+      expect(res.requiresWalletSignature).toBe(true);
+      expect(res.preview?.service).toBe("Software Dev package 1");
+      expect(res.preview?.merchant).toBe("Sparktech");
+      expect(res.preview?.servicePrice).toBe("2121.000000 Credit");
+      expect(res.preparedTx?.data).toBe("0xspendservicecalldata");
     });
 
     it("handles SPEND_CREDIT with amount but missing merchant by listing approved merchants", async () => {
