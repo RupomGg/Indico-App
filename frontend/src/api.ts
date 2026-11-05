@@ -3,7 +3,26 @@
  * Connects to Fastify API at http://localhost:3000/api/v1
  */
 
-const API_BASE = "http://localhost:3000/api/v1";
+export const RENDER_CLOUD_API_BASE = "https://indico-app-backend.onrender.com/api/v1";
+export const LOCAL_API_BASE = "http://localhost:3000/api/v1";
+
+export function getApiBase(): string {
+  return (
+    localStorage.getItem("indico_api_base") ||
+    (import.meta as any).env?.VITE_API_BASE ||
+    RENDER_CLOUD_API_BASE
+  );
+}
+
+export function setApiBase(url: string): void {
+  localStorage.setItem("indico_api_base", url);
+}
+
+export function getBaseHost(): string {
+  return getApiBase().replace(/\/api\/v1\/?$/, "");
+}
+
+export const API_BASE = getApiBase();
 
 export interface ApiResponse<T = any> {
   success: boolean;
@@ -18,6 +37,14 @@ export interface ApiResponse<T = any> {
 export class ApiClient {
   public static userToken: string | null = localStorage.getItem("indico_user_token");
   public static adminToken: string | null = localStorage.getItem("indico_admin_token");
+
+  public static getBaseUrl(): string {
+    return getApiBase();
+  }
+
+  public static getBaseHost(): string {
+    return getBaseHost();
+  }
 
   public static setUserToken(token: string | null) {
     this.userToken = token;
@@ -50,7 +77,8 @@ export class ApiClient {
       headers["Authorization"] = `Bearer ${token}`;
     }
 
-    const response = await fetch(`${API_BASE}${path}`, {
+    const currentBase = getApiBase();
+    const response = await fetch(`${currentBase}${path}`, {
       ...options,
       headers,
     });
@@ -72,8 +100,17 @@ export class ApiClient {
 
   // --- HEALTH & STATUS ---
   static async checkHealth() {
-    const res = await fetch("http://localhost:3000/health");
-    return res.json();
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8000);
+    try {
+      const res = await fetch(`${getBaseHost()}/health`, {
+        signal: controller.signal,
+        cache: "no-store",
+      });
+      return await res.json();
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   // --- AUTH (U-01, U-02, U-03) ---
@@ -460,6 +497,51 @@ export class ApiClient {
     if (params?.limit) qs.append("limit", String(params.limit));
     const query = qs.toString() ? `?${qs.toString()}` : "";
     return this.request(`/admin/audit-logs/user/${encodeURIComponent(userId)}${query}`, { method: "GET" }, "admin");
+  }
+
+  // --- AI ASSISTANT (PRD §4.6 AI-01 to AI-07; PRD §4.7 AD-19) ---
+  static async sendUserAiPrompt(prompt: string) {
+    return this.request<{
+      success: boolean;
+      type: "MESSAGE" | "TRANSACTION_PREVIEW" | "ACTION_PREVIEW" | "UNKNOWN" | "ERROR";
+      intent: string;
+      text: string;
+      requiresWalletSignature: boolean;
+      preview?: Record<string, any>;
+      preparedTx?: {
+        to: string;
+        data: string;
+        value: string;
+        estimatedGasEth?: string;
+      };
+    }>("/ai/user/prompt", {
+      method: "POST",
+      body: JSON.stringify({ prompt }),
+    });
+  }
+
+  static async sendAdminAiPrompt(prompt: string) {
+    return this.request<{
+      success: boolean;
+      type: "MESSAGE" | "TRANSACTION_PREVIEW" | "ACTION_PREVIEW" | "UNKNOWN" | "ERROR";
+      intent: string;
+      text: string;
+      requiresWalletSignature: boolean;
+      preview?: Record<string, any>;
+      preparedTx?: {
+        to: string;
+        data: string;
+        value: string;
+        estimatedGasEth?: string;
+      };
+    }>(
+      "/ai/admin/prompt",
+      {
+        method: "POST",
+        body: JSON.stringify({ prompt }),
+      },
+      "admin"
+    );
   }
 }
 

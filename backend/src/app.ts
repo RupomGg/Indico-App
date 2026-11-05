@@ -20,6 +20,7 @@ import { creditRoutes } from "./modules/credit/credit.routes.js";
 import { merchantsRoutes } from "./modules/merchants/merchants.routes.js";
 import { historyRoutes } from "./modules/history/history.routes.js";
 import { adminRoutes } from "./modules/admin/admin.routes.js";
+import { aiRoutes } from "./modules/ai/ai.routes.js";
 
 export interface BuildAppOptions {
   onRoute?: (routeOptions: any) => void;
@@ -122,6 +123,7 @@ export function buildApp(options?: BuildAppOptions): FastifyInstance {
     { plugin: merchantsRoutes, prefix: "/merchants" },
     { plugin: historyRoutes, prefix: "/history" },
     { plugin: adminRoutes, prefix: "/admin" },
+    { plugin: aiRoutes, prefix: "/ai" },
   ];
 
   for (const { plugin, prefix } of routeModules) {

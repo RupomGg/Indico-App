@@ -1161,7 +1161,7 @@ export class UserView {
     const chatHistory = document.getElementById("ai-chat-history")!;
     const input = document.getElementById("ai-prompt-input") as HTMLInputElement;
 
-    document.getElementById("ai-chat-form")?.addEventListener("submit", (e) => {
+    document.getElementById("ai-chat-form")?.addEventListener("submit", async (e) => {
       e.preventDefault();
       const prompt = input.value.trim();
       if (!prompt) return;
@@ -1172,48 +1172,74 @@ export class UserView {
       userMsg.textContent = prompt;
       chatHistory.appendChild(userMsg);
       input.value = "";
+      chatHistory.scrollTop = chatHistory.scrollHeight;
 
-      // Process with simulated AI engine adhering to §1 constraints
-      setTimeout(() => {
-        this.processAiPrompt(prompt, chatHistory);
+      // Temporary typing indicator
+      const typingMsg = document.createElement("div");
+      typingMsg.style.cssText = "align-self: flex-start; background: rgba(255,255,255,0.04); border: 1px solid var(--border-subtle); padding: 10px 16px; border-radius: 12px; font-size: 13px; color: var(--text-muted);";
+      typingMsg.innerHTML = "Thinking...";
+      chatHistory.appendChild(typingMsg);
+      chatHistory.scrollTop = chatHistory.scrollHeight;
+
+      try {
+        await this.processAiPrompt(prompt, chatHistory, typingMsg);
+      } catch (err: any) {
+        typingMsg.style.borderColor = "#ef4444";
+        typingMsg.innerHTML = `⚠️ <strong style="color: #ef4444;">Error:</strong> ${err.message || "Failed to communicate with AI Assistant."}`;
+      } finally {
         chatHistory.scrollTop = chatHistory.scrollHeight;
-      }, 500);
+      }
     });
   }
 
-  private static processAiPrompt(prompt: string, container: HTMLElement) {
-    const lower = prompt.toLowerCase();
-    const botMsg = document.createElement("div");
-    botMsg.style.cssText = "align-self: flex-start; background: rgba(255,255,255,0.04); border: 1px solid var(--border-subtle); padding: 14px 18px; border-radius: 12px; max-width: 85%; font-size: 13px;";
+  private static async processAiPrompt(prompt: string, container: HTMLElement, typingIndicator: HTMLElement) {
+    const res = await ApiClient.sendUserAiPrompt(prompt);
+    typingIndicator.remove();
 
-    if (lower.includes("balance") || lower.includes("credit") || lower.includes("status")) {
-      const avail = this.userBalance?.availableBalance || "0";
-      const locked = this.userBalance?.lockedBalance || "0";
+    const botMsg = document.createElement("div");
+    botMsg.style.cssText = "align-self: flex-start; background: rgba(255,255,255,0.04); border: 1px solid var(--border-subtle); padding: 14px 18px; border-radius: 12px; max-width: 85%; font-size: 13px; line-height: 1.6;";
+
+    // Format newlines
+    const formattedText = res.text.replace(/\n/g, "<br/>");
+
+    if (res.type === "TRANSACTION_PREVIEW" && res.preparedTx) {
       botMsg.innerHTML = `
-        <strong>📊 Balance Summary:</strong><br/>
-        Available Credit: <strong style="color: #34d399;">${formatUsdc(avail)} USDC</strong><br/>
-        Locked Collateral: <strong style="color: #fbbf24;">${formatUsdc(locked)} USDC</strong><br/>
-        Max Borrowable: <strong style="color: #38bdf8;">${formatUsdc(parseFloat(avail) * 0.8)} USDC</strong>
-      `;
-    } else if (lower.includes("loan") && (lower.includes("borrow") || lower.includes("request"))) {
-      const match = lower.match(/\d+([.,]\d+)?/);
-      const amount = match ? match[0].replace(",", "") : "5000";
-      botMsg.innerHTML = `
-        <strong>⚡ Loan Request Summary:</strong><br/>
-        Principal: <strong>${formatUsdc(amount)} USDC</strong><br/>
-        Required Collateral: <strong>${formatUsdc(parseFloat(amount) * 1.25)} USDC</strong><br/>
-        Duration: <strong>90 Days (0% Interest, $0 Fees)</strong><br/>
-        <div style="margin-top: 10px;">
-          <button class="btn btn-sm btn-primary" onclick="alert('Preparing borrow of ${amount} USDC... Please confirm with your connected wallet.');">
-            Confirm & Sign with Wallet
-          </button>
+        <div style="margin-bottom: 8px;">${formattedText}</div>
+        <div style="background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; padding: 12px; margin-top: 10px;">
+          <div style="font-weight: 700; color: #38bdf8; margin-bottom: 6px;">⚡ Transaction Preview (Signature Required)</div>
+          ${res.preview ? Object.entries(res.preview).map(([k, v]) => `<div><span style="color: var(--text-muted);">${k}:</span> <strong>${v}</strong></div>`).join("") : ""}
+          <div style="margin-top: 12px;">
+            <button class="btn btn-sm btn-primary btn-ai-sign-tx" style="width: 100%;">
+              Sign &amp; Confirm with Wallet ↗
+            </button>
+          </div>
         </div>
       `;
+
+      const signBtn = botMsg.querySelector(".btn-ai-sign-tx") as HTMLButtonElement;
+      if (signBtn) {
+        signBtn.addEventListener("click", async () => {
+          try {
+            signBtn.disabled = true;
+            signBtn.textContent = "Waiting for wallet confirmation...";
+            showToast("Please confirm transaction in your connected wallet...", "info");
+            const txHash = await WalletManager.sendPreparedTx(res.preparedTx!);
+            showToast(`Transaction confirmed on-chain! Tx: ${truncateAddress(txHash)}`, "success");
+            signBtn.textContent = "Transaction Broadcasted ✓";
+            signBtn.style.background = "#10b981";
+            await this.refresh();
+          } catch (err: any) {
+            signBtn.disabled = false;
+            signBtn.textContent = "Retry Wallet Signature ↗";
+            showToast(err.message || "Wallet transaction failed", "error");
+          }
+        });
+      }
+    } else if (res.type === "ERROR" || res.success === false) {
+      botMsg.style.borderColor = "rgba(239, 68, 68, 0.4)";
+      botMsg.innerHTML = `<span style="color: #f87171;">⚠️ ${formattedText}</span>`;
     } else {
-      botMsg.innerHTML = `
-        I understand you are asking about: <em>"${prompt}"</em>.<br/>
-        Per Confirmed Feature List §1, I can answer balance inquiries, prepare loan summaries, or merchant spend transactions. Would you like me to guide you through one of these actions?
-      `;
+      botMsg.innerHTML = formattedText;
     }
 
     container.appendChild(botMsg);

@@ -30,6 +30,8 @@ export const INDICO_LEDGER_ABI = parseAbi([
   "function setUserApproved(address user, bool approved, bytes32 accountRef) external",
   "function setMerchantApproved(address m, bool approved) external",
   "function setTermsHash(bytes32 newHash) external",
+  "function adminIssueCredit(address user, uint256 amount, bytes32 memo) external",
+  "function adminDebitCredit(address user, uint256 amount, bytes32 memo) external",
   "function pause() external",
   "function unpause() external",
 

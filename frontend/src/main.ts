@@ -7,11 +7,13 @@ import { UserView } from "./views/userView.js";
 import { AdminView } from "./views/adminView.js";
 import { ChecklistView } from "./views/checklistView.js";
 import { WalletManager } from "./wallet.js";
-import { ApiClient } from "./api.js";
+import { ApiClient, getApiBase, setApiBase, RENDER_CLOUD_API_BASE, LOCAL_API_BASE } from "./api.js";
 import { showToast, truncateAddress } from "./ui.js";
 
 class App {
   private static viewContainer: HTMLElement;
+  private static currentTab: "user" | "admin" | "checklist" = "checklist";
+  private static healthTimer: any = null;
 
   static async init() {
     this.renderShell();
@@ -20,10 +22,18 @@ class App {
     this.checkBackendHealth();
     this.updateWalletUI();
     this.switchTab("checklist");
+
+    // Periodic heartbeat every 15 seconds to keep health status accurate
+    if (this.healthTimer) clearInterval(this.healthTimer);
+    this.healthTimer = setInterval(() => {
+      this.checkBackendHealth();
+    }, 15000);
   }
 
   private static renderShell() {
     const isSimulated = WalletManager.isSimulated();
+    const currentApi = getApiBase();
+    const isRenderCloud = currentApi.includes("onrender.com");
 
     document.getElementById("app")!.innerHTML = `
       <div class="app-container">
@@ -52,8 +62,13 @@ class App {
 
           <!-- System Status & Wallet Connection -->
           <div class="nav-actions">
+            <!-- API Switcher Button -->
+            <button id="btn-toggle-api" class="btn btn-outline btn-sm" title="Toggle between Render Cloud Live Backend and Local :3000">
+              ${isRenderCloud ? "☁️ API: Render Cloud" : "💻 API: Localhost"}
+            </button>
+
             <!-- Backend Health Pill -->
-            <div id="backend-health-pill" class="badge badge-neutral" style="cursor: pointer;" title="Fastify API on http://localhost:3000">
+            <div id="backend-health-pill" class="badge badge-neutral" style="cursor: pointer;" title="API Endpoint: ${currentApi}">
               <span id="health-dot" style="display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: #94a3b8;"></span>
               <span id="health-text">API: Checking...</span>
             </div>
@@ -80,6 +95,33 @@ class App {
     document.getElementById("nav-btn-checklist")?.addEventListener("click", () => this.switchTab("checklist"));
     document.getElementById("nav-btn-user")?.addEventListener("click", () => this.switchTab("user"));
     document.getElementById("nav-btn-admin")?.addEventListener("click", () => this.switchTab("admin"));
+
+    document.getElementById("btn-toggle-api")?.addEventListener("click", () => {
+      const current = getApiBase();
+      const isRender = current.includes("onrender.com");
+      const nextTarget = isRender ? LOCAL_API_BASE : RENDER_CLOUD_API_BASE;
+      setApiBase(nextTarget);
+
+      const apiBtn = document.getElementById("btn-toggle-api");
+      if (apiBtn) {
+        apiBtn.textContent = !isRender ? "☁️ API: Render Cloud" : "💻 API: Localhost";
+      }
+
+      const pill = document.getElementById("backend-health-pill");
+      if (pill) {
+        pill.title = `API Endpoint: ${nextTarget}`;
+      }
+
+      showToast(
+        !isRender
+          ? "Switched to Render Cloud Live API (indico-app-backend.onrender.com)"
+          : "Switched to Localhost Fastify API (http://localhost:3000)",
+        "info"
+      );
+
+      this.checkBackendHealth();
+      this.switchTab(this.currentTab);
+    });
 
     document.getElementById("btn-toggle-sim")?.addEventListener("click", () => {
       const current = WalletManager.isSimulated();
@@ -110,18 +152,40 @@ class App {
     document.getElementById("backend-health-pill")?.addEventListener("click", () => this.checkBackendHealth());
   }
 
-  private static async checkBackendHealth() {
+  private static async checkBackendHealth(retryCount = 0) {
     const dot = document.getElementById("health-dot");
     const text = document.getElementById("health-text");
+    const current = getApiBase();
+    const isRender = current.includes("onrender.com");
+    const label = isRender ? "Render Cloud" : "Local:3000";
+
     try {
       const res = await ApiClient.checkHealth();
-      if (res.status === "ok") {
+      if (res && res.status === "ok") {
         if (dot) dot.style.background = "#10b981";
-        if (text) text.textContent = "API: Online";
+        if (text) text.textContent = `API: ${label} (Online)`;
+        const pill = document.getElementById("backend-health-pill");
+        if (pill) pill.title = `API Connected: ${current}`;
+        return;
       }
-    } catch {
-      if (dot) dot.style.background = "#ef4444";
-      if (text) text.textContent = "API: Offline (Start backend on :3000)";
+      throw new Error("Invalid response status");
+    } catch (err: any) {
+      console.warn(`[Indico Health Check] Could not connect to ${current}:`, err?.message || err);
+      const pill = document.getElementById("backend-health-pill");
+      if (pill) {
+        pill.title = isRender
+          ? `API Endpoint: ${current}\nTip: In Brave, turn OFF Brave Shields (lion icon) for localhost:5173 to permit cross-origin cloud API calls.`
+          : `API Endpoint: ${current}`;
+      }
+
+      if (isRender && retryCount < 2) {
+        if (dot) dot.style.background = "#eab308";
+        if (text) text.textContent = `API: ${label} (Waking up...)`;
+        setTimeout(() => this.checkBackendHealth(retryCount + 1), 3000);
+      } else {
+        if (dot) dot.style.background = "#ef4444";
+        if (text) text.textContent = `API: ${label} (Offline)`;
+      }
     }
   }
 
@@ -146,6 +210,7 @@ class App {
   }
 
   static switchTab(tab: "user" | "admin" | "checklist") {
+    this.currentTab = tab;
     const checklistBtn = document.getElementById("nav-btn-checklist");
     const userBtn = document.getElementById("nav-btn-user");
     const adminBtn = document.getElementById("nav-btn-admin");

@@ -1615,7 +1615,7 @@ export class AdminView {
     const chat = document.getElementById("admin-ai-chat")!;
     const input = document.getElementById("admin-ai-input") as HTMLInputElement;
 
-    document.getElementById("admin-ai-form")?.addEventListener("submit", (e) => {
+    document.getElementById("admin-ai-form")?.addEventListener("submit", async (e) => {
       e.preventDefault();
       const cmd = input.value.trim();
       if (!cmd) return;
@@ -1625,34 +1625,71 @@ export class AdminView {
       userMsg.textContent = cmd;
       chat.appendChild(userMsg);
       input.value = "";
+      chat.scrollTop = chat.scrollHeight;
 
-      setTimeout(() => {
+      // Typing indicator
+      const typingMsg = document.createElement("div");
+      typingMsg.style.cssText = "align-self: flex-start; background: rgba(255,255,255,0.04); border: 1px solid var(--border-subtle); padding: 10px 16px; border-radius: 12px; font-size: 13px; color: var(--text-muted);";
+      typingMsg.innerHTML = "Processing administrative command...";
+      chat.appendChild(typingMsg);
+      chat.scrollTop = chat.scrollHeight;
+
+      try {
+        const res = await ApiClient.sendAdminAiPrompt(cmd);
+        typingMsg.remove();
+
         const botMsg = document.createElement("div");
-        botMsg.style.cssText = "align-self: flex-start; background: rgba(255,255,255,0.04); border: 1px solid var(--border-subtle); padding: 14px 18px; border-radius: 12px; max-width: 85%; font-size: 13px;";
+        botMsg.style.cssText = "align-self: flex-start; background: rgba(255,255,255,0.04); border: 1px solid var(--border-subtle); padding: 14px 18px; border-radius: 12px; max-width: 85%; font-size: 13px; line-height: 1.6;";
 
-        const lower = cmd.toLowerCase();
-        if (lower.includes("pool")) {
+        const formattedText = res.text.replace(/\n/g, "<br/>");
+
+        if (res.type === "ACTION_PREVIEW" && res.preparedTx) {
           botMsg.innerHTML = `
-            <strong>📊 Shared Pool State:</strong><br/>
-            Available Liquidity: <strong style="color: #34d399;">${formatUsdc(this.poolData?.availableUsdc || this.poolData?.poolCash || 0)} USDC</strong><br/>
-            Total Lent Out: <strong style="color: #38bdf8;">${formatUsdc(this.poolData?.totalLentOut || this.poolData?.totalLent || 0)} USDC</strong><br/>
-            Total Merchant Deposits: <strong style="color: #a855f7;">${formatUsdc(this.poolData?.totalDeposited || this.poolData?.totalAssets || 0)} USDC</strong>
+            <div style="margin-bottom: 8px;">${formattedText}</div>
+            <div style="background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; padding: 12px; margin-top: 10px;">
+              <div style="font-weight: 700; color: #f472b6; margin-bottom: 6px;">⚡ Administrative Action Preview</div>
+              ${res.preview ? Object.entries(res.preview).map(([k, v]) => `<div><span style="color: var(--text-muted);">${k}:</span> <strong>${typeof v === "object" ? JSON.stringify(v) : v}</strong></div>`).join("") : ""}
+              <div style="margin-top: 12px;">
+                <button class="btn btn-sm btn-accent btn-ai-admin-broadcast" style="width: 100%;">
+                  Broadcast Admin Transaction (MetaMask) ↗
+                </button>
+              </div>
+            </div>
           `;
-        } else if (lower.includes("loan") || lower.includes("overdue")) {
-          botMsg.innerHTML = `
-            <strong>📑 Loan Supervision:</strong><br/>
-            Total Active Loans: <strong>${this.loansData.length}</strong><br/>
-            All active loans are monitored for 90-day expiry.
-          `;
+
+          const broadcastBtn = botMsg.querySelector(".btn-ai-admin-broadcast") as HTMLButtonElement;
+          if (broadcastBtn) {
+            broadcastBtn.addEventListener("click", async () => {
+              try {
+                broadcastBtn.disabled = true;
+                broadcastBtn.textContent = "Waiting for admin wallet confirmation...";
+                showToast("Please confirm transaction in your connected Admin wallet...", "info");
+                const txHash = await WalletManager.sendPreparedTx(res.preparedTx!);
+                showToast(`Admin action broadcasted! Tx: ${truncateAddress(txHash)}`, "success");
+                broadcastBtn.textContent = "Action Executed ✓";
+                broadcastBtn.style.background = "#10b981";
+                await this.refresh();
+              } catch (err: any) {
+                broadcastBtn.disabled = false;
+                broadcastBtn.textContent = "Retry Broadcast ↗";
+                showToast(err.message || "Admin execution failed", "error");
+              }
+            });
+          }
+        } else if (res.type === "ERROR" || res.success === false) {
+          botMsg.style.borderColor = "rgba(239, 68, 68, 0.4)";
+          botMsg.innerHTML = `<span style="color: #f87171;">⚠️ ${formattedText}</span>`;
         } else {
-          botMsg.innerHTML = `
-            Command received: <em>"${cmd}"</em>.<br/>
-            Ready to prepare administrative execution payload.
-          `;
+          botMsg.innerHTML = formattedText;
         }
+
         chat.appendChild(botMsg);
+      } catch (err: any) {
+        typingMsg.style.borderColor = "#ef4444";
+        typingMsg.innerHTML = `⚠️ <strong style="color: #ef4444;">Error:</strong> ${err.message || "Failed to execute administrative command."}`;
+      } finally {
         chat.scrollTop = chat.scrollHeight;
-      }, 500);
+      }
     });
   }
 

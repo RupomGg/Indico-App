@@ -31,4 +31,5 @@ INFRASTRUCTURE_SETUP_REQUIREMENT.pdf
 *.pdf
 app/
 *.apk
+assets/
 
