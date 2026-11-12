@@ -14,7 +14,7 @@ import {StrictHandler} from "./StrictHandler.sol";
 contract StrictInvariantsTest is InvariantsBase {
     function _deployHandler() internal override returns (Handler) {
         StrictHandler s = new StrictHandler(ledger, usdc, admin, guardian);
-        bytes4[] memory sel = new bytes4[](19);
+        bytes4[] memory sel = new bytes4[](21);
         sel[0] = s.s_registerAsset.selector;
         sel[1] = s.s_adminIssue.selector;
         sel[2] = s.s_adminDebit.selector;
@@ -32,8 +32,10 @@ contract StrictInvariantsTest is InvariantsBase {
         sel[14] = s.s_signTerms.selector;
         sel[15] = s.s_moveAccount.selector;
         sel[16] = s.s_togglePause.selector;
-        sel[17] = s.warp.selector;
-        sel[18] = s.warpToEdge.selector;
+        sel[17] = s.s_sweep.selector;
+        sel[18] = s.warp.selector;
+        sel[19] = s.warpToEdge.selector;
+        sel[20] = s.sendToBox.selector; // never calls the ledger either
         targetSelector(FuzzSelector({addr: address(s), selectors: sel}));
         selectors = sel;
         return s;
@@ -43,7 +45,7 @@ contract StrictInvariantsTest is InvariantsBase {
 
     /// @dev Reachability: 4,000 seeded random strict actions; none may revert, and every action
     ///      that calls the ledger must have made at least one call (a strict action that always
-    ///      skips would prove nothing). The last two selectors, the warps, never call the ledger.
+    ///      skips would prove nothing). The last three selectors (the warps, sendToBox) never call the ledger.
     function test_everyStrictActionMakesValidCalls() public {
         uint256 seed = 1;
         for (uint256 k; k < 4000; k++) {
@@ -64,7 +66,7 @@ contract StrictInvariantsTest is InvariantsBase {
                 }
             }
         }
-        for (uint256 i; i < selectors.length - 2; i++) {
+        for (uint256 i; i < selectors.length - 3; i++) {
             assertGt(h.made(selectors[i]), 0, vm.toString(abi.encodePacked(selectors[i])));
         }
     }

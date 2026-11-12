@@ -64,6 +64,9 @@ contract LedgerModel {
     uint256 public lastUnpausedAt;
     mapping(address => bytes32) public accountRefOf;
     mapping(bytes32 => address) public walletOfAccount;
+    mapping(address => bytes32) public merchantAgreement; // D-69
+    mapping(address => bool) public hasBox; // D-70: created on the first approval
+    mapping(address => uint256) public boxUsdc; // USDC waiting in the merchant's box
 
     struct Loan {
         address borrower;
@@ -141,7 +144,7 @@ contract LedgerModel {
         return "";
     }
 
-    function setMerchantApproved(address caller, address m, bool approved)
+    function setMerchantApproved(address caller, address m, bool approved, bytes32 agreement)
         external
         returns (bytes memory)
     {
@@ -154,11 +157,14 @@ contract LedgerModel {
             if (role[m] != NONE && role[m] != MERCHANT) {
                 return abi.encodeWithSelector(IIndicoLedger.ParticipantRoleConflict.selector, m);
             }
-            role[m] = MERCHANT;
-            termsSigned[m] = true;
-            if (termsHash != bytes32(0)) {
-                signedTermsHash[m] = termsHash;
+            if (agreement == bytes32(0)) {
+                return abi.encodeWithSelector(IIndicoLedger.ZeroAgreementHash.selector);
             }
+            role[m] = MERCHANT;
+            merchantAgreement[m] = agreement; // a record, never a wallet signature (D-69)
+            hasBox[m] = true;
+        } else if (agreement != bytes32(0)) {
+            return abi.encodeWithSelector(IIndicoLedger.AgreementHashOnRevoke.selector);
         }
         approvedMerchant[m] = approved;
         return "";
@@ -317,9 +323,6 @@ contract LedgerModel {
         if (!approvedMerchant[m]) {
             return abi.encodeWithSelector(IIndicoLedger.NotApprovedMerchant.selector);
         }
-        if (!termsSigned[m]) {
-            return abi.encodeWithSelector(IIndicoLedger.MerchantTermsNotSigned.selector, m);
-        }
         if (amount == 0) return abi.encodeWithSelector(IIndicoLedger.ZeroAmount.selector);
         uint256 avail = credit[caller] - locked[caller];
         if (amount > avail) {
@@ -339,15 +342,33 @@ contract LedgerModel {
         if (!approvedMerchant[caller]) {
             return abi.encodeWithSelector(IIndicoLedger.NotApprovedMerchant.selector);
         }
-        if (!termsSigned[caller]) {
-            return abi.encodeWithSelector(IIndicoLedger.TermsNotSigned.selector);
-        }
         if (amount == 0) return abi.encodeWithSelector(IIndicoLedger.ZeroAmount.selector);
+        return _mint(caller, amount);
+    }
+
+    /// @dev D-70: anyone moves the merchant's whole box into the pool, as the merchant's shares.
+    function sweep(address m) external returns (bytes memory) {
+        if (paused) return _paused();
+        if (!approvedMerchant[m]) {
+            return abi.encodeWithSelector(IIndicoLedger.NotApprovedMerchant.selector);
+        }
+        // An empty box delivers nothing, worth no share: ZeroShares, from _mint.
+        bytes memory err = _mint(m, boxUsdc[m]);
+        if (err.length == 0) boxUsdc[m] = 0;
+        return err;
+    }
+
+    /// @dev A plain USDC transfer into the merchant's box: no ledger state changes.
+    function sendToBox(address m, uint256 amount) external {
+        boxUsdc[m] += amount;
+    }
+
+    function _mint(address m, uint256 amount) internal returns (bytes memory) {
         (bool over, uint256 minted) =
             _mulDiv(amount, totalShares + 1e6, poolUsdc + totalLent + 1, false);
         if (over) return _overflow();
         if (minted == 0) return abi.encodeWithSelector(IIndicoLedger.ZeroShares.selector);
-        shares[caller] += minted;
+        shares[m] += minted;
         totalShares += minted;
         poolUsdc += amount;
         return "";

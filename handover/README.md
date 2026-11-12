@@ -1,7 +1,14 @@
-# IndicoLedger backend handover, interface 1.0.0
+# IndicoLedger backend handover, interface 1.1.0
 
-Everything the backend needs to build against the ledger. Tagged `interface-v1.0.0`. From this tag
-the interface is frozen: any change to a function, event or error is a new decision entry and a
+Everything the backend needs to build against the ledger. Tagged `interface-v1.1.0`.
+
+**Changes from 1.0.0** (D-69, D-70): `setMerchantApproved(m, approved, agreementHash)` records the
+SHA-256 of the merchant's signed agreement and, on the first approval, creates the merchant's
+deposit box; new `sweep(merchant)`, views `merchantAgreement`, `depositBoxOf`, events
+`MerchantAgreementRecorded`, `DepositBoxAssigned`, errors `ZeroAgreementHash`,
+`AgreementHashOnRevoke`; `MerchantTermsNotSigned` is gone.
+
+The interface is frozen: any change to a function, event or error is a new decision entry and a
 version bump, announced through this folder, never a quiet edit.
 
 | File | What it is |
@@ -85,9 +92,10 @@ anything a user is about to act on, and for reconciliation.
 2. **The `memo` of `adminIssueCredit` and `adminDebitCredit` is public too** (O-043): a random id,
    or a hash of an internal record id with a secret salt. Never a name, email, bank reference or
    description of the amount.
-3. **A merchant deposit is two transactions**: `approve(ledger, amount)` on the USDC contract, then
-   `deposit(amount)` on the ledger. Merchants use the block explorer, so the merchant guide says this
-   first (O-032).
+3. **A merchant deposits with an ordinary USDC transfer to its own deposit box**,
+   `depositBoxOf(merchant)` (D-70), shown on the admin dashboard. The keeper calls `sweep(merchant)`,
+   which moves the whole box into the pool as that merchant's shares. `sweep` is permissionless: the
+   keeper key is gas only and **must hold no role**. `approve` then `deposit` still works too.
 4. **USDC sent straight to the ledger is lost for good** (D-38): a plain `transfer` to the ledger
    address is counted nowhere, buys no share, and no function can send it back. The surplus shows as
    `usdc.balanceOf(ledger) - poolUsdc()`.
@@ -98,13 +106,14 @@ anything a user is about to act on, and for reconciliation.
 7. **A lost wallet** is moved with `adminMoveAccount(oldWallet, newWallet, accountRef)` (D-64):
    only with no open loan, only to a wallet never used on the platform. The whole credit moves; the
    old wallet is retired for good. The new wallet must sign the terms before it spends or borrows.
-8. **The merchant must have signed the terms** before a user can pay them; show "merchant not
-   ready" rather than the raw error (O-031).
+8. **Onboarding a merchant needs its signed agreement** (D-69): the dashboard takes the signed
+   document, computes its SHA-256 and passes it to `setMerchantApproved`. The file stays private
+   off chain. An approved merchant can be paid and deposit at once; no wallet signature is needed.
 
 ## What the pause blocks
 
 While `paused()` is true every user and pool function reverts `EnforcedPause`: `signTerms`,
-`registerAsset`, `spend`, `deposit`, `withdraw`, `withdrawAll`, `requestLoan`, `repay`, `extend`,
+`registerAsset`, `spend`, `deposit`, `sweep`, `withdraw`, `withdrawAll`, `requestLoan`, `repay`, `extend`,
 `liquidate`, `adminIssueCredit`, `adminDebitCredit`. Merchants cannot withdraw while paused (D-41).
 Still allowed: `setTermsHash`, `setUserApproved`, `setMerchantApproved`, `adminMoveAccount`, the
 role functions and `unpause`.
@@ -141,7 +150,7 @@ mismatch is an alert, never something to correct silently: the contract is the s
 | I8 | A user's credit falls only through `spend`, `adminDebitCredit`, `liquidate`, or `adminMoveAccount` (to its new wallet). |
 | I9 | `spend` and `adminDebitCredit` never take credit below `lockedCredit`. |
 | I10 | No withdrawal pays more than `poolUsdc`. |
-| I11 | `deposit`, `withdraw` and `withdrawAll` never lower the share price and cost the caller at most 1 wei of rounding; `liquidate` lowers pool assets by exactly the principal; every other call leaves pool assets and shares unchanged. |
+| I11 | `deposit`, `sweep`, `withdraw` and `withdrawAll` never lower the share price and cost the caller at most 1 wei of rounding; `liquidate` lowers pool assets by exactly the principal; every other call leaves pool assets and shares unchanged. |
 | I12 | Nobody but the admin changes another address's credit, except `spend` raising a merchant's and `liquidate` burning a defaulted borrower's collateral. |
 | I13 | `sum(credit) + poolCredit == total minted - total burned` (from events). |
 | I14 | `usdc.balanceOf(ledger) >= poolUsdc`. |

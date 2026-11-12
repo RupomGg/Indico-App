@@ -267,25 +267,26 @@ export class AdminOperationsService {
 
     const onChainStatuses = await Promise.all(
       merchants.map(async (m) => {
-        if (!m.walletAddress) return { isApproved: false, termsSigned: false };
+        const none = { isApproved: false, agreementHash: null as string | null, depositBox: null as string | null };
+        if (!m.walletAddress) return none;
         try {
-          const [isApproved, termsSigned] = await Promise.all([
-            publicClient.readContract({
-              address: env.INDICO_LEDGER_ADDRESS as Address,
-              abi: INDICO_LEDGER_ABI,
-              functionName: "approvedMerchant",
-              args: [m.walletAddress as Address],
-            }),
-            publicClient.readContract({
-              address: env.INDICO_LEDGER_ADDRESS as Address,
-              abi: INDICO_LEDGER_ABI,
-              functionName: "termsSigned",
-              args: [m.walletAddress as Address],
-            }),
-          ]);
-          return { isApproved: Boolean(isApproved), termsSigned: Boolean(termsSigned) };
+          const [isApproved, agreementHash, depositBox] = await Promise.all(
+            (["approvedMerchant", "merchantAgreement", "depositBoxOf"] as const).map((functionName) =>
+              publicClient.readContract({
+                address: env.INDICO_LEDGER_ADDRESS as Address,
+                abi: INDICO_LEDGER_ABI,
+                functionName,
+                args: [m.walletAddress as Address],
+              })
+            )
+          );
+          return {
+            isApproved: Boolean(isApproved),
+            agreementHash: /^0x0+$/.test(String(agreementHash)) ? null : String(agreementHash),
+            depositBox: /^0x0+$/.test(String(depositBox)) ? null : String(depositBox),
+          };
         } catch {
-          return { isApproved: false, termsSigned: false };
+          return none;
         }
       })
     );
@@ -302,7 +303,11 @@ export class AdminOperationsService {
         agreementSignedAt: m.agreementSignedAt,
         agreementStorageKey: m.agreementStorageKey,
         isOnChainApproved: onChainStatuses[idx]?.isApproved ?? false,
-        isOnChainTermsSigned: m.agreementStatus === "SIGNED" || Boolean(onChainStatuses[idx]?.termsSigned),
+        // The signed agreement's SHA-256 recorded at approval (D-69), and the address the merchant
+        // sends USDC to (D-70).
+        isOnChainTermsSigned: Boolean(onChainStatuses[idx]?.agreementHash),
+        agreementHash: onChainStatuses[idx]?.agreementHash ?? null,
+        depositBox: onChainStatuses[idx]?.depositBox ?? null,
         services: m.services.map((s) => ({
           id: s.id,
           merchantId: s.merchantId,
@@ -421,9 +426,9 @@ export class AdminOperationsService {
     });
 
     let isOnChainApproved = false;
-    let isOnChainTermsSigned = true;
+    let isOnChainTermsSigned = false;
     try {
-      const [isApproved, termsSigned] = await Promise.all([
+      const [isApproved, agreement] = await Promise.all([
         publicClient.readContract({
           address: env.INDICO_LEDGER_ADDRESS as Address,
           abi: INDICO_LEDGER_ABI,
@@ -433,14 +438,14 @@ export class AdminOperationsService {
         publicClient.readContract({
           address: env.INDICO_LEDGER_ADDRESS as Address,
           abi: INDICO_LEDGER_ABI,
-          functionName: "termsSigned",
+          functionName: "merchantAgreement",
           args: [merchant.walletAddress as Address],
         }),
       ]);
       isOnChainApproved = Boolean(isApproved);
-      isOnChainTermsSigned = merchant.agreementStatus === "SIGNED" || Boolean(termsSigned);
+      isOnChainTermsSigned = !/^0x0+$/.test(String(agreement)); // recorded agreement (D-69)
     } catch {
-      isOnChainTermsSigned = merchant.agreementStatus === "SIGNED";
+      isOnChainTermsSigned = false;
     }
 
     return {
@@ -466,7 +471,7 @@ export class AdminOperationsService {
 
     if (merchant.walletAddress) {
       try {
-        const [isApproved, termsSigned] = await Promise.all([
+        const [isApproved, agreement] = await Promise.all([
           publicClient.readContract({
             address: env.INDICO_LEDGER_ADDRESS as Address,
             abi: INDICO_LEDGER_ABI,
@@ -476,12 +481,12 @@ export class AdminOperationsService {
           publicClient.readContract({
             address: env.INDICO_LEDGER_ADDRESS as Address,
             abi: INDICO_LEDGER_ABI,
-            functionName: "termsSigned",
+            functionName: "merchantAgreement",
             args: [merchant.walletAddress as Address],
           }),
         ]);
         isOnChainApproved = Boolean(isApproved);
-        isOnChainTermsSigned = Boolean(termsSigned);
+        isOnChainTermsSigned = !/^0x0+$/.test(String(agreement)); // recorded agreement (D-69)
       } catch {
         // RPC network fallback
       }
@@ -499,7 +504,7 @@ export class AdminOperationsService {
       walletAddress: merchant.walletAddress,
       isApproved: isOnChainApproved || merchant.isApproved,
       isOnChainApproved,
-      isOnChainTermsSigned: merchant.agreementStatus === "SIGNED" || isOnChainTermsSigned,
+      isOnChainTermsSigned,
     };
   }
 

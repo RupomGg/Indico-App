@@ -23,6 +23,8 @@ const envSchema = z.object({
   STORAGE_DRIVER: z.enum(["local", "s3"]).default("local"),
   STORAGE_LOCAL_PATH: z.string().default("./storage"),
   DOCUMENT_ENCRYPTION_KEY: z.string().min(32).default("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"),
+  // Gas only. Must hold no role on the ledger: it calls only the permissionless `sweep` (D-70)
+  // and `liquidate` (D-07). Never grant it ADMIN_ROLE.
   KEEPER_PRIVATE_KEY: z
     .string()
     .regex(/^0x[a-fA-F0-9]{64}$/, "Invalid keeper private key")

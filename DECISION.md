@@ -3130,6 +3130,92 @@ Gate:
 - G10 pending: owner commits and pushes to GitHub repository.
 Commit: feat: interactive web test frontend and 100% confirmed feature list verifier
 
+### C-084 · D-69, D-70 · Merchant onboarding with its signed agreement; per-merchant deposit box; `syncDeposit` removed · 2026-11-12
+Type: fix and feature (reopens the frozen interface: version 1.1.0)
+Decisions: D-69, D-70 (owner approved, 2026-11-12); D-22, D-38, D-40, D-41, D-67 applied
+Root cause: two changes reached `main` after the `interface-v1.0.0` freeze with no decision entry
+and no gate: `setMerchantApproved` wrote `termsSigned` and emitted `TermsSigned` for a merchant
+whose wallet never signed (D-69), and `syncDeposit` credited unbooked USDC to whoever called first,
+which made the keeper key hold `ADMIN_ROLE` (D-70). Both are replaced here.
+Files:
+- Changed: `contracts/src/IndicoLedger.sol`:
+  - `setMerchantApproved(m, approved, agreementHash)` (D-69): approval reverts `ZeroAgreementHash`
+    after `_admit`'s checks, records `merchantAgreement[m]`, emits `MerchantAgreementRecorded(m,
+    termsHash, agreementHash)`; a revoke with a non-zero hash reverts `AgreementHashOnRevoke`. It
+    never writes a terms signature. The merchant terms checks in `spend` and `deposit` are deleted:
+    an approved merchant always has a recorded agreement, so they could no longer fail.
+  - The first approval assigns `depositBoxOf[m]`, a CREATE2 address from the ledger with salt =
+    the merchant and the immutable `boxCodeHash`, and emits `DepositBoxAssigned(m, box)`; no
+    external call (D-70).
+  - `sweep(merchant)`: permissionless, `nonReentrant`, `whenNotPaused`; reverts
+    `NotApprovedMerchant`, deploys the box on the first sweep, calls its `release()`, mints the
+    shares to the merchant on the change in the ledger's balance (`ZeroShares` if none). `deposit`
+    and `sweep` share the private `_mintShares`. `Create2.deploy`'s return value is assigned to
+    `box` (Slither `unused-return` otherwise, medium).
+  - `syncDeposit` deleted.
+- New: `contracts/src/MerchantDepositBox.sol`: holds a merchant's USDC; `release()` sends its whole
+  balance to the ledger and reverts `NotLedger` for any other caller; no ETH, no other function.
+- Changed: `contracts/src/interfaces/IIndicoLedger.sol`: the new signature, `sweep`,
+  `merchantAgreement`, `depositBoxOf`, the two events, `ZeroAgreementHash`,
+  `AgreementHashOnRevoke`; `syncDeposit` and `MerchantTermsNotSigned` removed.
+- New: `contracts/test/unit/MerchantOnboarding.t.sol`: 26 tests: the agreement rules and exact
+  writes, no `TermsSigned`; the box address assigned once and kept on re-approval; sweep from any
+  caller credits only the box's merchant (exact writes, fuzz over amount and caller); two boxes
+  never mix; a direct transfer to the ledger is not swept; only the ledger can release; revoked,
+  paused, empty, unknown merchant; fee on transfer; no role can redirect a box.
+- Changed tests, mechanically for the new signature and the deleted checks: `Fixture.sol`,
+  `StateDiff.t.sol`, `Membership`, `Spend`, `Pool` (the `syncDeposit` and merchant-terms tests
+  deleted), `Pause`, `ParticipantMatrix`, `Constructor`, `NegativeSpace` (the call list and the
+  re-entry cross product gain `sweep`), `SignTerms`, `AccountMove`, `Journeys`, `BaseFork`, the
+  invariant handlers (sweep added) and the differential model (sweep and the agreement rules).
+- Changed: `contracts/script/OnboardParticipants.s.sol`: passes an agreement hash.
+- Changed: `handover/` regenerated, `INTERFACE_VERSION` 1.1.0; `build.py` gains messages and effects
+  for the new errors and events; `README.md`: merchant onboarding, the deposit box, the role-less
+  keeper key.
+- Changed: `backend/src/lib/viem.ts` (ABI), `config/env.ts` (the keeper key holds no role),
+  `modules/indexer/indexer.service.ts` (the keeper sweeps boxes holding USDC instead of calling
+  `syncDeposit`), `modules/admin/admin.operations.service.ts` (onboarding takes the agreement's
+  SHA-256), `modules/credit/credit.service.ts` (no merchant terms check); tests `indexer.test.ts`,
+  `credit.test.ts` (the D-69 spend test mocks the simulation, so it no longer reaches the network).
+  `frontend/src/views/adminView.ts`: onboarding asks for the signed agreement and shows the box.
+- Changed (local, not pushed): `docs/decisions.md` D-69, D-70; `docs/event-catalogue.md`
+  (`MerchantAgreementRecorded`, `DepositBoxAssigned`, topic0 checked against `handover/events.json`).
+- Changed: `.github/aderyn-allowed-highs.txt`: the D-67 finding's two `balanceOf` lines in
+  `deposit` moved to 410 and 412 (owner approved, 2026-11-12). Aderyn has no Windows build, so this
+  is checked on CI only; if it also reports `sweep` (424, 426, the same pattern around
+  `release()`), that is a new triage for the owner, not added here.
+Size: `IndicoLedger` runtime 15,265 B (margin 9,311 B); `MerchantDepositBox` 466 B.
+Slither, CI step 7 body on a scratch copy: exit 0, no IR error, 9 findings, none medium or high:
+the earlier 7 plus `reentrancy-benign` on `sweep` (writes after `release()`, `nonReentrant`, the box
+is the ledger's own contract) and `too-many-digits` on `_boxCode` (the creation code literal).
+Gas snapshot: 27 new lines, 12 removed (the `syncDeposit` and merchant-terms tests), 477 changed.
+Over 10%: the re-entry cross product +45.2% (one more function to re-enter and into), the grace
+edges in the model +19.0%, four `Membership` merchant tests +12.5% to +18.2% and the pause matrix
++11.5% (a first merchant approval now writes the agreement and the box address), five `Deploy`
+tests and one `Spend` test about +10% (a larger ledger to deploy).
+Gate (logs in `docs/gate-logs/D-69-70/`, Forge 1.8.3):
+- G1 pass: 655 passed, 0 failed, 0 skipped, exit 0.
+- G2 pass: src lines 310/310, branches 88/88.
+- G3, G4 pass: exit 0 each.
+- G5 pass: seeds 1 and 2, 655 passed each.
+- G6 pass: three runs, 655 passed each.
+- G7 pass: `ci` profile, 655 passed.
+- G8 pass: snapshot check 588 passed after regeneration.
+- G9 pass, `G9.log`: 16 of 16 caught, sources restored byte-identical: K1 approval without a hash;
+  K2 revoke accepts a hash; K3 agreement not recorded; K4 a new box on every approval; K5 approval
+  writes a wallet signature; K6 agreement event without the terms version; K7 sweep credits the
+  caller; K8 sweep without the merchant check; K9 sweep while paused; K10 sweep not
+  `nonReentrant`; K11 sweep never deploys the box; K12 box address with the wrong salt; K13 deposit
+  without the merchant check; K14 anyone may release a box; K15 release sends half; K16 release
+  pays `tx.origin`.
+- G13 pass. Handover `--check` current.
+- Backend: `tsc --noEmit` exit 0; 361 tests passed, 0 failed.
+- G10 pending: owner pushes. Deep run on this code, then the tag `interface-v1.1.0` and the Sepolia
+  redeploy with a keeper key that holds no role (and `ADMIN_ROLE` revoked from the old keeper on the
+  current deployment).
+Open items: none raised.
+Commit: feat: merchant onboarding records the signed agreement, per-merchant deposit box with permissionless sweep, syncDeposit removed (D-69, D-70)
+
 ---
 
 ## Open items

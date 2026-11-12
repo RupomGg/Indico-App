@@ -58,14 +58,12 @@ contract BaseForkTest is Test {
         vm.startPrank(admin);
         ledger.setTermsHash(TERMS);
         ledger.setUserApproved(user, true, keccak256("fork-account"));
-        ledger.setMerchantApproved(merchant, true);
+        ledger.setMerchantApproved(merchant, true, keccak256("signed-agreement"));
         vm.stopPrank();
         vm.prank(user);
         ledger.signTerms(TERMS);
-        if (!ledger.termsSigned(merchant) || ledger.signedTermsHash(merchant) != TERMS) {
-            vm.prank(merchant);
-            ledger.signTerms(TERMS);
-        }
+        vm.prank(merchant);
+        ledger.signTerms(TERMS);
     }
 
     /// @dev The constructor accepts Circle's USDC: a contract with 6 decimals (D-16).

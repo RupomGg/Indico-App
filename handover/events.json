@@ -119,6 +119,18 @@
     "effect": "newAdmin may accept the top role after acceptSchedule (3 days). One the Safe signers did not start means act at once. newAdmin 0 is a scheduled renounce."
   },
   {
+    "topic0": "0xdc6466451a80364427eb7c2e00b49fdd49a5019d6de0c8551893f7e5d5fab3d7",
+    "name": "DepositBoxAssigned",
+    "signature": "DepositBoxAssigned(address,address)",
+    "indexed": [
+      "merchant"
+    ],
+    "data": [
+      "box"
+    ],
+    "effect": "depositBoxOf[merchant] = box (D-70). Show the merchant this address to send USDC to."
+  },
+  {
     "topic0": "0x73a19dd210f1a7f902193214c0ee91dd35ee5b4d920cba8d519eca65a7b488ca",
     "name": "Deposited",
     "signature": "Deposited(address,uint256,uint256)",
@@ -129,7 +141,7 @@
       "assets",
       "shares"
     ],
-    "effect": "shares[merchant] += shares, totalShares += shares, poolUsdc += assets (the amount actually received)."
+    "effect": "shares[merchant] += shares, totalShares += shares, poolUsdc += assets (the amount actually received), from a deposit or a sweep of the merchant's box (D-70)."
   },
   {
     "topic0": "0x5464b0b86763d92db7e0b0c464350ced59692ff69ce33414178a486c93122158",
@@ -186,6 +198,19 @@
       "principal"
     ],
     "effect": "Status Repaid. totalLent -= principal, poolUsdc += principal."
+  },
+  {
+    "topic0": "0x25d73c9f91e0925e95b5682f40bba40ec31111ac15880c88eaffb08b3ae71a85",
+    "name": "MerchantAgreementRecorded",
+    "signature": "MerchantAgreementRecorded(address,bytes32,bytes32)",
+    "indexed": [
+      "merchant",
+      "termsHash"
+    ],
+    "data": [
+      "agreementHash"
+    ],
+    "effect": "merchantAgreement[merchant] = agreementHash, the SHA-256 of the signed agreement, under termsHash (D-69). Not a wallet signature."
   },
   {
     "topic0": "0xc92ad2efa0fe33d8bedcd697a50900ee8f215df60d7b0e94f16b3b8cc931c0ea",

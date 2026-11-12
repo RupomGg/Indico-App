@@ -328,7 +328,11 @@ contract AccountMoveTest is Actors {
             conflict
         );
         _revertsUnchanged(
-            admin, abi.encodeCall(IIndicoLedger.setMerchantApproved, (alice, true)), conflict
+            admin,
+            abi.encodeCall(
+                IIndicoLedger.setMerchantApproved, (alice, true, keccak256("signed-agreement"))
+            ),
+            conflict
         );
         bytes memory notUser = _err(IIndicoLedger.NotAUser.selector, alice);
         _revertsUnchanged(

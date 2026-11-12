@@ -19,7 +19,7 @@ import {Actors} from "../helpers/Actors.sol";
 /// | 20 the admin's address                        | trailing bytes never change who acts            |
 /// | every function sent 1 wei of ETH              | reverts (nothing is payable), no change         |
 /// | a stray ERC-20 sent to the ledger             | no ledger slot written; no function moves it    |
-/// | the token re-enters, 5 USDC functions x 19    | the guard, or the target's own refusal as the   |
+/// | the token re-enters, 6 USDC functions x 20    | the guard, or the target's own refusal as the   |
 /// | targets                                       | token address; the outer call rolls back whole  |
 ///
 /// The list of calls is checked against the compiled ABI (`methodIdentifiers`), so a function
@@ -45,13 +45,15 @@ contract NegativeSpaceTest is Actors {
     // ================================================================== the call list
 
     function _calls() internal view returns (Call[] memory c) {
-        c = new Call[](70);
+        c = new Call[](72);
         uint256 i;
         // views, by a stranger
         c[i++] = Call(stranger, abi.encodeWithSignature("ADMIN_ROLE()"));
         c[i++] = Call(stranger, abi.encodeWithSignature("DEFAULT_ADMIN_ROLE()"));
         c[i++] = Call(stranger, abi.encodeWithSignature("GUARDIAN_ROLE()"));
         c[i++] = Call(stranger, abi.encodeWithSignature("accountRefOf(address)", alice));
+        c[i++] = Call(stranger, abi.encodeWithSignature("merchantAgreement(address)", merchantA));
+        c[i++] = Call(stranger, abi.encodeWithSignature("depositBoxOf(address)", merchantA));
         c[i++] = Call(stranger, abi.encodeWithSignature("approvedMerchant(address)", merchantA));
         c[i++] = Call(stranger, abi.encodeWithSignature("approvedUser(address)", alice));
         c[i++] = Call(stranger, abi.encodeWithSignature("assetRegistered(bytes32)", bytes32("d")));
@@ -102,7 +104,12 @@ contract NegativeSpaceTest is Actors {
         c[i++] = Call(
             admin, abi.encodeCall(IIndicoLedger.setUserApproved, (stranger, true, bytes32("s")))
         );
-        c[i++] = Call(admin, abi.encodeCall(IIndicoLedger.setMerchantApproved, (stranger, true)));
+        c[i++] = Call(
+            admin,
+            abi.encodeCall(
+                IIndicoLedger.setMerchantApproved, (stranger, true, keccak256("signed-agreement"))
+            )
+        );
         c[i++] = Call(stranger, abi.encodeCall(IIndicoLedger.signTerms, (TERMS)));
         c[i++] = Call(alice, abi.encodeCall(IIndicoLedger.registerAsset, (bytes32("d"), 0, 1e6)));
         c[i++] = Call(admin, abi.encodeCall(IIndicoLedger.adminIssueCredit, (alice, 1e6, "m")));
@@ -112,7 +119,7 @@ contract NegativeSpaceTest is Actors {
         );
         c[i++] = Call(alice, abi.encodeCall(IIndicoLedger.spend, (merchantA, 1e6)));
         c[i++] = Call(merchantA, abi.encodeCall(IIndicoLedger.deposit, (1e6)));
-        c[i++] = Call(admin, abi.encodeCall(IIndicoLedger.syncDeposit, (merchantA, 1e6)));
+        c[i++] = Call(stranger, abi.encodeCall(IIndicoLedger.sweep, (merchantA)));
         c[i++] = Call(merchantA, abi.encodeCall(IIndicoLedger.withdraw, (1e6)));
         c[i++] = Call(merchantA, abi.encodeCall(IIndicoLedger.withdrawAll, ()));
         c[i++] = Call(alice, abi.encodeCall(IIndicoLedger.requestLoan, (1e6)));
@@ -271,12 +278,14 @@ contract NegativeSpaceTest is Actors {
     ///      inside `repay`, loan 1 is already Repaid (`extend` and `liquidate` say LoanNotActive);
     ///      inside `requestLoan`, loan 2 already exists (`liquidate` says NotYetDue).
     function test_reentry_everyUsdcFunction_intoEveryTarget() public {
-        Call[5] memory outer = [
+        usdc.mint(ledger.depositBoxOf(merchantA), 1e6); // so `sweep` reaches its transfer (D-70)
+        Call[6] memory outer = [
             Call(merchantA, abi.encodeCall(IIndicoLedger.deposit, (1e6))),
             Call(merchantA, abi.encodeCall(IIndicoLedger.withdraw, (1e6))),
             Call(merchantA, abi.encodeCall(IIndicoLedger.withdrawAll, ())),
             Call(alice, abi.encodeCall(IIndicoLedger.requestLoan, (1e6))),
-            Call(alice, abi.encodeCall(IIndicoLedger.repay, (1)))
+            Call(alice, abi.encodeCall(IIndicoLedger.repay, (1))),
+            Call(stranger, abi.encodeCall(IIndicoLedger.sweep, (merchantA)))
         ];
         for (uint256 o; o < outer.length; ++o) {
             (bytes[] memory target, bytes[] memory err) = _targets(o);
@@ -304,18 +313,25 @@ contract NegativeSpaceTest is Actors {
         bytes memory notAdmin = _unauthorized(tok, keccak256("ADMIN_ROLE"));
         bytes memory notGuardian = _unauthorized(tok, keccak256("GUARDIAN_ROLE"));
         bytes memory notActive = abi.encodeWithSelector(IIndicoLedger.LoanNotActive.selector);
-        t = new bytes[](19);
-        e = new bytes[](19);
+        t = new bytes[](20);
+        e = new bytes[](20);
         uint256 i;
         (t[i], e[i++]) = (abi.encodeCall(IIndicoLedger.deposit, (1)), guard);
         (t[i], e[i++]) = (abi.encodeCall(IIndicoLedger.withdraw, (1)), guard);
         (t[i], e[i++]) = (abi.encodeCall(IIndicoLedger.withdrawAll, ()), guard);
         (t[i], e[i++]) = (abi.encodeCall(IIndicoLedger.requestLoan, (1)), guard);
         (t[i], e[i++]) = (abi.encodeCall(IIndicoLedger.repay, (1)), guard);
+        (t[i], e[i++]) = (abi.encodeCall(IIndicoLedger.sweep, (merchantA)), guard);
         (t[i], e[i++]) = (abi.encodeCall(IIndicoLedger.setTermsHash, (keccak256("t2"))), notAdmin);
         (t[i], e[i++]) =
         (abi.encodeCall(IIndicoLedger.setUserApproved, (tok, true, bytes32("r"))), notAdmin);
-        (t[i], e[i++]) = (abi.encodeCall(IIndicoLedger.setMerchantApproved, (tok, true)), notAdmin);
+        (t[i], e[i++]) =
+        (
+            abi.encodeCall(
+                IIndicoLedger.setMerchantApproved, (tok, true, keccak256("signed-agreement"))
+            ),
+            notAdmin
+        );
         (t[i], e[i++]) = (abi.encodeCall(IIndicoLedger.adminIssueCredit, (alice, 1, "m")), notAdmin);
         (t[i], e[i++]) = (abi.encodeCall(IIndicoLedger.adminDebitCredit, (alice, 1, "m")), notAdmin);
         (t[i], e[i++]) =

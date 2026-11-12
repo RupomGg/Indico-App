@@ -153,7 +153,7 @@ describe("Credit Module (PRD §4.3 C-01 to C-08; PRD §4.1 U-11; contract-spec �
       ).rejects.toThrow(/not an approved merchant/i);
     });
 
-    it("throws BadRequestError if merchant has not signed platform terms (MerchantTermsNotSigned / O-031)", async () => {
+    it("prepares a spend to an approved merchant that never signed by wallet (D-69)", async () => {
       vi.spyOn(prisma.walletBinding, "findUnique").mockResolvedValue({
         id: "b-1",
         userId: mockUserId,
@@ -163,20 +163,23 @@ describe("Credit Module (PRD §4.3 C-01 to C-08; PRD §4.1 U-11; contract-spec �
       vi.spyOn(publicClient, "readContract").mockImplementation(async ({ functionName, args }: any) => {
         if (functionName === "approvedUser") return true;
         if (functionName === "termsSigned") {
-          // User has signed, but merchant has not
           if (args?.[0]?.toLowerCase() === merchantWallet.toLowerCase()) return false;
           return true;
         }
         if (functionName === "approvedMerchant") return true;
+        if (functionName === "available") return 100_000_000n;
         return 0n;
       });
+      vi.spyOn(publicClient, "call").mockResolvedValue({ data: "0x" } as any);
+      vi.spyOn(publicClient, "estimateGas").mockResolvedValue(75_000n);
+      vi.spyOn(publicClient, "getGasPrice").mockResolvedValue(1_000_000_000n);
+      vi.spyOn(publicClient, "getBalance").mockResolvedValue(100_000_000_000_000_000n);
 
-      await expect(
-        CreditService.prepareSpendCalldata(mockUserId, {
-          merchantAddress: merchantWallet,
-          amount: "50.000000",
-        })
-      ).rejects.toThrow(/merchant has not signed/i);
+      const res = await CreditService.prepareSpendCalldata(mockUserId, {
+        merchantAddress: merchantWallet,
+        amount: "50.000000",
+      });
+      expect(res).toBeTruthy();
     });
 
     it("throws BadRequestError (InsufficientAvailableCredit) if spend exceeds user available credit", async () => {

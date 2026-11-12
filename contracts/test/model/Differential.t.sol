@@ -28,6 +28,7 @@ contract DifferentialTest is FixtureBase {
     uint256 internal termsVersion;
     uint256 internal donated;
     uint256 internal action; // the step being taken, for the mix counts
+    bytes32 internal constant AGREE = keccak256("signed-agreement");
     mapping(uint256 => uint256) internal accepted;
     mapping(uint256 => uint256) internal refused;
 
@@ -70,12 +71,10 @@ contract DifferentialTest is FixtureBase {
         for (uint256 i; i < 3; i++) {
             _step(
                 admin,
-                abi.encodeCall(IIndicoLedger.setMerchantApproved, (who[6 + i], true)),
-                model.setMerchantApproved(admin, who[6 + i], true)
+                abi.encodeCall(IIndicoLedger.setMerchantApproved, (who[6 + i], true, AGREE)),
+                model.setMerchantApproved(admin, who[6 + i], true, AGREE)
             );
-            if (!ledger.termsSigned(who[6 + i])) {
-                _sign(who[6 + i]);
-            }
+            if (i != 0) _sign(who[6 + i]); // one merchant has only its recorded agreement (D-69)
         }
     }
 
@@ -100,7 +99,8 @@ contract DifferentialTest is FixtureBase {
             seed = uint256(keccak256(abi.encode(seed, k)));
             _randomStep(seed);
         }
-        for (uint256 i; i <= 16; i++) {
+        for (uint256 i; i <= 20; i++) {
+            if (i >= 17 && i <= 19) continue; // a donation and two clock moves: no ledger call
             if (i == 14) continue; // terms: a new version or a signature, counted together below
             assertGt(accepted[i], 0, string.concat("never accepted: action ", vm.toString(i)));
             assertGt(refused[i], 0, string.concat("never refused: action ", vm.toString(i)));
@@ -160,7 +160,7 @@ contract DifferentialTest is FixtureBase {
         uint256 r2 = uint256(keccak256(abi.encode(r, 2)));
         address c = _anyone(r1); // the caller: anyone, so access refusals are exercised
         address x = _anyone(r2 >> 8); // a second address: target, merchant, new wallet
-        action = r % 20;
+        action = r % 22;
         // Mostly the role the action needs, so most calls can succeed; 1 in 6 anyone (_role).
         if (
             action == 0 || action == 3 || action == 7 || action == 8 || action == 14 || action == 15
@@ -172,6 +172,7 @@ contract DifferentialTest is FixtureBase {
         if (action == 2) x = _role(r2 >> 8, (r2 >> 4) % 2 == 0 ? USER : MERCHANT);
         if (action == 3) x = _role(r2 >> 8, MERCHANT);
         if (action == 15) x = _role(r2 >> 8, NONE);
+        if (action >= 20) x = _role(r2 >> 8, MERCHANT);
 
         if (action == 0) {
             bytes32 doc = r2 % 9 == 0 && docs > 0
@@ -250,10 +251,12 @@ contract DifferentialTest is FixtureBase {
         } else if (action == 13) {
             address by = _adminMostly(r1, c);
             bool approve = r2 % 4 != 0;
+            bytes32 h = keccak256(abi.encode("agreement", (r2 >> 16) % 3));
+            if (approve == (r2 % 7 == 0)) h = 0; // 1 in 7: the wrong hash for the direction
             _step(
                 by,
-                abi.encodeCall(IIndicoLedger.setMerchantApproved, (x, approve)),
-                model.setMerchantApproved(by, x, approve)
+                abi.encodeCall(IIndicoLedger.setMerchantApproved, (x, approve, h)),
+                model.setMerchantApproved(by, x, approve, h)
             );
         } else if (action == 14) {
             if (r2 % 3 == 0) _newTerms();
@@ -284,10 +287,24 @@ contract DifferentialTest is FixtureBase {
         } else if (action == 18) {
             vm.warp(vm.getBlockTimestamp() + 1 + r2 % 120 days);
             _compare();
+        } else if (action == 20) {
+            if (r2 % 3 == 0) _sendToBox(x, r2 >> 8);
+            _step(c, abi.encodeCall(IIndicoLedger.sweep, (x)), model.sweep(x)); // anyone sweeps
+        } else if (action == 21) {
+            _sendToBox(x, r2 >> 8);
+            _compare();
         } else {
             _warpToEdge(r2);
             _compare();
         }
+    }
+
+    /// @dev A plain transfer into the merchant's box, if it has one (D-70).
+    function _sendToBox(address m, uint256 r) internal {
+        if (!model.hasBox(m)) return;
+        uint256 v = r % 4 == 0 ? 1 : 1 + r % 1e12;
+        usdc.mint(ledger.depositBoxOf(m), v);
+        model.sendToBox(m, v);
     }
 
     // ================================================================== the comparison
@@ -340,6 +357,10 @@ contract DifferentialTest is FixtureBase {
             assertEq(ledger.lockedCredit(a), model.locked(a), "lockedCredit");
             assertEq(ledger.shares(a), model.shares(a), "shares");
             assertEq(ledger.accountRefOf(a), model.accountRefOf(a), "accountRefOf");
+            assertEq(ledger.merchantAgreement(a), model.merchantAgreement(a), "merchantAgreement");
+            address box = ledger.depositBoxOf(a);
+            assertEq(box != address(0), model.hasBox(a), "depositBoxOf");
+            if (box != address(0)) assertEq(usdc.balanceOf(box), model.boxUsdc(a), "box USDC");
         }
         for (uint256 i; i < refs.length; i++) {
             assertEq(

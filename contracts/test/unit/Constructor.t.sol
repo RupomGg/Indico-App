@@ -328,7 +328,7 @@ contract ConstructorTest is StateSnapshot {
     function _calls(address caller) internal view returns (bytes[] memory c) {
         bytes32 adminRole = ledger.ADMIN_ROLE();
         bytes32 guardianRole = ledger.GUARDIAN_ROLE();
-        c = new bytes[](28);
+        c = new bytes[](29);
         c[0] = abi.encodeCall(IIndicoLedger.pause, ());
         c[1] = abi.encodeCall(IIndicoLedger.unpause, ());
         c[2] = abi.encodeCall(IAccessControl.grantRole, (adminRole, caller));
@@ -343,7 +343,9 @@ contract ConstructorTest is StateSnapshot {
         c[11] = abi.encodeCall(IAccessControlDefaultAdminRules.rollbackDefaultAdminDelay, ());
         c[12] = abi.encodeCall(IIndicoLedger.setTermsHash, (keccak256("sweep")));
         c[13] = abi.encodeCall(IIndicoLedger.setUserApproved, (caller, true, _accountRef(caller)));
-        c[14] = abi.encodeCall(IIndicoLedger.setMerchantApproved, (caller, true));
+        c[14] = abi.encodeCall(
+            IIndicoLedger.setMerchantApproved, (caller, true, keccak256("signed-agreement"))
+        );
         c[15] = abi.encodeCall(IIndicoLedger.signTerms, (keccak256("sweep")));
         c[16] = abi.encodeCall(IIndicoLedger.registerAsset, (keccak256("sweep-doc"), 0, 1_000e6));
         c[17] = abi.encodeCall(IIndicoLedger.adminIssueCredit, (caller, 1e6, "sweep"));
@@ -360,6 +362,7 @@ contract ConstructorTest is StateSnapshot {
             IIndicoLedger.adminMoveAccount,
             (caller, address(uint160(uint256(keccak256("sweepTo")))), _accountRef(caller))
         );
+        c[28] = abi.encodeCall(IIndicoLedger.sweep, (merchantA));
     }
 
     function _everyone() internal returns (address[] memory w) {

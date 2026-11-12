@@ -523,3 +523,43 @@ describe("Real-Time On-Chain Event Indexer & State Projector (PRD §2, §5)", ()
     });
   });
 });
+
+describe("Deposit box keeper (D-70)", () => {
+  const boxes: Record<string, string> = {
+    "0x00000000000000000000000000000000000000a1": "0x00000000000000000000000000000000000000b1",
+    "0x00000000000000000000000000000000000000a2": "0x00000000000000000000000000000000000000b2",
+    "0x00000000000000000000000000000000000000a3": "0x0000000000000000000000000000000000000000",
+  };
+  const held: Record<string, bigint> = {
+    "0x00000000000000000000000000000000000000b1": 500n,
+    "0x00000000000000000000000000000000000000b2": 0n,
+  };
+  const client = {
+    readContract: vi.fn(async (q: any) =>
+      q.functionName === "depositBoxOf" ? boxes[q.args[0]] : held[q.args[0]]
+    ),
+  };
+
+  it("sweeps only boxes holding USDC, names the merchant, never an amount", async () => {
+    const keeper = { writeContract: vi.fn(async () => "0xhash") };
+    const swept = await IndexerService.sweepDepositBoxes(Object.keys(boxes), client as any, keeper as any);
+    expect(swept).toEqual(["0x00000000000000000000000000000000000000a1"]);
+    expect(keeper.writeContract).toHaveBeenCalledTimes(1);
+    const call = (keeper.writeContract.mock.calls[0] as any[])[0];
+    expect(call.functionName).toBe("sweep");
+    expect(call.args).toEqual(["0x00000000000000000000000000000000000000a1"]);
+  });
+
+  it("does nothing without a keeper key, and one failed sweep does not stop the rest", async () => {
+    expect(await IndexerService.sweepDepositBoxes(Object.keys(boxes), client as any, undefined)).toEqual([]);
+    held["0x00000000000000000000000000000000000000b2"] = 7n;
+    const keeper = {
+      writeContract: vi.fn(async (q: any) => {
+        if (q.args[0].endsWith("a1")) throw new Error("reverted");
+        return "0xhash";
+      }),
+    };
+    const swept = await IndexerService.sweepDepositBoxes(Object.keys(boxes), client as any, keeper as any);
+    expect(swept).toEqual(["0x00000000000000000000000000000000000000a2"]);
+  });
+});

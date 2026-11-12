@@ -374,6 +374,25 @@
   },
   {
     "type": "function",
+    "name": "depositBoxOf",
+    "inputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "extend",
     "inputs": [
       {
@@ -582,6 +601,25 @@
         "name": "",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "merchantAgreement",
+    "inputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
       }
     ],
     "stateMutability": "view"
@@ -850,6 +888,11 @@
         "name": "approved",
         "type": "bool",
         "internalType": "bool"
+      },
+      {
+        "name": "agreementHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
       }
     ],
     "outputs": [],
@@ -1000,17 +1043,12 @@
   },
   {
     "type": "function",
-    "name": "syncDeposit",
+    "name": "sweep",
     "inputs": [
       {
         "name": "merchant",
         "type": "address",
         "internalType": "address"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "internalType": "uint256"
       }
     ],
     "outputs": [],
@@ -1360,6 +1398,25 @@
   },
   {
     "type": "event",
+    "name": "DepositBoxAssigned",
+    "inputs": [
+      {
+        "name": "merchant",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "box",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "Deposited",
     "inputs": [
       {
@@ -1503,6 +1560,31 @@
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "MerchantAgreementRecorded",
+    "inputs": [
+      {
+        "name": "merchant",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "termsHash",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "agreementHash",
+        "type": "bytes32",
+        "indexed": false,
+        "internalType": "bytes32"
       }
     ],
     "anonymous": false
@@ -1888,12 +1970,22 @@
   },
   {
     "type": "error",
+    "name": "AgreementHashOnRevoke",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "AlreadySigned",
     "inputs": []
   },
   {
     "type": "error",
     "name": "AssetAlreadyRegistered",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "Create2EmptyBytecode",
     "inputs": []
   },
   {
@@ -1950,6 +2042,11 @@
   },
   {
     "type": "error",
+    "name": "FailedDeployment",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "InsufficientAvailableCredit",
     "inputs": [
       {
@@ -1959,6 +2056,22 @@
       },
       {
         "name": "available",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InsufficientBalance",
+    "inputs": [
+      {
+        "name": "balance",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "needed",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -2048,17 +2161,6 @@
     "type": "error",
     "name": "MathOverflow",
     "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "MerchantTermsNotSigned",
-    "inputs": [
-      {
-        "name": "merchant",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
   },
   {
     "type": "error",
@@ -2239,6 +2341,11 @@
   {
     "type": "error",
     "name": "ZeroAddress",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ZeroAgreementHash",
     "inputs": []
   },
   {

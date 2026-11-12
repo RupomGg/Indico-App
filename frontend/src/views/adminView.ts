@@ -19,6 +19,14 @@ import {
 export const INDICO_LEDGER_ADDRESS = "0x422D36E2198863C5b2A6B8E2865fBf5196de96cF";
 export const INDICO_LEDGER_BASESCAN = "https://sepolia.basescan.org/address/0x422D36E2198863C5b2A6B8E2865fBf5196de96cF";
 
+/** SHA-256 of the chosen file as a 0x-prefixed bytes32 (the signed agreement, D-69). */
+async function fileSha256(inputId: string): Promise<`0x${string}`> {
+  const file = (document.getElementById(inputId) as HTMLInputElement | null)?.files?.[0];
+  if (!file) throw new Error("Choose the merchant's signed agreement document");
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", await file.arrayBuffer()));
+  return `0x${Array.from(digest, (b) => b.toString(16).padStart(2, "0")).join("")}`;
+}
+
 export class AdminView {
   private static container: HTMLElement;
   private static adminData: any = null;
@@ -562,7 +570,7 @@ export class AdminView {
   private static renderMerchantsTab(container: HTMLElement) {
     const INDICO_LEDGER_ADDRESS = "0x422D36E2198863C5b2A6B8E2865fBf5196de96cF";
     const SET_MERCHANT_APPROVED_ABI = parseAbi([
-      "function setMerchantApproved(address m, bool approved) external"
+      "function setMerchantApproved(address m, bool approved, bytes32 agreementHash) external"
     ]);
     const SIGN_TERMS_ABI = parseAbi([
       "function signTerms(bytes32 acceptedHash) external"
@@ -596,6 +604,11 @@ export class AdminView {
               <input type="text" id="merchant-wallet" class="form-input form-mono" placeholder="0x..." required />
             </div>
 
+            <div class="form-group">
+              <label class="form-label">Signed Agreement (PDF or image)</label>
+              <input type="file" id="merchant-agreement-file" class="form-input" accept=".pdf,.png,.jpg,.jpeg" required />
+            </div>
+
             <div style="background: rgba(255, 255, 255, 0.02); border: 1px solid var(--border-subtle); border-radius: 8px; padding: 10px 12px; margin-top: 2px;">
               <div style="font-size: 11.5px; font-weight: 700; color: #fff; margin-bottom: 6px;">Initial Service Offering (Optional)</div>
               <div class="grid-2" style="gap: 8px; margin-bottom: 6px;">
@@ -606,7 +619,7 @@ export class AdminView {
             </div>
 
             <div style="font-size: 11.5px; color: #a7f3d0; background: rgba(16, 185, 129, 0.08); border: 1px solid rgba(16, 185, 129, 0.2); border-radius: 6px; padding: 8px 12px; margin: 4px 0;">
-              ✓ <strong>Unified Onboarding:</strong> Merchant physical agreement is signed off-platform and recorded on their behalf. Connected Admin wallet will broadcast on-chain verification (<code>setMerchantApproved</code>) simultaneously.
+              ✓ <strong>Unified Onboarding:</strong> The merchant signs the agreement off-platform. Its SHA-256 is recorded on-chain with the approval (<code>setMerchantApproved</code>), in one admin transaction, which also creates the merchant's deposit address.
             </div>
 
             <button type="submit" class="btn btn-primary" style="margin-top: 4px; font-weight: 700;">
@@ -748,6 +761,7 @@ export class AdminView {
       const serviceDesc = (document.getElementById("merchant-service-desc") as HTMLInputElement)?.value.trim();
 
       try {
+        const agreementHash = await fileSha256("merchant-agreement-file");
         showToast(`Onboarding merchant "${name}"...`, "info");
         const payload: any = {
           name,
@@ -772,7 +786,7 @@ export class AdminView {
           const data = encodeFunctionData({
             abi: SET_MERCHANT_APPROVED_ABI,
             functionName: "setMerchantApproved",
-            args: [walletAddress as any, true],
+            args: [walletAddress as any, true, agreementHash],
           });
           const txHash = await WalletManager.sendPreparedTx({
             to: INDICO_LEDGER_ADDRESS,
@@ -1035,15 +1049,20 @@ export class AdminView {
             <p style="font-size: 12.5px; color: var(--text-muted); line-height: 1.6;">
               Please ensure your connected wallet has admin authorization to sign this transaction.
             </p>
+            <div class="form-group">
+              <label class="form-label">Signed Agreement (its SHA-256 is recorded on-chain)</label>
+              <input type="file" id="approve-agreement-file" class="form-input" accept=".pdf,.png,.jpg,.jpeg" />
+            </div>
           `,
           confirmText: "Broadcast setMerchantApproved",
           onConfirm: async () => {
             try {
+              const agreementHash = await fileSha256("approve-agreement-file");
               showToast("Preparing setMerchantApproved calldata...", "info");
               const data = encodeFunctionData({
                 abi: SET_MERCHANT_APPROVED_ABI,
                 functionName: "setMerchantApproved",
-                args: [wallet as any, true],
+                args: [wallet as any, true, agreementHash],
               });
               const txHash = await WalletManager.sendPreparedTx({
                 to: INDICO_LEDGER_ADDRESS,
@@ -1109,9 +1128,7 @@ export class AdminView {
   // --- SUB-TAB 3: POOL & LOANS SUPERVISION (AD-13, AD-15, AD-21) ---
   private static renderLoansTab(container: HTMLElement) {
     const INDICO_LEDGER_ADDRESS = "0x422D36E2198863C5b2A6B8E2865fBf5196de96cF";
-    const SYNC_DEPOSIT_ABI = parseAbi([
-      "function syncDeposit(address merchant, uint256 amount) external"
-    ]);
+    const SWEEP_ABI = parseAbi(["function sweep(address merchant) external"]);
 
     container.innerHTML = `
       <!-- Escrow Pool & Tangem / MetaMask Direct Transfer Overview -->
@@ -1140,16 +1157,17 @@ export class AdminView {
             <div style="font-size: 11.5px; color: var(--text-muted); margin-top: 4px;">Across ${this.loansData.filter((l: any) => l.status === "ACTIVE").length} active loan(s)</div>
           </div>
           <div style="background: rgba(255,255,255,0.03); border: 1px solid var(--border-subtle); border-radius: 8px; padding: 14px;">
-            <div style="font-size: 11px; text-transform: uppercase; color: var(--text-muted); font-weight: 700; letter-spacing: 0.5px;">Merchant Deposit Address</div>
-            <div style="font-size: 12px; font-family: var(--font-mono); color: #cbd5e1; margin-top: 6px; word-break: break-all;">
-              ${INDICO_LEDGER_ADDRESS}
-            </div>
-            <button id="btn-copy-escrow-addr" class="btn btn-sm btn-outline" style="margin-top: 8px; width: 100%; font-size: 11px;">📋 Copy Address for Merchants</button>
+            <div style="font-size: 11px; text-transform: uppercase; color: var(--text-muted); font-weight: 700; letter-spacing: 0.5px;">Merchant Deposit Addresses</div>
+            <div style="font-size: 11.5px; color: #fbbf24; margin-top: 6px;">Each merchant sends USDC to its own address below, never to the ledger (USDC sent to the ledger is lost).</div>
+            ${this.merchantsList
+              .filter((m: any) => m.depositBox)
+              .map((m: any) => `<div style="font-size: 11.5px; margin-top: 6px;">${m.name}: <code style="word-break: break-all;">${m.depositBox}</code></div>`)
+              .join("")}
           </div>
         </div>
 
         <div style="display: flex; gap: 10px; justify-content: flex-end; align-items: center; border-top: 1px solid var(--border-subtle); padding-top: 14px;">
-          <button id="btn-manual-sync-deposit" class="btn btn-sm btn-purple" style="font-size: 12px;">⚡ Manual Sync Merchant Deposit</button>
+          <button id="btn-manual-sync-deposit" class="btn btn-sm btn-purple" style="font-size: 12px;">⚡ Sweep a Merchant's Deposit Address</button>
         </div>
       </div>
 
@@ -1218,59 +1236,32 @@ export class AdminView {
       </div>
     `;
 
-    // Copy Escrow Address
-    document.getElementById("btn-copy-escrow-addr")?.addEventListener("click", () => {
-      navigator.clipboard.writeText(INDICO_LEDGER_ADDRESS);
-      showToast("Escrow address copied to clipboard!", "success");
-    });
-
-
-
-    // Manual Sync Merchant Deposit Modal
+    // Sweep a merchant's deposit address (D-70). Anyone may call it; the keeper normally does.
     document.getElementById("btn-manual-sync-deposit")?.addEventListener("click", () => {
       showModal({
-        title: "⚡ Manual Sync Merchant Direct Deposit (ADMIN_ROLE)",
+        title: "⚡ Sweep Merchant Deposit Address",
         contentHtml: `
-          <div style="background: rgba(168, 85, 247, 0.1); border: 1px solid rgba(168, 85, 247, 0.3); border-radius: 8px; padding: 14px; margin-bottom: 14px; font-size: 13px; color: #d8b4fe;">
-            <strong>ON-CHAIN POOL DEPOSIT SYNC (syncDeposit):</strong><br/>
-            Credits USDC that a merchant sent directly to the escrow contract from Tangem or MetaMask.
+          <div style="font-size: 13px; margin-bottom: 12px;">
+            Moves everything in the merchant's deposit address into the pool, as that merchant's shares.
           </div>
-          <div style="display: flex; flex-direction: column; gap: 12px; font-size: 13px;">
-            <div class="form-group">
-              <label class="form-label">Approved Merchant</label>
-              <select id="sync-merchant-wallet" class="form-select">
-                ${this.merchantsList.map((m) => `<option value="${m.walletAddress}">${m.name} (${truncateAddress(m.walletAddress)})</option>`).join("")}
-              </select>
-            </div>
-            <div class="form-group">
-              <label class="form-label">Amount (USDC)</label>
-              <input type="text" id="sync-deposit-amount" class="form-input form-mono" placeholder="5.000000" />
-            </div>
+          <div class="form-group">
+            <label class="form-label">Approved Merchant</label>
+            <select id="sync-merchant-wallet" class="form-select">
+              ${this.merchantsList.map((m) => `<option value="${m.walletAddress}">${m.name} (${truncateAddress(m.walletAddress)})</option>`).join("")}
+            </select>
           </div>
         `,
-        confirmText: "Broadcast syncDeposit",
+        confirmText: "Broadcast sweep",
         onConfirm: async () => {
           const merchantWallet = (document.getElementById("sync-merchant-wallet") as HTMLSelectElement)?.value;
-          const amountStr = (document.getElementById("sync-deposit-amount") as HTMLInputElement)?.value.trim();
-
           if (!merchantWallet) throw new Error("Select a merchant");
-          if (!amountStr || isNaN(Number(amountStr)) || Number(amountStr) <= 0) throw new Error("Enter a valid USDC amount");
-
-          const units = BigInt(Math.floor(Number(amountStr) * 1e6));
-
-          showToast("Preparing syncDeposit transaction...", "info");
           const data = encodeFunctionData({
-            abi: SYNC_DEPOSIT_ABI,
-            functionName: "syncDeposit",
-            args: [merchantWallet as any, units],
+            abi: SWEEP_ABI,
+            functionName: "sweep",
+            args: [merchantWallet as any],
           });
-
-          const txHash = await WalletManager.sendPreparedTx({
-            to: INDICO_LEDGER_ADDRESS,
-            data,
-          });
-
-          showToast(`Deposit synced on-chain! Tx: ${truncateAddress(txHash)}`, "success");
+          const txHash = await WalletManager.sendPreparedTx({ to: INDICO_LEDGER_ADDRESS, data });
+          showToast(`Deposit swept into the pool! Tx: ${truncateAddress(txHash)}`, "success");
           await this.refresh();
         },
       });

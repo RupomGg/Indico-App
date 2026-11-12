@@ -12,6 +12,8 @@ import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {IIndicoLedger} from "./interfaces/IIndicoLedger.sol";
 import {LedgerMath} from "./lib/Math.sol";
+import {MerchantDepositBox} from "./MerchantDepositBox.sol";
+import {Create2} from "@openzeppelin/contracts/utils/Create2.sol";
 import {
     ADMIN_TRANSFER_DELAY,
     USDC_DECIMALS,
@@ -56,6 +58,8 @@ contract IndicoLedger is IIndicoLedger, AccessControlDefaultAdminRules, Pausable
     }
 
     IERC20 public immutable usdc;
+    /// @dev keccak256 of a deposit box's init code, for its CREATE2 address (D-70).
+    bytes32 private immutable boxCodeHash;
 
     bytes32 public termsHash;
 
@@ -94,6 +98,11 @@ contract IndicoLedger is IIndicoLedger, AccessControlDefaultAdminRules, Pausable
     mapping(address => bytes32) public accountRefOf;
     mapping(bytes32 => address) public walletOfAccount;
 
+    /// @notice SHA-256 of each merchant's latest signed agreement, recorded at approval (D-69).
+    mapping(address => bytes32) public merchantAgreement;
+    /// @notice Each merchant's deposit box, created on its first approval (D-70).
+    mapping(address => address) public depositBoxOf;
+
     // ---------------------------------------------------------------------------------------
     // Constructor, contract-spec 6.0
     // ---------------------------------------------------------------------------------------
@@ -108,6 +117,7 @@ contract IndicoLedger is IIndicoLedger, AccessControlDefaultAdminRules, Pausable
         )
     {
         usdc = usdc_;
+        boxCodeHash = keccak256(_boxCode(usdc_));
         _grantRole(ADMIN_ROLE, admin_);
         _grantRole(GUARDIAN_ROLE, guardian_);
     }
@@ -164,22 +174,51 @@ contract IndicoLedger is IIndicoLedger, AccessControlDefaultAdminRules, Pausable
     }
 
     /// @notice Approve or revoke a merchant. A revoked merchant can still withdraw.
-    /// @dev Not `whenNotPaused` (D-24). Repeats are allowed and emit (D-20).
-    ///      Admin approves on behalf of merchants executing terms off-platform (AD-04, AD-07).
-    function setMerchantApproved(address m, bool approved) external onlyRole(ADMIN_ROLE) {
+    /// @dev Not `whenNotPaused` (D-24). Repeats are allowed and emit (D-20). An approval records
+    ///      the SHA-256 of the merchant's signed agreement, never a wallet signature (D-69), and
+    ///      the first one assigns the merchant's deposit box address (D-70). A revoke takes a
+    ///      zero hash.
+    function setMerchantApproved(address m, bool approved, bytes32 agreementHash)
+        external
+        onlyRole(ADMIN_ROLE)
+    {
         _admit(m, approved, ROLE_MERCHANT);
+        if (approved) {
+            if (agreementHash == bytes32(0)) revert IIndicoLedger.ZeroAgreementHash();
+            merchantAgreement[m] = agreementHash;
+            emit IIndicoLedger.MerchantAgreementRecorded(m, termsHash, agreementHash);
+            if (depositBoxOf[m] == address(0)) {
+                // CREATE2, salt = the merchant: the address can receive USDC at once; the box is
+                // deployed by the first `sweep`, so approving makes no external call.
+                address box = address(
+                    uint160(
+                        uint256(
+                            keccak256(
+                                abi.encodePacked(
+                                    bytes1(0xff), address(this), _boxSalt(m), boxCodeHash
+                                )
+                            )
+                        )
+                    )
+                );
+                depositBoxOf[m] = box;
+                emit IIndicoLedger.DepositBoxAssigned(m, box);
+            }
+        } else if (agreementHash != bytes32(0)) {
+            revert IIndicoLedger.AgreementHashOnRevoke();
+        }
         // Linter cannot match an event to a mapping write; MerchantApprovalSet follows (D-30).
         // forge-lint: disable-next-line(missing-events-access-control)
         approvedMerchant[m] = approved;
-        if (approved) {
-            termsSigned[m] = true;
-            bytes32 current = termsHash;
-            if (current != bytes32(0)) {
-                signedTermsHash[m] = current;
-                emit IIndicoLedger.TermsSigned(m, current, block.timestamp);
-            }
-        }
         emit IIndicoLedger.MerchantApprovalSet(m, approved);
+    }
+
+    function _boxSalt(address m) private pure returns (bytes32) {
+        return bytes32(uint256(uint160(m)));
+    }
+
+    function _boxCode(IERC20 token) private pure returns (bytes memory) {
+        return bytes.concat(type(MerchantDepositBox).creationCode, abi.encode(token));
     }
 
     /// @dev Zero is never valid. An approval also refuses the ledger and USDC addresses (D-23)
@@ -342,14 +381,13 @@ contract IndicoLedger is IIndicoLedger, AccessControlDefaultAdminRules, Pausable
 
     /// @notice Pay `amount` of the caller's available credit to an approved merchant.
     /// @dev No fee: the merchant receives exactly `amount` (S-05). Paying yourself is impossible,
-    ///      since a user is never an approved merchant (D-22). The merchant must have signed the
-    ///      terms (D-37). `block.timestamp` in the receipt is a record only (D-26).
+    ///      since a user is never an approved merchant (D-22). An approved merchant always has a
+    ///      recorded agreement (D-69). `block.timestamp` in the receipt is a record only (D-26).
     function spend(address merchant, uint256 amount) external whenNotPaused {
         if (!approvedUser[msg.sender]) revert IIndicoLedger.NotApprovedUser();
         if (!termsSigned[msg.sender]) revert IIndicoLedger.TermsNotSigned();
         if (merchant == address(0)) revert IIndicoLedger.ZeroAddress();
         if (!approvedMerchant[merchant]) revert IIndicoLedger.NotApprovedMerchant();
-        if (!termsSigned[merchant]) revert IIndicoLedger.MerchantTermsNotSigned(merchant);
         if (amount == 0) revert IIndicoLedger.ZeroAmount();
         uint256 avail = credit[msg.sender] - lockedCredit[msg.sender];
         if (amount > avail) revert IIndicoLedger.InsufficientAvailableCredit(amount, avail);
@@ -366,56 +404,44 @@ contract IndicoLedger is IIndicoLedger, AccessControlDefaultAdminRules, Pausable
     // ---------------------------------------------------------------------------------------
 
     /// @notice Deposit `amount` USDC; shares are minted on what actually arrived.
-    /// @dev The caller must `approve` the ledger on the USDC contract first. The received amount
-    ///      is the change in balance, so a fee-on-transfer token is credited what it delivered;
-    ///      `nonReentrant` keeps anything else from landing in between.
+    /// @dev The caller must `approve` the ledger on the USDC contract first.
     function deposit(uint256 amount) external nonReentrant whenNotPaused {
         if (!approvedMerchant[msg.sender]) revert IIndicoLedger.NotApprovedMerchant();
-        if (!termsSigned[msg.sender]) revert IIndicoLedger.TermsNotSigned();
         if (amount == 0) revert IIndicoLedger.ZeroAmount();
-
         uint256 balanceBefore = usdc.balanceOf(address(this));
         usdc.safeTransferFrom(msg.sender, address(this), amount);
-        uint256 received = usdc.balanceOf(address(this)) - balanceBefore;
+        _mintShares(msg.sender, usdc.balanceOf(address(this)) - balanceBefore);
+    }
+
+    /// @notice Move everything in `merchant`'s deposit box into the pool as `merchant`'s shares
+    ///         (D-70). Anyone may call it: the box's USDC can only become its merchant's.
+    /// @dev Every approved merchant has a box address, so `NotApprovedMerchant` also covers "no
+    ///      box". The first sweep deploys the box. An empty box delivers nothing, which is worth
+    ///      no share: `ZeroShares`.
+    function sweep(address merchant) external nonReentrant whenNotPaused {
+        if (!approvedMerchant[merchant]) revert IIndicoLedger.NotApprovedMerchant();
+        address box = depositBoxOf[merchant];
+        if (box.code.length == 0) box = Create2.deploy(0, _boxSalt(merchant), _boxCode(usdc));
+        uint256 balanceBefore = usdc.balanceOf(address(this));
+        MerchantDepositBox(box).release();
+        _mintShares(merchant, usdc.balanceOf(address(this)) - balanceBefore);
+    }
+
+    /// @dev Mints shares to `merchant` for `received`, the change in the ledger's balance, so a
+    ///      fee-on-transfer token is credited what it delivered; both callers are `nonReentrant`,
+    ///      so nothing else lands in between.
+    function _mintShares(address merchant, uint256 received) private {
         uint256 minted = _toShares(received, false);
         // Zero is exactly the case refused; nothing is gained by hitting it (D-40).
         // slither-disable-next-line incorrect-equality
         if (minted == 0) revert IIndicoLedger.ZeroShares();
 
-        shares[msg.sender] += minted;
+        shares[merchant] += minted;
         totalShares += minted;
         poolUsdc += received;
         // After the transfer by necessity: it reports what arrived. nonReentrant (D-40).
         // forge-lint: disable-next-line(reentrancy-events)
-        emit IIndicoLedger.Deposited(msg.sender, received, minted);
-    }
-
-    /// @notice Credit USDC that arrived directly into the contract from an approved merchant's wallet transfer.
-    /// @dev Allows merchants using mobile/hardware wallets (e.g. Tangem, MetaMask) to fund the escrow
-    ///      pool via standard wallet "Send" without requiring a custom dApp interface.
-    ///      Callable by the merchant or ADMIN_ROLE (automated keeper).
-    function syncDeposit(address merchant, uint256 amount) external nonReentrant whenNotPaused {
-        if (msg.sender != merchant && !hasRole(ADMIN_ROLE, msg.sender)) {
-            revert IIndicoLedger.NotApprovedMerchant();
-        }
-        if (!approvedMerchant[merchant]) revert IIndicoLedger.NotApprovedMerchant();
-        if (!termsSigned[merchant]) revert IIndicoLedger.TermsNotSigned();
-        if (amount == 0) revert IIndicoLedger.ZeroAmount();
-
-        uint256 currentBalance = usdc.balanceOf(address(this));
-        if (currentBalance < poolUsdc + amount) {
-            revert IIndicoLedger.InsufficientLiquidity(
-                amount, currentBalance > poolUsdc ? currentBalance - poolUsdc : 0
-            );
-        }
-
-        uint256 minted = _toShares(amount, false);
-        shares[merchant] += minted;
-        totalShares += minted;
-        poolUsdc += amount;
-
-        // forge-lint: disable-next-line(reentrancy-events)
-        emit IIndicoLedger.Deposited(merchant, amount, minted);
+        emit IIndicoLedger.Deposited(merchant, received, minted);
     }
 
     /// @notice Withdraw exactly `assets` USDC, burning the shares they are worth, rounded up

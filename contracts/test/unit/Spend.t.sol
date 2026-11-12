@@ -17,7 +17,7 @@ import {Actors} from "../helpers/Actors.sol";
 /// | the caller itself (D-22)              | NotApprovedMerchant: a user is never a merchant |
 /// | another user                          | NotApprovedMerchant                        |
 /// | revoked merchant                      | NotApprovedMerchant                        |
-/// | approved, terms not signed (D-37)     | MerchantTermsNotSigned(merchant)           |
+/// | approved, never signed by wallet      | paid: its agreement was recorded (D-69)    |
 /// | approved and signed                   | paid                                       |
 /// amount (uint256), available a
 /// | zero                                  | ZeroAmount                                 |
@@ -31,7 +31,7 @@ import {Actors} from "../helpers/Actors.sol";
 /// `totalCredit` unchanged; `Spent` and `MerchantReceipt(..., block.timestamp)` (D-26), nothing
 /// else. A merchant paid by many may exceed CREDIT_CAP (D-27).
 /// Check order: EnforcedPause, NotApprovedUser, TermsNotSigned, ZeroAddress, NotApprovedMerchant,
-/// MerchantTermsNotSigned, ZeroAmount, InsufficientAvailableCredit.
+/// ZeroAmount, InsufficientAvailableCredit.
 /// Every revert leaves the full state snapshot unchanged.
 contract SpendTest is Actors {
     uint256 internal constant BAL = 1_000e6;
@@ -212,20 +212,16 @@ contract SpendTest is Actors {
         );
     }
 
-    /// @dev D-37: an approved merchant who has not signed the terms cannot be paid.
-    function test_merchant_approvedNotSigned_reverts() public {
-        address m = makeAddr("unsignedMerchant");
+    /// @dev D-69: a merchant onboarded with a recorded agreement, which never signed by wallet,
+    ///      can be paid; nothing records a wallet signature for it.
+    function test_merchant_approvedNeverSignedByWallet_paid() public {
+        address m = makeAddr("agreementOnlyMerchant");
         _addActor(m);
         vm.prank(admin);
-        ledger.setMerchantApproved(m, true);
-        vm.store(address(ledger), _key(m, SLOT_TERMS_SIGNED), bytes32(0));
-        vm.store(address(ledger), _key(m, SLOT_SIGNED_TERMS_HASH), bytes32(0));
-        _expectRevertUnchanged(
-            alice, m, 1, abi.encodeWithSelector(IIndicoLedger.MerchantTermsNotSigned.selector, m)
-        );
-        _sign(m);
+        ledger.setMerchantApproved(m, true, AGREEMENT);
+        assertFalse(ledger.termsSigned(m));
         _spend(alice, m, 1);
-        assertEq(ledger.credit(m), 1, "paid once signed");
+        assertEq(ledger.credit(m), 1);
     }
 
     // ================================================================== caller, pause
@@ -299,16 +295,6 @@ contract SpendTest is Actors {
     function test_order_notApprovedMerchantBeforeAmount() public {
         _expectRevertUnchanged(
             alice, bob, 0, abi.encodeWithSelector(IIndicoLedger.NotApprovedMerchant.selector)
-        );
-    }
-
-    function test_order_merchantTermsBeforeAmount() public {
-        address m = makeAddr("unsignedMerchant");
-        vm.prank(admin);
-        ledger.setMerchantApproved(m, true);
-        vm.store(address(ledger), _key(m, SLOT_TERMS_SIGNED), bytes32(0));
-        _expectRevertUnchanged(
-            alice, m, 0, abi.encodeWithSelector(IIndicoLedger.MerchantTermsNotSigned.selector, m)
         );
     }
 

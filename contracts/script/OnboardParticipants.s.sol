@@ -44,7 +44,7 @@ contract OnboardParticipants is Script {
         // 2. Approve Merchant
         if (!ledger.approvedMerchant(TEST_MERCHANT)) {
             console.log("Approving TestMerchant1 as Merchant...");
-            ledger.setMerchantApproved(TEST_MERCHANT, true);
+            ledger.setMerchantApproved(TEST_MERCHANT, true, keccak256("signed-agreement"));
         } else {
             console.log("TestMerchant1 already approved.");
         }

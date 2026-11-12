@@ -167,7 +167,7 @@ contract JourneysTest is Fixture {
         vm.expectRevert(paused);
         ledger.requestLoan(1);
         vm.prank(admin); // setters work while paused (D-24)
-        ledger.setMerchantApproved(merchantB, false);
+        ledger.setMerchantApproved(merchantB, false, bytes32(0));
 
         vm.warp(uint256(due) + 3 days); // the loan falls due during the pause
         vm.prank(guardian);

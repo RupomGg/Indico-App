@@ -22,7 +22,8 @@ import {StateSnapshot} from "../helpers/StateSnapshot.sol";
 /// | while paused (D-24)         |                    | allowed                                    |
 ///
 /// setUserApproved(address user, bool approved, bytes32 accountRef) and
-/// setMerchantApproved(address m, bool approved). The user setter's account-link rules (D-60) are
+/// setMerchantApproved(address m, bool approved, bytes32 agreementHash). Its agreement and deposit
+/// box rules (D-69, D-70) are in `MerchantOnboarding.t.sol`. The user setter's account-link rules (D-60) are
 /// in `AccountLink.t.sol`; here every user call names its test account on approval and the
 /// wallet's current link on revoke.
 /// | Class                                   | approved | Expected                                       |
@@ -80,7 +81,7 @@ contract MembershipTest is StateSnapshot {
 
     function _setMerchant(address a, bool v) internal {
         vm.prank(admin);
-        ledger.setMerchantApproved(a, v);
+        ledger.setMerchantApproved(a, v, v ? AGREEMENT : bytes32(0));
     }
 
     /// @dev Calls the user setter (`asUser`) or the merchant setter as `caller`.
@@ -88,7 +89,7 @@ contract MembershipTest is StateSnapshot {
         bytes32 ref = _refFor(a, v);
         vm.prank(caller);
         if (asUser) ledger.setUserApproved(a, v, ref);
-        else ledger.setMerchantApproved(a, v);
+        else ledger.setMerchantApproved(a, v, v ? AGREEMENT : bytes32(0));
     }
 
     function _flag(bool asUser, address a) internal view returns (bool) {
@@ -251,7 +252,8 @@ contract MembershipTest is StateSnapshot {
         for (uint256 u; u < 2; ++u) {
             vm.recordLogs();
             _set(admin, u == 0, u == 0 ? makeAddr("u1") : makeAddr("m1"), true);
-            assertEq(vm.getRecordedLogs().length, 1);
+            // A merchant's first approval also records its agreement and assigns its box.
+            assertEq(vm.getRecordedLogs().length, u == 0 ? 1 : 3);
         }
     }
 
@@ -384,9 +386,9 @@ contract MembershipTest is StateSnapshot {
         _startDiff();
         _set(admin, userFirst, a, true);
         // A user's first approval also links the wallet and the account both ways (D-60).
-        // A merchant's approval auto-signs terms on-chain.
-        uint256 writeCount = userFirst ? 4 : (ledger.termsHash() != bytes32(0) ? 4 : 3);
-        Write[] memory w = new Write[](writeCount);
+        // A merchant's first approval records its agreement and assigns its box (D-69, D-70).
+        address box = userFirst ? address(0) : ledger.depositBoxOf(a);
+        Write[] memory w = new Write[](4);
         uint256 flag = userFirst ? SLOT_APPROVED_USER : SLOT_APPROVED_MERCHANT;
         w[0] = _w(address(ledger), _key(a, flag), 1);
         w[1] = _w(address(ledger), _key(a, SLOT_PARTICIPANT_ROLE), role);
@@ -396,12 +398,8 @@ contract MembershipTest is StateSnapshot {
                 address(ledger), _key(_accountRef(a), SLOT_WALLET_OF_ACCOUNT), uint256(uint160(a))
             );
         } else {
-            w[2] = _w(address(ledger), _key(a, SLOT_TERMS_SIGNED), 1);
-            if (ledger.termsHash() != bytes32(0)) {
-                w[3] = _w(
-                    address(ledger), _key(a, SLOT_SIGNED_TERMS_HASH), uint256(ledger.termsHash())
-                );
-            }
+            w[2] = _w(address(ledger), _key(a, SLOT_MERCHANT_AGREEMENT), uint256(AGREEMENT));
+            w[3] = _w(address(ledger), _key(a, SLOT_DEPOSIT_BOX_OF), uint256(uint160(box)));
         }
         _assertWrites(w);
         assertEq(ledger.participantRole(a), role);
@@ -409,7 +407,9 @@ contract MembershipTest is StateSnapshot {
         _revertsUnchanged(
             admin,
             userFirst
-                ? abi.encodeCall(IIndicoLedger.setMerchantApproved, (a, true))
+                ? abi.encodeCall(
+                    IIndicoLedger.setMerchantApproved, (a, true, keccak256("signed-agreement"))
+                )
                 : abi.encodeCall(IIndicoLedger.setUserApproved, (a, true, _accountRef(a))),
             abi.encodeWithSelector(IIndicoLedger.ParticipantRoleConflict.selector, a)
         );

@@ -28,6 +28,7 @@ contract Handler is Test {
     uint256 internal constant FUND = 1e18; // USDC per actor: never the limit
 
     IIndicoLedger public immutable ledger;
+    bytes32 internal constant AGREEMENT = keccak256("signed-agreement");
     MockUSDC public immutable usdc;
     address public immutable admin;
     address public immutable guardian;
@@ -83,9 +84,9 @@ contract Handler is Test {
         for (uint256 i; i < 3; i++) {
             address m = _newActor(string.concat("inv-merchant", vm.toString(i)));
             vm.prank(admin_);
-            ledger_.setMerchantApproved(m, true);
-            if (!ledger_.termsSigned(m)) {
-                vm.prank(m);
+            ledger_.setMerchantApproved(m, true, AGREEMENT);
+            if (i != 0) {
+                vm.prank(m); // one merchant never signs by wallet: the agreement suffices (D-69)
                 ledger_.signTerms(terms);
             }
             merchants.push(m);
@@ -182,6 +183,37 @@ contract Handler is Test {
         _withdraw(_merchant(who), 0, true);
     }
 
+    /// @dev A merchant sends USDC to its box with a plain transfer. An address with no box (the
+    ///      odd non-merchant `_merchant` returns) has nowhere to send it: skipped.
+    function sendToBox(uint256 who, uint256 amount) external {
+        address box = ledger.depositBoxOf(_merchant(who));
+        if (box == address(0)) return;
+        amount = bound(amount, 1, MAX_AMOUNT);
+        _start();
+        usdc.mint(box, amount); // an ordinary transfer from the merchant's wallet (D-70)
+        _end();
+    }
+
+    /// @dev Anyone sweeps a box; the shares always go to the box's merchant (D-70).
+    function sweep(uint256 who, uint256 callerSeed) external {
+        address m = who % 10 == 0 ? _anyone(who) : _merchant(who);
+        address box = ledger.depositBoxOf(m);
+        uint256 inBox = box == address(0) ? 0 : usdc.balanceOf(box);
+        _start();
+        poolRule = PRICE;
+        uint256 sharesBefore = ledger.shares(m);
+        uint256 cashBefore = ledger.poolUsdc();
+        vm.prank(_anyone(callerSeed));
+        ledger.sweep(m);
+        uint256 minted = ledger.shares(m) - sharesBefore;
+        uint256 received = ledger.poolUsdc() - cashBefore;
+        _check(received == inBox && usdc.balanceOf(box) == 0, "D-70 sweep took the whole box");
+        _check(
+            minted * (aBefore + 1) + (sBefore + VS) >= received * (sBefore + VS), "I11 sweep loss"
+        );
+        _end();
+    }
+
     function donate(uint256 amount) external {
         amount = bound(amount, 1, MAX_AMOUNT);
         _start();
@@ -257,7 +289,9 @@ contract Handler is Test {
         address m = who % 10 == 0 ? _anyone(who) : _merchant(who);
         _start();
         vm.prank(admin);
-        ledger.setMerchantApproved(m, approved);
+        // 1 in 8: the wrong hash for the direction (zero on approval, non-zero on revoke).
+        bytes32 h = (approved != (seed % 8 == 0)) ? AGREEMENT : bytes32(0);
+        ledger.setMerchantApproved(m, approved, h);
         _end();
     }
 

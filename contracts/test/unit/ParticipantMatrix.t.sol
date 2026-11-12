@@ -245,7 +245,7 @@ contract ParticipantMatrixTest is Actors {
         }
         if (c[1] == 8 && Participant(c[0]) == Participant.MerchantRevoked) {
             vm.prank(admin);
-            ledger.setMerchantApproved(who, true);
+            ledger.setMerchantApproved(who, true, keccak256("signed-agreement"));
             _deposit(who, ADMIN_CREDIT);
             _revokeMerchant(who);
         }

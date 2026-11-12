@@ -249,6 +249,7 @@ contract PauseTest is StateSnapshot, Matrix {
     /// | extend              | succeeds      | EnforcedPause               |
     /// | liquidate           | succeeds      | EnforcedPause               |
     /// | adminMoveAccount    | succeeds      | succeeds, works while paused (D-24, D-64) |
+    /// | sweep               | succeeds      | EnforcedPause (D-70)        |
     /// Rows from registerAsset on onboard alice (terms set, approved, signed) before pausing; the
     /// debit and spend rows issue her credit first. The spend and pool rows approve and sign
     /// merchantA, and the two withdraw rows have merchantA deposit 2e6 first, so each paused cell
@@ -258,8 +259,9 @@ contract PauseTest is StateSnapshot, Matrix {
     /// happened, so liquidate reverts LiquidationGracePeriod(now + 7 days) (D-54). The pool rows follow contract-spec 6: every 6.5 function is
     /// `whenNotPaused`, and none is stated otherwise (D-39).
     ///      The adminMoveAccount row approves bob first and moves his account to a fresh wallet.
+    ///      The sweep row puts 1e6 in merchantA's box first; bob sweeps it.
     function test_pauseMatrix_everyCell() public {
-        _crossProduct(_dims(17, 3), _pauseCell);
+        _crossProduct(_dims(18, 3), _pauseCell);
     }
 
     function _pauseCell(uint256[] memory c) internal {
@@ -277,11 +279,9 @@ contract PauseTest is StateSnapshot, Matrix {
         }
         if (c[0] >= 8) {
             vm.prank(admin);
-            ledger.setMerchantApproved(merchantA, true);
-            if (!ledger.termsSigned(merchantA)) {
-                vm.prank(merchantA);
-                ledger.signTerms(keccak256("matrix-terms-v1"));
-            }
+            ledger.setMerchantApproved(merchantA, true, keccak256("signed-agreement"));
+            vm.prank(merchantA);
+            ledger.signTerms(keccak256("matrix-terms-v1"));
         }
         if (c[0] >= 10) {
             vm.prank(merchantA);
@@ -299,13 +299,14 @@ contract PauseTest is StateSnapshot, Matrix {
             vm.prank(admin);
             ledger.setUserApproved(bob, true, _accountRef(bob));
         }
+        if (c[0] == 17) usdc.mint(ledger.depositBoxOf(merchantA), 1e6);
         if (c[1] >= 1) _pause();
         if (c[1] == 2) {
             vm.prank(guardian);
             ledger.unpause();
         }
 
-        uint8[2][17] memory expected = [
+        uint8[2][18] memory expected = [
             [uint8(0), 1],
             [uint8(2), 0],
             [uint8(0), 0],
@@ -322,7 +323,8 @@ contract PauseTest is StateSnapshot, Matrix {
             [uint8(0), 1],
             [uint8(0), 1],
             [uint8(0), 1],
-            [uint8(0), 0]
+            [uint8(0), 0],
+            [uint8(0), 1]
         ];
         uint8 e = expected[c[0]][c[1] == 2 ? 0 : c[1]];
         if (c[0] == 15 && c[1] == 2) e = 3; // the grace after the unpause (D-54)
@@ -358,7 +360,7 @@ contract PauseTest is StateSnapshot, Matrix {
             assertTrue(ledger.approvedUser(target));
         } else if (c[0] == 4) {
             vm.prank(admin);
-            ledger.setMerchantApproved(target, true);
+            ledger.setMerchantApproved(target, true, keccak256("signed-agreement"));
             assertTrue(ledger.approvedMerchant(target));
         } else if (c[0] == 5) {
             vm.prank(alice);
@@ -447,6 +449,14 @@ contract PauseTest is StateSnapshot, Matrix {
             s.approvedUser[3] = false; // bob is actors[3]
             s.participantRole[3] = ROLE_RETIRED;
             s.accountRef[3] = bytes32(0);
+        } else if (c[0] == 17) {
+            vm.prank(bob);
+            ledger.sweep(merchantA);
+            if (e == 0) {
+                assertEq(ledger.poolUsdc(), s.poolUsdc + 1e6);
+                assertEq(usdc.balanceOf(ledger.depositBoxOf(merchantA)), 0);
+                s = _snapshot(); // the sweep's exact writes are asserted in MerchantOnboarding
+            }
         } else {
             vm.prank(bob);
             ledger.liquidate(1);

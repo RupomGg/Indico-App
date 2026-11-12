@@ -109,6 +109,19 @@ contract StrictHandler is Handler {
         _end();
     }
 
+    function s_sweep(uint256 who, uint256 callerSeed) external {
+        address m = merchants[who % merchants.length];
+        uint256 inBox = usdc.balanceOf(ledger.depositBoxOf(m));
+        if (_paused() || !_activeMerchant(m) || inBox == 0 || ledger.assetsToShares(inBox) == 0) {
+            return;
+        }
+        _start();
+        poolRule = PRICE;
+        vm.prank(_anyone(callerSeed));
+        ledger.sweep(m);
+        _end();
+    }
+
     function s_withdraw(uint256 who, uint256 amount) external {
         address m = merchants[who % merchants.length];
         uint256 cash = ledger.poolUsdc();
@@ -210,7 +223,8 @@ contract StrictHandler is Handler {
         address m = merchants[who % merchants.length];
         _start();
         vm.prank(admin);
-        ledger.setMerchantApproved(m, seed % 4 != 1); // a merchant's role is fixed, always valid
+        bool approve = seed % 4 != 1; // a merchant's role is fixed, always valid
+        ledger.setMerchantApproved(m, approve, approve ? AGREEMENT : bytes32(0));
         _end();
     }
 
@@ -270,7 +284,7 @@ contract StrictHandler is Handler {
     }
 
     function _activeMerchant(address m) internal view returns (bool) {
-        return ledger.approvedMerchant(m) && ledger.termsSigned(m);
+        return ledger.approvedMerchant(m); // always has a recorded agreement (D-69)
     }
 
     function _active(uint256 id) internal view returns (bool) {

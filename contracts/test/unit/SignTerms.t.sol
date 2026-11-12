@@ -95,12 +95,10 @@ contract SignTermsTest is StateSnapshot {
         vm.prank(admin);
         ledger.setUserApproved(alice, true, _accountRef(alice));
         vm.prank(admin);
-        ledger.setMerchantApproved(merchantA, true);
+        ledger.setMerchantApproved(merchantA, true, keccak256("signed-agreement"));
         address[5] memory who = [x, alice, merchantA, admin, guardian];
         for (uint256 i; i < who.length; ++i) {
-            if (!ledger.termsSigned(who[i])) {
-                _signAs(who[i], H1);
-            }
+            _signAs(who[i], H1);
             assertTrue(ledger.termsSigned(who[i]));
             assertEq(ledger.signedTermsHash(who[i]), H1);
         }

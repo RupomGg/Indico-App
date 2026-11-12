@@ -1,6 +1,7 @@
 import { decodeEventLog } from "viem";
 import { prisma } from "../../lib/prisma.js";
-import { publicClient, INDICO_LEDGER_ABI, keeperWalletClient, keeperAccount } from "../../lib/viem.js";
+import { zeroAddress, type Address } from "viem";
+import { publicClient, INDICO_LEDGER_ABI, ERC20_ABI, keeperWalletClient } from "../../lib/viem.js";
 import { env } from "../../config/env.js";
 import { projectChainLog } from "./indexer.projector.js";
 import { DecodedChainLog, IndexerStatusResponse } from "./indexer.schemas.js";
@@ -30,6 +31,50 @@ export class IndexerService {
   }
 
   /**
+   * Calls `sweep` for every merchant whose deposit box holds USDC (D-70). `sweep` is
+   * permissionless and the keeper key holds no role: the box's USDC can only ever become its own
+   * merchant's shares, whoever calls. Without a keeper key nothing happens; anyone, the merchant
+   * included, can still call `sweep` from the block explorer.
+   */
+  static async sweepDepositBoxes(
+    merchantWallets: string[],
+    client: Pick<typeof publicClient, "readContract"> = publicClient,
+    keeper: Pick<NonNullable<typeof keeperWalletClient>, "writeContract"> | undefined = keeperWalletClient
+  ) {
+    if (!keeper) return [];
+    const swept: string[] = [];
+    for (const wallet of merchantWallets) {
+      const merchant = wallet as Address;
+      try {
+        const box = (await client.readContract({
+          address: env.INDICO_LEDGER_ADDRESS as Address,
+          abi: INDICO_LEDGER_ABI,
+          functionName: "depositBoxOf",
+          args: [merchant],
+        })) as Address;
+        if (box === zeroAddress) continue;
+        const inBox = (await client.readContract({
+          address: env.USDC_ADDRESS as Address,
+          abi: ERC20_ABI,
+          functionName: "balanceOf",
+          args: [box],
+        })) as bigint;
+        if (inBox === 0n) continue;
+        await keeper.writeContract({
+          address: env.INDICO_LEDGER_ADDRESS as Address,
+          abi: INDICO_LEDGER_ABI,
+          functionName: "sweep",
+          args: [merchant],
+        } as any);
+        swept.push(wallet);
+      } catch (err: any) {
+        console.warn(`[Keeper] sweep skipped for ${wallet}:`, err?.shortMessage || err?.message || err);
+      }
+    }
+    return swept;
+  }
+
+  /**
    * Syncs a specific block range [fromBlock, toBlock] from the blockchain.
    */
   static async syncBlockRange(fromBlock: bigint, toBlock: bigint) {
@@ -37,55 +82,10 @@ export class IndexerService {
       return { syncedBlocks: 0, eventsProcessed: 0 };
     }
 
-    // 1. Check for direct USDC transfers sent to IndicoLedger (e.g. from Tangem / MetaMask wallet "Send")
-    try {
-      const usdcTransferLogs = await publicClient.getLogs({
-        address: env.USDC_ADDRESS as `0x${string}`,
-        event: {
-          type: "event",
-          name: "Transfer",
-          inputs: [
-            { type: "address", name: "from", indexed: true },
-            { type: "address", name: "to", indexed: true },
-            { type: "uint256", name: "value", indexed: false },
-          ],
-        },
-        args: {
-          to: env.INDICO_LEDGER_ADDRESS as `0x${string}`,
-        },
-        fromBlock,
-        toBlock,
-      });
-
-      for (const log of usdcTransferLogs) {
-        const fromAddress = (log.args.from as string).toLowerCase();
-        const value = log.args.value as bigint;
-
-        if (!fromAddress || !value || value === 0n) continue;
-
-        const merchant = await prisma.merchant.findUnique({
-          where: { walletAddress: fromAddress },
-        });
-
-        if (merchant && merchant.isApproved && keeperWalletClient && keeperAccount) {
-          console.log(`⚡ [Keeper] Direct USDC transfer of ${value} units detected from approved merchant ${fromAddress}. Syncing on-chain...`);
-          try {
-            const hash = await keeperWalletClient.writeContract({
-              address: env.INDICO_LEDGER_ADDRESS as `0x${string}`,
-              abi: INDICO_LEDGER_ABI,
-              functionName: "syncDeposit",
-              args: [fromAddress as `0x${string}`, value],
-              account: keeperAccount,
-            });
-            console.log(`✅ [Keeper] syncDeposit broadcasted for merchant ${fromAddress}: ${hash}`);
-          } catch (syncErr: any) {
-            console.warn(`⚠️ [Keeper] syncDeposit skipped or already synced:`, syncErr?.message || syncErr);
-          }
-        }
-      }
-    } catch (err: any) {
-      // Don't interrupt indexer loop if public RPC getLogs encounters rate limit
-    }
+    // 1. Sweep merchant deposit boxes into the pool (D-70).
+    await IndexerService.sweepDepositBoxes(
+      (await prisma.merchant.findMany({ where: { isApproved: true } })).map((m) => m.walletAddress)
+    );
 
     const rawLogs = await publicClient.getLogs({
       address: env.INDICO_LEDGER_ADDRESS as `0x${string}`,

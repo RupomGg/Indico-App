@@ -38,7 +38,11 @@ abstract contract FixtureBase is Test {
     uint256 internal constant SLOT_PAUSE_TIMES = 21;
     uint256 internal constant SLOT_ACCOUNT_REF_OF = 22;
     uint256 internal constant SLOT_WALLET_OF_ACCOUNT = 23;
+    uint256 internal constant SLOT_MERCHANT_AGREEMENT = 24;
+    uint256 internal constant SLOT_DEPOSIT_BOX_OF = 25;
     uint256 internal constant SLOT_USDC_BALANCES = 0;
+    /// @dev SHA-256 of a merchant's signed agreement, recorded at approval (D-69).
+    bytes32 internal constant AGREEMENT = keccak256("signed-agreement");
 
     MockUSDC internal usdc;
     IIndicoLedger internal ledger;
@@ -151,10 +155,8 @@ abstract contract Fixture is FixtureBase {
 
     function _approveMerchantAndSign(address m) internal {
         vm.prank(admin);
-        ledger.setMerchantApproved(m, true);
-        if (!ledger.termsSigned(m)) {
-            _sign(m);
-        }
+        ledger.setMerchantApproved(m, true, AGREEMENT);
+        _sign(m);
     }
 
     function _revokeUser(address user) internal {
@@ -165,7 +167,7 @@ abstract contract Fixture is FixtureBase {
 
     function _revokeMerchant(address m) internal {
         vm.prank(admin);
-        ledger.setMerchantApproved(m, false);
+        ledger.setMerchantApproved(m, false, bytes32(0));
     }
 
     // ------------------------------------------------------------------ pool model (D-38)

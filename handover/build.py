@@ -14,7 +14,7 @@ import pathlib
 import subprocess
 import sys
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 OUT = ROOT / "handover"
 CONTRACTS = ROOT / "contracts"
@@ -46,7 +46,11 @@ MESSAGES = {
     "LoanNotActive": "This loan is already repaid or closed.",
     "LoanNotFound": "Loan not found.",
     "MathOverflow": "This amount is too large.",
-    "MerchantTermsNotSigned": "This merchant is not ready to receive payments yet.",
+    "ZeroAgreementHash": "Upload the merchant's signed agreement before approving it.",
+    "AgreementHashOnRevoke": "Revoking a merchant takes no agreement document.",
+    "Create2EmptyBytecode": "The deposit address could not be set up. Contact support.",
+    "FailedDeployment": "The deposit address could not be set up. Contact support.",
+    "InsufficientBalance": "The deposit address could not be set up. Contact support.",
     "NotAUser": "This address is not a platform user.",
     "NotApprovedMerchant": "This merchant is not approved.",
     "NotApprovedUser": "Your account is not approved.",
@@ -89,13 +93,15 @@ EFFECTS = {
     "TermsSigned": "Signer accepted this terms version at `at`. One address may sign several versions (D-25): keep every one, never overwrite.",
     "UserApprovalSet": "Set approval. On the first approval store the wallet-account link both ways; it never changes except by AccountMoved. Revocation blocks new actions only; balances and loans are untouched.",
     "MerchantApprovalSet": "Set approval. A revoked merchant can still withdraw.",
+    "MerchantAgreementRecorded": "merchantAgreement[merchant] = agreementHash, the SHA-256 of the signed agreement, under termsHash (D-69). Not a wallet signature.",
+    "DepositBoxAssigned": "depositBoxOf[merchant] = box (D-70). Show the merchant this address to send USDC to.",
     "AccountMoved": "credit[newWallet] = creditMoved, credit[oldWallet] = 0 (totalCredit unchanged); newWallet approved user, linked to accountRef both ways; oldWallet unapproved, unlinked, retired for good. No UserApprovalSet is emitted for either wallet. newWallet has not signed the terms unless it signed on its own.",
     "AssetRegistered": "New asset row. Always followed by CreditMinted in the same transaction.",
     "CreditMinted": "credit[user] += amount, totalCredit += amount. reason is the docHash for an asset, the admin's opaque memo otherwise.",
     "CreditBurned": "credit[user] -= amount, totalCredit -= amount. Never touches locked credit. user may be a user or a merchant (D-63).",
     "Spent": "credit[user] -= amount, credit[merchant] += amount. No fee.",
     "MerchantReceipt": "The merchant's receipt for the Spent in the same transaction; do not apply the balance change twice.",
-    "Deposited": "shares[merchant] += shares, totalShares += shares, poolUsdc += assets (the amount actually received).",
+    "Deposited": "shares[merchant] += shares, totalShares += shares, poolUsdc += assets (the amount actually received), from a deposit or a sweep of the merchant's box (D-70).",
     "Withdrawn": "shares[merchant] -= shares, totalShares -= shares, poolUsdc -= assets. Emitted by withdraw and withdrawAll.",
     "LoanOpened": "New Active loan. lockedCredit[borrower] += collateral, totalLent += principal, poolUsdc -= principal.",
     "CollateralLocked": "Same transaction as LoanOpened; apply the lock from one of them only. Lets reconciliation check lockedCredit from events alone.",

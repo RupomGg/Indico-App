@@ -78,6 +78,18 @@ contract StateDiffTest is Actors {
             "walletOfAccount"
         );
         assertEq(ledger.walletOfAccount(ref), alice, "walletOfAccount written");
+        assertEq(
+            vm.load(l, _key(merchantA, SLOT_MERCHANT_AGREEMENT)),
+            ledger.merchantAgreement(merchantA),
+            "merchantAgreement"
+        );
+        assertEq(ledger.merchantAgreement(merchantA), AGREEMENT, "merchantAgreement written");
+        assertEq(
+            _u(l, _key(merchantA, SLOT_DEPOSIT_BOX_OF)),
+            uint256(uint160(ledger.depositBoxOf(merchantA))),
+            "depositBoxOf"
+        );
+        assertTrue(ledger.depositBoxOf(merchantA) != address(0), "depositBoxOf written");
 
         // lastPausedAt in the low 64 bits, lastUnpausedAt in the next 64 (D-58).
         uint256 times = _u(l, bytes32(SLOT_PAUSE_TIMES));

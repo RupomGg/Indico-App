@@ -64,7 +64,8 @@ export class CreditService {
     }
 
     // Verify on-chain states
-    const [isUserApproved, hasUserSignedTerms, isMerchantApproved, hasMerchantSignedTerms, availableCredit] =
+    // An approved merchant always has its signed agreement recorded (D-69): no separate check.
+    const [isUserApproved, hasUserSignedTerms, isMerchantApproved, availableCredit] =
       await Promise.all([
         publicClient.readContract({
           address: env.INDICO_LEDGER_ADDRESS as Address,
@@ -82,12 +83,6 @@ export class CreditService {
           address: env.INDICO_LEDGER_ADDRESS as Address,
           abi: INDICO_LEDGER_ABI,
           functionName: "approvedMerchant",
-          args: [merchantAddress],
-        }),
-        publicClient.readContract({
-          address: env.INDICO_LEDGER_ADDRESS as Address,
-          abi: INDICO_LEDGER_ABI,
-          functionName: "termsSigned",
           args: [merchantAddress],
         }),
         publicClient.readContract({
@@ -113,26 +108,6 @@ export class CreditService {
     if (!isMerchantApproved) {
       throw new BadRequestError(
         "Recipient is not an approved merchant (NotApprovedMerchant)."
-      );
-    }
-
-    let isMerchantTermsSigned = Boolean(hasMerchantSignedTerms);
-    if (!isMerchantTermsSigned) {
-      try {
-        const merchantRecord = await prisma.merchant.findFirst({
-          where: { walletAddress: { equals: merchantAddress, mode: "insensitive" } },
-        });
-        if (merchantRecord && merchantRecord.agreementStatus === "SIGNED") {
-          isMerchantTermsSigned = true;
-        }
-      } catch {
-        // Fallback for unit test environments
-      }
-    }
-
-    if (!isMerchantTermsSigned) {
-      throw new BadRequestError(
-        "Merchant has not signed platform terms yet (MerchantTermsNotSigned). Please notify merchant to sign."
       );
     }
 

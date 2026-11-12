@@ -40,6 +40,15 @@ interface IIndicoLedger {
     );
     /// @notice The admin approved or revoked a merchant.
     event MerchantApprovalSet(address indexed merchant, bool approved);
+    /// @notice The admin recorded the merchant's signed agreement, `agreementHash` being the
+    ///         SHA-256 of the signed document, under the terms version `termsHash` (D-69).
+    ///         Not a wallet signature: `TermsSigned` is never emitted for it.
+    event MerchantAgreementRecorded(
+        address indexed merchant, bytes32 indexed termsHash, bytes32 agreementHash
+    );
+    /// @notice `merchant`'s deposit box address is `box` (D-70). USDC sent there becomes
+    ///         `merchant`'s pool shares on the next `sweep`, which deploys the box the first time.
+    event DepositBoxAssigned(address indexed merchant, address box);
 
     /// @notice `user` registered a document fingerprint with a self-declared `value`.
     event AssetRegistered(
@@ -118,8 +127,10 @@ interface IIndicoLedger {
     error ExtensionWindowNotOpen(uint64 opensAt);
     /// @notice A constructor argument was the zero address.
     error ZeroAddress();
-    /// @notice `spend` to an approved merchant that has not signed the terms (D-37).
-    error MerchantTermsNotSigned(address merchant);
+    /// @notice A merchant approval with no signed agreement hash (D-69).
+    error ZeroAgreementHash();
+    /// @notice A merchant revoke given a non-zero agreement hash, which it would ignore (D-69).
+    error AgreementHashOnRevoke();
     /// @notice Admin credit target `account` was never approved as a user (D-32).
     error NotAUser(address account);
     /// @notice `registerAsset` with a zero document hash (D-28).
@@ -189,9 +200,14 @@ interface IIndicoLedger {
     function setUserApproved(address user, bool approved, bytes32 accountRef) external;
 
     /// @notice Approve or revoke a merchant. A revoked merchant can still withdraw.
-    /// @dev ADMIN_ROLE. Works while paused (D-24). Same checks as `setUserApproved`, with the
-    ///      roles swapped. Emits `MerchantApprovalSet`.
-    function setMerchantApproved(address m, bool approved) external;
+    /// @dev ADMIN_ROLE. Works while paused (D-24). Reverts `ZeroAddress`; on approval
+    ///      `InvalidParticipant` (D-23), `ParticipantRoleConflict` (D-22), then `ZeroAgreementHash`;
+    ///      on revoke `AgreementHashOnRevoke` unless `agreementHash` is 0. An approval records
+    ///      `agreementHash`, the SHA-256 of the merchant's signed agreement (D-69), and the first
+    ///      one assigns the merchant's deposit box address (D-70). Repeats are allowed and emit (D-20).
+    ///      Emits `MerchantAgreementRecorded` (approval), `DepositBoxAssigned` (first approval),
+    ///      `MerchantApprovalSet`.
+    function setMerchantApproved(address m, bool approved, bytes32 agreementHash) external;
 
     /// @notice Stop every `whenNotPaused` function. GUARDIAN_ROLE.
     /// @dev Records `lastPausedAt`, unless the pause starts inside the grace of the previous
@@ -255,8 +271,8 @@ interface IIndicoLedger {
 
     /// @notice Pay `amount` of the caller's available credit to an approved merchant.
     /// @dev `whenNotPaused`. Reverts, in order, `NotApprovedUser`, `TermsNotSigned`,
-    ///      `ZeroAddress`, `NotApprovedMerchant`, `MerchantTermsNotSigned` (D-37), `ZeroAmount`,
-    ///      `InsufficientAvailableCredit`. No fee: the merchant receives exactly `amount`.
+    ///      `ZeroAddress`, `NotApprovedMerchant`, `ZeroAmount`, `InsufficientAvailableCredit`.
+    ///      An approved merchant always has a recorded agreement (D-69). No fee: the merchant receives exactly `amount`.
     ///      Emits `Spent` and `MerchantReceipt` (its `at` is a record only, D-26).
     function spend(address merchant, uint256 amount) external;
 
@@ -266,18 +282,19 @@ interface IIndicoLedger {
 
     /// @notice Deposit USDC into the pool. Shares are minted on the amount actually received.
     /// @dev `whenNotPaused`, `nonReentrant`. Reverts, in order, `NotApprovedMerchant`,
-    ///      `TermsNotSigned`, `ZeroAmount`, then `ZeroShares` if what arrived is worth less than
+    ///      `ZeroAmount`, then `ZeroShares` if what arrived is worth less than
     ///      one share. Shares = `mulDivDown(received, totalShares + 1e6, poolUsdc + totalLent + 1)`
     ///      (D-38). The caller must first `approve` the ledger on the USDC contract. USDC sent
     ///      straight to the ledger instead is never counted and cannot be recovered (D-38).
     ///      Emits `Deposited`.
     function deposit(uint256 amount) external;
 
-    /// @notice Credit USDC that arrived directly into the contract from an approved merchant's wallet transfer.
-    /// @dev `whenNotPaused`, `nonReentrant`. Callable by the merchant or ADMIN_ROLE (automated keeper).
-    ///      Mints shares to `merchant` on what actually arrived, updating `poolUsdc`.
-    ///      Emits `Deposited`.
-    function syncDeposit(address merchant, uint256 amount) external;
+    /// @notice Move everything in `merchant`'s deposit box into the pool, as `merchant`'s shares
+    ///         (D-70). Anyone may call it: the box's USDC can only ever become its merchant's.
+    /// @dev `whenNotPaused`, `nonReentrant`. Reverts, in order, `NotApprovedMerchant`,
+    ///      then `ZeroShares` if what arrived is worth no share (an empty box included). The first
+    ///      sweep deploys the box. Emits `Deposited`.
+    function sweep(address merchant) external;
 
     /// @notice Withdraw `assets` USDC, burning the shares they are worth, rounded up (D-39).
     /// @dev `whenNotPaused`, `nonReentrant`, allowed for a revoked merchant. Reverts, in order,
@@ -380,6 +397,10 @@ interface IIndicoLedger {
     function accountRefOf(address wallet) external view returns (bytes32);
     /// @notice The wallet linked to the app account `accountRef`, or address(0) (D-60).
     function walletOfAccount(bytes32 accountRef) external view returns (address);
+    /// @notice SHA-256 of the merchant's latest recorded signed agreement, or 0 (D-69).
+    function merchantAgreement(address merchant) external view returns (bytes32);
+    /// @notice The merchant's deposit box address, or address(0) before its first approval (D-70).
+    function depositBoxOf(address merchant) external view returns (address);
     function loans(uint256 loanId)
         external
         view

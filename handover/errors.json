@@ -102,6 +102,13 @@
     "message": "The account reference does not match the one linked to this wallet."
   },
   {
+    "selector": "0x922b2f61",
+    "name": "AgreementHashOnRevoke",
+    "signature": "AgreementHashOnRevoke()",
+    "args": [],
+    "message": "Revoking a merchant takes no agreement document."
+  },
+  {
     "selector": "0xb0bd6aca",
     "name": "AlreadySigned",
     "signature": "AlreadySigned()",
@@ -114,6 +121,13 @@
     "signature": "AssetAlreadyRegistered()",
     "args": [],
     "message": "This document has already been registered."
+  },
+  {
+    "selector": "0x4ca249dc",
+    "name": "Create2EmptyBytecode",
+    "signature": "Create2EmptyBytecode()",
+    "args": [],
+    "message": "The deposit address could not be set up. Contact support."
   },
   {
     "selector": "0x0f600b44",
@@ -172,6 +186,13 @@
     "message": "This loan can be extended from {opensAt}, in the last 30 days before it is due."
   },
   {
+    "selector": "0xb06ebf3d",
+    "name": "FailedDeployment",
+    "signature": "FailedDeployment()",
+    "args": [],
+    "message": "The deposit address could not be set up. Contact support."
+  },
+  {
     "selector": "0x13427a09",
     "name": "InsufficientAvailableCredit",
     "signature": "InsufficientAvailableCredit(uint256,uint256)",
@@ -186,6 +207,22 @@
       }
     ],
     "message": "Not enough available credit: {requested} needed, {available} available."
+  },
+  {
+    "selector": "0xcf479181",
+    "name": "InsufficientBalance",
+    "signature": "InsufficientBalance(uint256,uint256)",
+    "args": [
+      {
+        "name": "balance",
+        "type": "uint256"
+      },
+      {
+        "name": "needed",
+        "type": "uint256"
+      }
+    ],
+    "message": "The deposit address could not be set up. Contact support."
   },
   {
     "selector": "0xa17e11d5",
@@ -275,18 +312,6 @@
     "signature": "MathOverflow()",
     "args": [],
     "message": "This amount is too large."
-  },
-  {
-    "selector": "0xa64b0877",
-    "name": "MerchantTermsNotSigned",
-    "signature": "MerchantTermsNotSigned(address)",
-    "args": [
-      {
-        "name": "merchant",
-        "type": "address"
-      }
-    ],
-    "message": "This merchant is not ready to receive payments yet."
   },
   {
     "selector": "0x9c363e25",
@@ -494,6 +519,13 @@
     "signature": "ZeroAddress()",
     "args": [],
     "message": "An address is missing."
+  },
+  {
+    "selector": "0x6eb20efd",
+    "name": "ZeroAgreementHash",
+    "signature": "ZeroAgreementHash()",
+    "args": [],
+    "message": "Upload the merchant's signed agreement before approving it."
   },
   {
     "selector": "0x1f2a2005",
