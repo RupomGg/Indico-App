@@ -3216,6 +3216,18 @@ Gate (logs in `docs/gate-logs/D-69-70/`, Forge 1.8.3):
 Open items: none raised.
 Commit: feat: merchant onboarding records the signed agreement, per-merchant deposit box with permissionless sweep, syncDeposit removed (D-69, D-70)
 
+### C-085 · D-69, D-70 done · CI and Deep fuzz green · 2026-11-13
+Type: chore
+Files: none changed in code.
+- G10: CI run 43256189858 on `5925a36` (`main`) green, step 7b (Aderyn) included, so the allowlist
+  lines 410 and 412 match and `sweep` raised no new high.
+- Deep fuzz pass: run 43265659531 on `5925a36`, dispatched by the owner: 49 of 49 jobs green, each
+  shard's D-42 guard passed. D-69 and D-70 are done. Longest shard `Pool.t.sol`, 108.1 minutes (30%
+  of 360).
+- Next, the owner: tag `interface-v1.1.0`; revoke `ADMIN_ROLE` from the old keeper on the current
+  Sepolia ledger; redeploy to Sepolia with a keeper key that holds no role.
+Commit: docs: record D-69 and D-70 CI and Deep fuzz green
+
 ---
 
 ## Open items
