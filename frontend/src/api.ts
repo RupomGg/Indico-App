@@ -436,6 +436,17 @@ export class ApiClient {
     );
   }
 
+  /** Stores the signed agreement encrypted on the backend; returns its SHA-256 (AD-07, D-69). */
+  static async adminUploadMerchantAgreement(merchantId: string, file: File) {
+    const formData = new FormData();
+    formData.append("file", file, file.name);
+    return this.request<{
+      storageKey: string;
+      sha256: string;
+      matchesOnChain: boolean | null;
+    }>(`/admin/merchants/${merchantId}/agreement/file`, { method: "POST", body: formData }, "admin");
+  }
+
   static async adminSignMerchantAgreement(merchantId: string, storageKey = "signed-agreements/default.pdf") {
     return this.request(
       `/admin/merchants/${merchantId}/agreement/sign`,

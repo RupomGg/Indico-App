@@ -3228,6 +3228,68 @@ Files: none changed in code.
   Sepolia ledger; redeploy to Sepolia with a keeper key that holds no role.
 Commit: docs: record D-69 and D-70 CI and Deep fuzz green
 
+### C-086 · P3.1 redeploy · Base Sepolia ledger for interface 1.1.0 · 2026-11-13
+Type: chore (deployment; `src/` unchanged)
+Decisions: D-68, D-69, D-70
+- Deployed by the owner from the `deployer` keystore: `0xBB1925cf6E5D6C66255B1B13a0430E7643b990D3`,
+  block 57981793, tx `0x10233b1d…90ac70`; source verified on BaseScan and Sourcify. Checked on chain:
+  runtime 15,265 B (the gated build), Circle's Sepolia USDC, exactly three `RoleGranted` events, all
+  to the admin EOA (D-68), not paused.
+- Terms hash set by the owner to the SHA-256 of the terms text the backend serves,
+  `0x632842…98fb3df`; the backend's fallback constant matches no text and is not used once set.
+- Keeper `0x43D8Df89c908c47f06BD2A4246f954B8208b8d49`: holds no role (D-70), funded with gas.
+- Found: `0x422D36E2198863C5b2A6B8E2865fBf5196de96cF` (block 50090895), the post-freeze build the
+  backend was pointed at, was never recorded in `docs/deployments.md`; its only role grants went to
+  the admin EOA, and no keeper key was ever configured, so nothing needed revoking. It and the P3.1
+  ledger `0xa51D…eEF0` are recorded as retired.
+- First attempt stopped before broadcasting (`Failed to decode constructor arguments`) on stale build
+  artifacts; nothing was sent (deployer nonce unchanged); `forge clean`, then the deploy above.
+- The Infura URL in `contracts/.env` returns HTTP 402; the deploy used the public
+  `https://sepolia.base.org`.
+Files:
+- Changed: `docs/deployments.md`: the new ledger, keeper and terms hash; both earlier ledgers retired.
+- Changed: `contracts/script/OnboardParticipants.s.sol`: the ledger comes from `LEDGER_ADDRESS`
+  instead of a hard-coded address. `forge fmt --check` and `forge build --deny warnings` exit 0.
+Merchant and user onboarding: by the owner from the admin frontend, not this script.
+Commit: deploy: Base Sepolia ledger for interface 1.1.0, keeper with no role, terms hash of the served text
+
+### C-087 · AD-07, D-69 · Signed merchant agreement stored and checked against the chain · 2026-11-13
+Type: feature (backend, admin)
+Decisions: D-69 applied; admin audit D3 partly closed
+Why: D-69 records the signed agreement's SHA-256 on-chain, but the backend could not store the file
+itself: `agreement/sign` took only a path string, and `createMerchant` invented a path to a file that
+never existed. The signed list requires "upload the signed copy" (AD-07).
+Files:
+- Changed: `backend/src/modules/admin/admin.operations.service.ts`: `uploadMerchantAgreementFile`
+  (404 unknown merchant; 400 empty; 413 over 20 MB; 400 unless PDF, PNG or JPEG by content; stored
+  encrypted at `agreements/<merchantId>/<sha256>.enc`; merchant set SIGNED, agreement row and audit
+  `AGREEMENT_FILE_UPLOADED` in one transaction; returns the SHA-256 and whether it equals
+  `merchantAgreement(wallet)` on the ledger, `null` when nothing is recorded or the RPC fails);
+  `getMerchantAgreementFile` (404 when none stored; returns the decrypted file and its SHA-256).
+  `createMerchant` no longer invents a storage key or an agreement row.
+- Changed: `backend/src/modules/admin/admin.routes.ts`: `POST /admin/merchants/:id/agreement/file`
+  (multipart field `file`, 201) and `GET` (download, header `X-Agreement-SHA256`), admin only.
+- Changed: `backend/src/lib/storage.ts`: `saveEncryptedAt(relativeKey, bytes)`, which
+  `saveEncryptedFile` now uses; `detectFileType`, moved from `assets.routes.ts`, which imports it.
+- Changed: `backend/test/unit/admin.operations.test.ts`: partition table and 12 tests (11 for the file,
+  one for the invented key); `routes.inject.test.ts`: 401 and 403 on both routes, 400 for a JSON body.
+- Changed: `frontend/src/api.ts`, `frontend/src/views/adminView.ts` (local test tool): uploads the file
+  after creating the merchant and refuses to approve on-chain if the stored hash differs; the six
+  hard-coded ledger addresses point at the new ledger.
+- Changed: `admin_api_audit.md` (section 0, for the admin dashboard team) and new
+  `FLUTTER_UPDATE_1.1.md` (for the Flutter developer).
+Gate (backend):
+- G1 pass: 375 passed, 0 failed (red phase: the 12 new service tests failed on the missing methods).
+- G2 pass: `tsc --noEmit` exit 0 (backend and frontend).
+- G5 pass: the adversarial route sweep covers both new routes, no 500.
+- G9 pass: 6 of 6 caught, source restored byte-identical: B1 file-type check removed; B2 size limit off
+  by one; B3 storage key not by hash; B4 always reports a match; B5 storage key not recorded; B6
+  download without a stored file.
+- G10 pending: owner pushes.
+Open items: none raised. Storage is the local disk (`STORAGE_DRIVER=local`): on a host without a
+persistent disk, uploaded agreements and asset documents are lost on redeploy.
+Commit: feat: admin uploads and downloads the merchant's signed agreement, stored encrypted and checked against the hash on-chain (AD-07, D-69)
+
 ---
 
 ## Open items

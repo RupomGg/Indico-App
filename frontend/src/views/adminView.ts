@@ -16,8 +16,8 @@ import {
   explorerTxLink,
 } from "../ui.js";
 
-export const INDICO_LEDGER_ADDRESS = "0x422D36E2198863C5b2A6B8E2865fBf5196de96cF";
-export const INDICO_LEDGER_BASESCAN = "https://sepolia.basescan.org/address/0x422D36E2198863C5b2A6B8E2865fBf5196de96cF";
+export const INDICO_LEDGER_ADDRESS = "0xBB1925cf6E5D6C66255B1B13a0430E7643b990D3";
+export const INDICO_LEDGER_BASESCAN = "https://sepolia.basescan.org/address/0xBB1925cf6E5D6C66255B1B13a0430E7643b990D3";
 
 /** SHA-256 of the chosen file as a 0x-prefixed bytes32 (the signed agreement, D-69). */
 async function fileSha256(inputId: string): Promise<`0x${string}`> {
@@ -293,7 +293,7 @@ export class AdminView {
       const SET_TERMS_HASH_ABI = parseAbi([
         "function setTermsHash(bytes32 newHash) external"
       ]);
-      const INDICO_LEDGER_ADDRESS = "0x422D36E2198863C5b2A6B8E2865fBf5196de96cF";
+      const INDICO_LEDGER_ADDRESS = "0xBB1925cf6E5D6C66255B1B13a0430E7643b990D3";
       const defaultHash = "0x5b39922883ef59c037996c5e88863fc9f12d8a554a71879ec8217bb48ca4c820";
 
       showModal({
@@ -492,7 +492,7 @@ export class AdminView {
       });
     });
 
-    const INDICO_LEDGER_ADDRESS = "0x422D36E2198863C5b2A6B8E2865fBf5196de96cF";
+    const INDICO_LEDGER_ADDRESS = "0xBB1925cf6E5D6C66255B1B13a0430E7643b990D3";
     const SET_USER_APPROVED_ABI = parseAbi([
       "function setUserApproved(address user, bool approved, bytes32 accountRef) external"
     ]);
@@ -568,7 +568,7 @@ export class AdminView {
 
   // --- SUB-TAB 2: MERCHANTS & SERVICES (AD-04 to AD-08) ---
   private static renderMerchantsTab(container: HTMLElement) {
-    const INDICO_LEDGER_ADDRESS = "0x422D36E2198863C5b2A6B8E2865fBf5196de96cF";
+    const INDICO_LEDGER_ADDRESS = "0xBB1925cf6E5D6C66255B1B13a0430E7643b990D3";
     const SET_MERCHANT_APPROVED_ABI = parseAbi([
       "function setMerchantApproved(address m, bool approved, bytes32 agreementHash) external"
     ]);
@@ -779,6 +779,13 @@ export class AdminView {
         }
 
         const created: any = await ApiClient.adminCreateMerchant(payload);
+
+        // Store the signed copy; the backend's SHA-256 must equal the one recorded on-chain.
+        const agreementFile = (document.getElementById("merchant-agreement-file") as HTMLInputElement).files![0]!;
+        const stored = await ApiClient.adminUploadMerchantAgreement(created.id, agreementFile);
+        if (stored.sha256.toLowerCase() !== agreementHash.toLowerCase()) {
+          throw new Error("Stored agreement hash differs from the file's hash; not approving on-chain");
+        }
 
         // Single-operation: prompt connected admin wallet once to broadcast on-chain verification
         try {
@@ -1127,7 +1134,7 @@ export class AdminView {
   // --- SUB-TAB 3: POOL & LOANS SUPERVISION (AD-13, AD-15, AD-21) ---
   // --- SUB-TAB 3: POOL & LOANS SUPERVISION (AD-13, AD-15, AD-21) ---
   private static renderLoansTab(container: HTMLElement) {
-    const INDICO_LEDGER_ADDRESS = "0x422D36E2198863C5b2A6B8E2865fBf5196de96cF";
+    const INDICO_LEDGER_ADDRESS = "0xBB1925cf6E5D6C66255B1B13a0430E7643b990D3";
     const SWEEP_ABI = parseAbi(["function sweep(address merchant) external"]);
 
     container.innerHTML = `

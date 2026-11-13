@@ -1,8 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { AdminOperationsService } from "../../src/modules/admin/admin.operations.service.js";
 import { prisma } from "../../src/lib/prisma.js";
-import { NotFoundError, BadRequestError } from "../../src/lib/errors.js";
+import { NotFoundError, BadRequestError, PayloadTooLargeError } from "../../src/lib/errors.js";
 import { publicClient } from "../../src/lib/viem.js";
+import { StorageService } from "../../src/lib/storage.js";
+import { computeFileSha256 } from "../../src/lib/crypto.js";
 
 /**
  * =======================================================================================
@@ -232,6 +234,167 @@ describe("Admin Operations (PRD §4.7 AD-02 to AD-22)", () => {
         "agreements/m-1-signed.pdf"
       );
       expect(res.agreementStatus).toBe("SIGNED");
+    });
+
+    it("creating a SIGNED merchant invents no storage key and no agreement row (D3)", async () => {
+      const create = vi.spyOn(prisma.merchant, "create").mockResolvedValue({ id: "m-new", name: "M" } as any);
+      const agreementRow = vi.spyOn(prisma.merchantAgreement, "create").mockResolvedValue({} as any);
+      vi.spyOn(prisma.auditLog, "create").mockResolvedValue({} as any);
+
+      await AdminOperationsService.createMerchant(mockAdminId, {
+        name: "M",
+        contactEmail: "m@merchant.com",
+        walletAddress: "0x3333333333333333333333333333333333333333",
+        isApproved: false,
+        agreementStatus: "SIGNED",
+      });
+
+      expect(create.mock.calls[0]![0].data.agreementStorageKey).toBeNull();
+      expect(agreementRow).not.toHaveBeenCalled();
+    });
+  });
+
+  /**
+   * Signed agreement file (AD-07, D-69). Partition table:
+   * | Input                        | Expected                                                   |
+   * |------------------------------|------------------------------------------------------------|
+   * | unknown merchant             | 404 NotFoundError                                          |
+   * | empty file                   | 400 BadRequestError                                        |
+   * | not PDF, PNG or JPEG         | 400 BadRequestError (checked by content, not by name)      |
+   * | 20 MB + 1 byte               | 413 PayloadTooLargeError                                   |
+   * | PDF, PNG, JPEG               | stored encrypted under its SHA-256, SIGNED, row and audit  |
+   * | on-chain hash equal          | matchesOnChain true                                        |
+   * | on-chain hash different      | matchesOnChain false                                       |
+   * | not recorded on-chain (0x0)  | matchesOnChain null, onChainAgreementHash null             |
+   * | RPC failure                  | matchesOnChain null, upload still stored                   |
+   * | download, no file stored     | 404 NotFoundError                                          |
+   * | download, file stored        | decrypted bytes and their SHA-256                          |
+   */
+  describe("Signed Agreement File (AD-07, D-69)", () => {
+    const merchant = {
+      id: "m-1",
+      walletAddress: "0x3333333333333333333333333333333333333333",
+      agreementSentAt: null,
+      agreementStorageKey: null,
+    };
+    const pdf = Buffer.concat([Buffer.from("%PDF-1.7\n"), Buffer.from("signed agreement body")]);
+    const pdfHash = computeFileSha256(pdf);
+    const ZERO = `0x${"0".repeat(64)}`;
+
+    function mockWrites() {
+      vi.spyOn(prisma.merchant, "findUnique").mockResolvedValue(merchant as any);
+      const update = vi.spyOn(prisma.merchant, "update").mockResolvedValue({} as any);
+      const row = vi.spyOn(prisma.merchantAgreement, "create").mockResolvedValue({} as any);
+      const audit = vi.spyOn(prisma.auditLog, "create").mockResolvedValue({} as any);
+      vi.spyOn(prisma, "$transaction").mockImplementation(async (ops: any) => Promise.all(ops));
+      const save = vi.spyOn(StorageService, "saveEncryptedAt").mockResolvedValue();
+      return { update, row, audit, save };
+    }
+
+    it("rejects an unknown merchant", async () => {
+      vi.spyOn(prisma.merchant, "findUnique").mockResolvedValue(null);
+      await expect(
+        AdminOperationsService.uploadMerchantAgreementFile(mockAdminId, "m-ghost", pdf)
+      ).rejects.toThrow(NotFoundError);
+    });
+
+    it("rejects an empty file", async () => {
+      const { save } = mockWrites();
+      await expect(
+        AdminOperationsService.uploadMerchantAgreementFile(mockAdminId, "m-1", Buffer.alloc(0))
+      ).rejects.toThrow(BadRequestError);
+      expect(save).not.toHaveBeenCalled();
+    });
+
+    it("rejects a file that is not a PDF, PNG or JPEG", async () => {
+      const { save } = mockWrites();
+      await expect(
+        AdminOperationsService.uploadMerchantAgreementFile(mockAdminId, "m-1", Buffer.from("MZ not a pdf"))
+      ).rejects.toThrow(/PDF, PNG or JPEG/);
+      expect(save).not.toHaveBeenCalled();
+    });
+
+    it("rejects a file over 20 MB", async () => {
+      const { save } = mockWrites();
+      const big = Buffer.concat([Buffer.from("%PDF-"), Buffer.alloc(20 * 1024 * 1024 - 4)]);
+      await expect(
+        AdminOperationsService.uploadMerchantAgreementFile(mockAdminId, "m-1", big)
+      ).rejects.toThrow(PayloadTooLargeError);
+      expect(save).not.toHaveBeenCalled();
+    });
+
+    it("stores the PDF encrypted under its SHA-256 and records it as signed", async () => {
+      const { update, row, audit, save } = mockWrites();
+      vi.spyOn(publicClient, "readContract").mockResolvedValue(pdfHash as any);
+
+      const res = await AdminOperationsService.uploadMerchantAgreementFile(mockAdminId, "m-1", pdf);
+
+      const key = `agreements/m-1/${pdfHash.slice(2)}.enc`;
+      expect(save).toHaveBeenCalledWith(key, pdf);
+      expect(res).toEqual({
+        storageKey: key,
+        sha256: pdfHash,
+        mimeType: "application/pdf",
+        sizeBytes: pdf.length,
+        onChainAgreementHash: pdfHash,
+        matchesOnChain: true,
+      });
+      const data = update.mock.calls[0]![0].data as any;
+      expect(data.agreementStatus).toBe("SIGNED");
+      expect(data.agreementStorageKey).toBe(key);
+      expect(data.agreementSentAt).toBeInstanceOf(Date);
+      expect(row.mock.calls[0]![0].data).toMatchObject({ merchantId: "m-1", storageKey: key, status: "SIGNED" });
+      expect(audit.mock.calls[0]![0].data).toMatchObject({
+        action: "AGREEMENT_FILE_UPLOADED",
+        payload: { storageKey: key, sha256: pdfHash },
+      });
+    });
+
+    it("accepts PNG and JPEG by content", async () => {
+      mockWrites();
+      vi.spyOn(publicClient, "readContract").mockResolvedValue(ZERO as any);
+      const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]);
+      const jpg = Buffer.from([0xff, 0xd8, 0xff, 1, 2, 3]);
+      expect((await AdminOperationsService.uploadMerchantAgreementFile(mockAdminId, "m-1", png)).mimeType).toBe("image/png");
+      expect((await AdminOperationsService.uploadMerchantAgreementFile(mockAdminId, "m-1", jpg)).mimeType).toBe("image/jpeg");
+    });
+
+    it("reports a mismatch with the hash recorded on-chain", async () => {
+      mockWrites();
+      const other = `0x${"ab".repeat(32)}`;
+      vi.spyOn(publicClient, "readContract").mockResolvedValue(other as any);
+      const res = await AdminOperationsService.uploadMerchantAgreementFile(mockAdminId, "m-1", pdf);
+      expect(res.onChainAgreementHash).toBe(other);
+      expect(res.matchesOnChain).toBe(false);
+    });
+
+    it("reports nothing to compare when no agreement is recorded on-chain", async () => {
+      mockWrites();
+      vi.spyOn(publicClient, "readContract").mockResolvedValue(ZERO as any);
+      const res = await AdminOperationsService.uploadMerchantAgreementFile(mockAdminId, "m-1", pdf);
+      expect(res.onChainAgreementHash).toBeNull();
+      expect(res.matchesOnChain).toBeNull();
+    });
+
+    it("still stores the file when the RPC fails", async () => {
+      const { save } = mockWrites();
+      vi.spyOn(publicClient, "readContract").mockRejectedValue(new Error("rpc down"));
+      const res = await AdminOperationsService.uploadMerchantAgreementFile(mockAdminId, "m-1", pdf);
+      expect(save).toHaveBeenCalled();
+      expect(res.matchesOnChain).toBeNull();
+    });
+
+    it("download: 404 when no file is stored", async () => {
+      vi.spyOn(prisma.merchant, "findUnique").mockResolvedValue(merchant as any);
+      await expect(AdminOperationsService.getMerchantAgreementFile("m-1")).rejects.toThrow(NotFoundError);
+    });
+
+    it("download: returns the decrypted file and its SHA-256", async () => {
+      vi.spyOn(prisma.merchant, "findUnique").mockResolvedValue({ ...merchant, agreementStorageKey: "agreements/m-1/x.enc" } as any);
+      const read = vi.spyOn(StorageService, "readDecryptedFile").mockResolvedValue(pdf);
+      const res = await AdminOperationsService.getMerchantAgreementFile("m-1");
+      expect(read).toHaveBeenCalledWith("agreements/m-1/x.enc");
+      expect(res).toEqual({ buffer: pdf, sha256: pdfHash, mimeType: "application/pdf", ext: "pdf" });
     });
   });
 

@@ -1,6 +1,6 @@
 # Indico Admin API — Issue Report for the Backend Team
 
-> **Date:** 2026-10-27
+> **Date:** 2026-10-27 · **Updated:** 2026-11-13 (new ledger, section 0)
 > **Scope:** the 20 routes under `/api/v1/admin/*` (`backend/src/modules/admin/`), as consumed by the new admin dashboard (`Indico Admin dashboard/`).
 > **Audience:** backend developers. Paths below are relative to `Indico-App/backend/`.
 > **Abbreviation:** **svc** = `src/modules/admin/admin.operations.service.ts`.
@@ -17,14 +17,182 @@ Nothing here was tested against staging or production. No mutating admin endpoin
 
 ---
 
+## 0. Update 2026-11-13: new ledger (interface 1.1.0). Read this first
+
+The smart contract was redeployed. Two things changed for merchants, and the dashboard must follow.
+Everything for users, loans, the pool, audit logs and reports keeps the same endpoints and shapes.
+
+### 0.1 New addresses
+
+| | Old (retired) | New |
+|---|---|---|
+| Indico Ledger | `0x422D36E2198863C5b2A6B8E2865fBf5196de96cF` | `0xBB1925cf6E5D6C66255B1B13a0430E7643b990D3` |
+| USDC | `0x036CbD53842c5426634e7929541eC2318f3dCF7e` | unchanged |
+| Chain | Base Sepolia, 84532 | unchanged |
+| Admin and guardian wallet | `0xb9B49b26Df2AC02FEE89dCe82Eb1f8bC3774F677` | unchanged (testnet only; a Safe on mainnet) |
+
+- Replace the ledger address everywhere in the dashboard: wallet module, BaseScan links, "contract" labels.
+- The new ledger starts empty. **Every user and merchant must be approved again on-chain**, and users
+  sign the terms again (the hash is new; read it from `GET /terms/current`).
+- The terms hash on the new ledger is
+  `0x632842821eb1ef312e7fba001f40860d852297c119fa9456c34f13f7e98fb3df`, the SHA-256 of the terms text the
+  backend serves. It is already set; the dashboard does not set it.
+
+### 0.2 Merchant onboarding records the signed agreement (D-69)
+
+Before, approving a merchant on-chain also wrote a fake "terms signed" record for the merchant's
+wallet. That is gone. A merchant signs the arbitration agreement **on paper**, and the admin records
+the signed copy's fingerprint on-chain **in the same transaction that approves the merchant**.
+
+**Contract call (admin wallet, one transaction):**
+
+```solidity
+setMerchantApproved(address merchant, bool approved, bytes32 agreementHash)
+```
+
+| Call | `agreementHash` | Result |
+|---|---|---|
+| Approve | SHA-256 of the signed agreement file, `0x` + 64 hex | Approved, agreement recorded, deposit address created |
+| Approve with `0x00…00` | | Reverts `ZeroAgreementHash()` |
+| Revoke (`approved = false`) | must be `0x00…00` | Revoked; the recorded agreement stays as a record |
+| Revoke with a non-zero hash | | Reverts `AgreementHashOnRevoke()` |
+| Approve again with a new hash | new file's SHA-256 | Replaces the recorded agreement (a re-signed agreement) |
+
+The old two-argument `setMerchantApproved(address,bool)` no longer exists; calling it reverts.
+
+**Dashboard flow for "Add merchant":**
+
+1. The admin fills in name, contact email, wallet address, and **picks the signed agreement file**
+   (PDF, PNG or JPEG, max 20 MB). The field is required.
+2. `POST /api/v1/admin/merchants` with `agreementStatus: "SIGNED"` (the paper is already signed).
+3. Upload the file: `POST /api/v1/admin/merchants/:id/agreement/file`, `multipart/form-data`, field `file`
+   (see 0.4). The backend stores it encrypted and returns its `sha256`.
+4. The admin wallet sends `setMerchantApproved(wallet, true, sha256)` to the new ledger, using the
+   `sha256` the upload returned:
+   ```ts
+   const data = encodeFunctionData({
+     abi: parseAbi(["function setMerchantApproved(address m, bool approved, bytes32 agreementHash)"]),
+     functionName: "setMerchantApproved",
+     args: [wallet, true, upload.sha256],
+   });
+   // send { to: "0xBB1925cf6E5D6C66255B1B13a0430E7643b990D3", data } from the admin wallet
+   ```
+5. `POST /api/v1/admin/merchants/:id/sync-chain` to refresh the database copy, then reload the list.
+
+Optional check before step 4: compute the SHA-256 in the browser too and refuse to continue if it
+differs from the upload's `sha256` (a corrupted upload).
+
+```ts
+const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", await file.arrayBuffer()));
+const localHash = `0x${Array.from(digest, b => b.toString(16).padStart(2, "0")).join("")}`;
+```
+
+**Merchant record screen:** add "Download signed agreement"
+(`GET /api/v1/admin/merchants/:id/agreement/file`) and show `agreementHash` with a ✓ when it equals the
+stored file's hash (the `X-Agreement-SHA256` response header). For a merchant approved before the file
+was uploaded, upload it afterwards: the response's `matchesOnChain` says whether it is the file that was
+recorded on-chain.
+
+### 0.3 Each merchant gets its own deposit address; `syncDeposit` is removed (D-70)
+
+Before, merchants were told to send USDC to the ledger address, and an admin called
+`syncDeposit(merchant, amount)` to credit it. That function is **removed**: it let anyone claim USDC
+sent by someone else.
+
+Now:
+
+- Approving a merchant creates a **personal deposit address** for that merchant
+  (`depositBoxOf(merchant)` on the ledger).
+- The merchant sends USDC to **their own deposit address** from any wallet or exchange.
+- The backend's keeper calls `sweep(merchant)` automatically, which moves the USDC into the pool as that
+  merchant's shares. Anyone may call `sweep`; the money can only ever become that merchant's shares.
+
+**What the dashboard must change:**
+
+| Old | New |
+|---|---|
+| "Merchant deposit address" shows the **ledger** address with a copy button | Show **each merchant's own** `depositBox`, per merchant, with a copy button. Never show the ledger address as a place to send USDC: USDC sent straight to the ledger is lost for good |
+| "Manual Sync Merchant Deposit" with an amount, calling `syncDeposit(merchant, amount)` | Optional button "Sweep deposit address" calling `sweep(merchant)`, no amount. Normally not needed: the keeper does it |
+| Merchant column "Terms signed on-chain" | "Agreement recorded": `agreementHash` is not null |
+
+`sweep` reverts `NotApprovedMerchant()` for an unapproved merchant and `ZeroShares()` when the deposit
+address is empty. While the ledger is paused, nothing can be swept.
+
+### 0.4 What changed in the admin API
+
+| Endpoint | Change |
+|---|---|
+| `GET /admin/merchants` | Each merchant has two new fields: `agreementHash` (the recorded SHA-256, or `null`) and `depositBox` (the merchant's deposit address, or `null` before approval). `isOnChainTermsSigned` now means "agreement recorded on-chain" |
+| `POST /admin/merchants/:id/sync-chain` | `isOnChainTermsSigned` now reads the recorded agreement, not a wallet signature |
+| `POST /admin/merchants` | A `SIGNED` merchant no longer gets an invented storage key; `agreementStorageKey` stays `null` until the file is uploaded |
+| **New** `POST /admin/merchants/:id/agreement/file` | Upload the signed agreement. Details below |
+| **New** `GET /admin/merchants/:id/agreement/file` | Download it. Details below |
+| Everything else under `/admin/*` | Unchanged |
+
+**`POST /admin/merchants/:id/agreement/file`** (admin token)
+
+- Body: `multipart/form-data` with one field `file`. PDF, PNG or JPEG, checked by the file's content,
+  not its name. Max 20 MB. Upload again to replace it (for a re-signed agreement).
+- `201 Created`:
+  ```json
+  {
+    "storageKey": "agreements/<merchantId>/<sha256 without 0x>.enc",
+    "sha256": "0x…64 hex",
+    "mimeType": "application/pdf",
+    "sizeBytes": 183422,
+    "onChainAgreementHash": "0x…64 hex",
+    "matchesOnChain": true
+  }
+  ```
+  `onChainAgreementHash` is `null` and `matchesOnChain` is `null` when nothing is recorded on-chain yet
+  (the normal case before step 4) or the chain could not be read. `matchesOnChain: false` means the
+  file is **not** the one recorded on-chain: show a warning.
+- Also sets the merchant to `SIGNED` (status, signed date, storage key), adds an agreement row and an
+  audit entry `AGREEMENT_FILE_UPLOADED` with the `sha256`, in one database transaction.
+- Errors: `400` empty file, wrong type, or not multipart; `401` no token; `403` a user token; `404`
+  unknown merchant; `413` over 20 MB.
+
+**`GET /admin/merchants/:id/agreement/file`** (admin token)
+
+- `200` with the original file, `Content-Type` from its content, `Content-Disposition: attachment`, and
+  header `X-Agreement-SHA256`.
+- `404` unknown merchant, or no file stored yet.
+
+The user app no longer refuses to pay a merchant for "terms not signed": every approved merchant has a
+recorded agreement.
+
+### 0.5 Errors the dashboard may show
+
+| Error | Meaning | Message to show |
+|---|---|---|
+| `ZeroAgreementHash()` | Approval without an agreement fingerprint | "Attach the merchant's signed agreement before approving." |
+| `AgreementHashOnRevoke()` | Revoke sent with a fingerprint | Bug in the dashboard: revoke must send `0x00…00` |
+| `ParticipantRoleConflict(address)` | The wallet was ever approved as a user | "This wallet belongs to a user and can never be a merchant. Use a different wallet." |
+| `InvalidParticipant(address)` | The ledger or USDC address was entered | "That is a contract address, not a merchant wallet." |
+| `ZeroShares()` | Sweep with an empty deposit address | "Nothing to sweep: the deposit address is empty." |
+| `NotApprovedMerchant()` | Sweep for an unapproved merchant | "This merchant is not approved on-chain." |
+
+### 0.6 Status of findings below, rechecked against the current code on 2026-11-13
+
+| ID | Status |
+|---|---|
+| S1 | **Fixed**: approve/reject now select only safe fields |
+| S3 | **Fixed**: admin authentication runs `onRequest`, before validation |
+| D1 | **Fixed**: `isSigned` follows the request; defaults are `isApproved: false`, `agreementStatus: "NOT_SENT"`; no invented storage key |
+| D3 | **Partly fixed**: the signed file is now uploaded, stored and checked (0.4). Still open: `send` can overwrite `SIGNED`, `sign` accepts an empty `storageKey`, no email is sent |
+| S2, P2, P3, P4 | Still open (rechecked) |
+| Others | Not rechecked |
+
+---
+
 ## 1. Summary
 
 | ID | Severity | Title | Area | Verified |
 |---|---|---|---|---|
-| S1 | **Critical** | Approve/reject responses leak password hash and token hashes | Security | code |
+| S1 | ~~Critical~~ Fixed | Approve/reject responses leak password hash and token hashes | Security | code |
 | S2 | **High** | Admin JWT can't be revoked; role is trusted from the token; `JWT_EXPIRES_IN` ignored | Security | code |
-| S3 | Medium | Request validation runs before admin authentication | Security | code, docs |
-| D1 | **High** | `createMerchant` always records the agreement as signed | Data integrity | code |
+| S3 | ~~Medium~~ Fixed | Request validation runs before admin authentication | Security | code, docs |
+| D1 | ~~High~~ Fixed | `createMerchant` always records the agreement as signed | Data integrity | code |
 | D2 | Medium | Mutations and audit writes aren't atomic; no idempotency | Data integrity | code |
 | D3 | Medium | Agreement send/sign have no state guards or validation | Data integrity | code |
 | D4 | Low | `sync-chain` changes data without an audit entry and never revokes | Data integrity | code |
@@ -102,6 +270,7 @@ Section 3 lists **missing endpoints** that block dashboard features. Section 4 l
   - Reconsider the defaults: `isApproved: false` and `agreementStatus: "NOT_SENT"` are the safer choices.
   - Add tests for all three statuses.
 - **Dashboard status:** the Merchants module isn't integrated yet, partly because of this bug.
+- **Update 2026-11-13: fixed** (see 0.6). Integrate the Merchants module with the flow in 0.2.
 
 ### D2 — Mutations and audit writes aren't atomic; no idempotency · Medium
 
@@ -126,6 +295,7 @@ Section 3 lists **missing endpoints** that block dashboard features. Section 4 l
   - Reject `send` when the agreement is already `SIGNED` (409).
   - Require a non-empty `storageKey`, and verify the object exists in storage.
   - Either implement email delivery or rename and re-document the endpoint as "mark sent".
+- **Update 2026-11-13: file upload done.** `POST /admin/merchants/:id/agreement/file` stores the file encrypted and returns its SHA-256, compared with the hash on-chain; `GET` downloads it (0.4). The send/sign state guards are still open.
 
 ### D4 — `sync-chain` changes data without an audit entry and never revokes · Low
 
@@ -216,7 +386,7 @@ Section 3 lists **missing endpoints** that block dashboard features. Section 4 l
 
 - **Where:**
   - `GET /users`: svc:208, one `approvedUser` contract read per user with a wallet, up to 100 per page.
-  - `GET /merchants`: svc:257–264, two reads per merchant, and the endpoint has no pagination.
+  - `GET /merchants`: three reads per merchant since 2026-11-13 (`approvedMerchant`, `merchantAgreement`, `depositBoxOf`), and the endpoint has no pagination.
   - `GET /users/:id`: svc:122/138, one read per asset.
   - All of these `catch` errors and return `false`.
 - **Impact:** response time grows linearly with page size, and RPC rate limits are easy to hit. An RPC outage looks like "not approved on-chain" rather than "unknown".
@@ -258,7 +428,7 @@ The dashboard shows these as **"Not supported by the backend yet"**. The contrac
 | Dashboard KPIs | One call for headline counts (currently 4–5 requests) | `GET /admin/stats/overview` |
 | Settings | Read/write platform configuration; admin user management | `GET/PATCH /admin/settings`; `POST /admin/admins`, password reset, roles |
 | Session | Logout / revoke / refresh (see S2) | `POST /admin/auth/logout`; `POST /admin/auth/refresh` |
-| Merchants (not yet integrated) | Edit, delete or deactivate a merchant, revoke approval, upload/download the agreement file | `PATCH /admin/merchants/:id`; `POST /admin/merchants/:id/revoke`; `POST/GET /admin/merchants/:id/agreement/file` |
+| Merchants (not yet integrated) | Edit, delete or deactivate a merchant, revoke approval, upload/download the agreement file | `PATCH /admin/merchants/:id`; `POST /admin/merchants/:id/revoke`; agreement file upload and download **done** (0.4). Revoking on-chain is `setMerchantApproved(merchant, false, 0x00…00)` from the admin wallet |
 
 ---
 
@@ -296,6 +466,8 @@ The dashboard shows these as **"Not supported by the backend yet"**. The contrac
 | `PATCH /merchants/:id/services/:serviceId` | ❌ | — |
 | `DELETE /merchants/:id/services/:serviceId` | ❌ | — |
 | `POST /merchants/:id/agreement/send` | ❌ | — |
-| `POST /merchants/:id/agreement/sign` | ❌ | — |
+| `POST /merchants/:id/agreement/sign` | ❌ | — (superseded by the file upload for new merchants) |
+| `POST /merchants/:id/agreement/file` | ❌ | New: "Add merchant" and merchant record (0.2, 0.4) |
+| `GET /merchants/:id/agreement/file` | ❌ | New: merchant record download (0.4) |
 
-**Priority order:** S1, then D1, then S2, then E1, then A1. S1 and D1 are small, low-risk code changes.
+**Priority order (updated 2026-11-13):** the ledger update in section 0 first (new address, merchant agreement, deposit addresses), then S2, E1, A1. The agreement file endpoint is done (0.4). S1, S3 and D1 are fixed.

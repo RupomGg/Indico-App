@@ -458,6 +458,40 @@ describe("HTTP Route Adversarial & Corner-Case Injection (PRD §Input Testing §
       });
       expect(response.statusCode).toBe(401);
     });
+
+    it("signed agreement file routes refuse no token (401) and a user token (403)", async () => {
+      const jwt = (await import("jsonwebtoken")).default;
+      const { env } = await import("../../src/config/env.js");
+      const userToken = jwt.sign(
+        { id: "user-123", email: "user@indico.com", role: "USER", domain: "user" },
+        env.JWT_SECRET
+      );
+      for (const method of ["POST", "GET"] as const) {
+        const url = "/api/v1/admin/merchants/m-1/agreement/file";
+        expect((await app.inject({ method, url })).statusCode).toBe(401);
+        const forbidden = await app.inject({ method, url, headers: { authorization: `Bearer ${userToken}` } });
+        expect(forbidden.statusCode).toBe(403);
+      }
+    });
+
+    it("POST signed agreement file as JSON instead of multipart returns 400, never 500", async () => {
+      const jwt = (await import("jsonwebtoken")).default;
+      const { env } = await import("../../src/config/env.js");
+      const { prisma } = await import("../../src/lib/prisma.js");
+      const { vi } = await import("vitest");
+      const spy = vi.spyOn(prisma.adminUser, "findUnique").mockResolvedValue({ id: "admin-1" } as any);
+      const adminToken = jwt.sign({ id: "admin-1", role: "ADMIN", domain: "admin" }, env.JWT_SECRET);
+
+      const response = await app.inject({
+        method: "POST",
+        url: "/api/v1/admin/merchants/m-1/agreement/file",
+        headers: { authorization: `Bearer ${adminToken}`, "content-type": "application/json" },
+        payload: { file: "not a file" },
+      });
+      spy.mockRestore();
+      expect(response.statusCode).toBe(400);
+      expect(JSON.parse(response.body).error.message).toMatch(/multipart/);
+    });
   });
 });
 

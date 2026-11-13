@@ -1,6 +1,8 @@
 import { prisma } from "../../lib/prisma.js";
 import { parseAmount, formatAmount } from "../../lib/amount.js";
-import { NotFoundError } from "../../lib/errors.js";
+import { BadRequestError, NotFoundError, PayloadTooLargeError } from "../../lib/errors.js";
+import { StorageService, MAX_FILE_SIZE_BYTES, detectFileType } from "../../lib/storage.js";
+import { computeFileSha256 } from "../../lib/crypto.js";
 import {
   publicClient,
   INDICO_LEDGER_ABI,
@@ -365,7 +367,6 @@ export class AdminOperationsService {
     const isSent = input.agreementStatus === "SENT";
     const now = new Date();
     const wallet = input.walletAddress.toLowerCase();
-    const storageKey = isSigned ? `signed-agreements/${wallet}-onboarding.pdf` : null;
 
     const merchant = await prisma.merchant.create({
       data: {
@@ -376,24 +377,10 @@ export class AdminOperationsService {
         agreementStatus: input.agreementStatus || "NOT_SENT",
         agreementSentAt: isSigned || isSent ? now : null,
         agreementSignedAt: isSigned ? now : null,
-        agreementStorageKey: storageKey,
+        // Set by the signed-file upload, never invented here (D3).
+        agreementStorageKey: null,
       },
     });
-
-    if (isSigned && storageKey) {
-      try {
-        await prisma.merchantAgreement.create({
-          data: {
-            merchantId: merchant.id,
-            storageKey,
-            status: "SIGNED",
-            signedAt: now,
-          },
-        });
-      } catch {
-        // Fallback for mocked unit test environments
-      }
-    }
 
     if (input.initialService) {
       const priceUnits = parseAmount(input.initialService.price);
@@ -722,6 +709,96 @@ export class AdminOperationsService {
     });
 
     return updated;
+  }
+
+  /**
+   * Stores the merchant's signed agreement file, encrypted, under its SHA-256, and records it as
+   * signed (AD-07). The same SHA-256 is what the admin records on-chain with the approval (D-69);
+   * the result says whether the two match.
+   */
+  static async uploadMerchantAgreementFile(adminId: string, merchantId: string, bytes: Buffer) {
+    const merchant = await prisma.merchant.findUnique({ where: { id: merchantId } });
+    if (!merchant) {
+      throw new NotFoundError(`Merchant with ID "${merchantId}" not found`);
+    }
+    if (bytes.length === 0) {
+      throw new BadRequestError("Empty file uploaded");
+    }
+    if (bytes.length > MAX_FILE_SIZE_BYTES) {
+      throw new PayloadTooLargeError("File exceeds maximum allowed size of 20 MB");
+    }
+    const { mime } = detectFileType(bytes);
+    if (mime === "application/octet-stream") {
+      throw new BadRequestError("The signed agreement must be a PDF, PNG or JPEG file");
+    }
+
+    const sha256 = computeFileSha256(bytes);
+    const storageKey = `agreements/${merchantId}/${sha256.slice(2)}.enc`;
+    await StorageService.saveEncryptedAt(storageKey, bytes);
+
+    let onChainAgreementHash: string | null = null;
+    try {
+      const recorded = String(
+        await publicClient.readContract({
+          address: env.INDICO_LEDGER_ADDRESS as Address,
+          abi: INDICO_LEDGER_ABI,
+          functionName: "merchantAgreement",
+          args: [merchant.walletAddress as Address],
+        })
+      ).toLowerCase();
+      onChainAgreementHash = /^0x0+$/.test(recorded) ? null : recorded;
+    } catch {
+      // RPC unavailable: the file is still stored; nothing to compare against.
+    }
+
+    const now = new Date();
+    await prisma.$transaction([
+      prisma.merchant.update({
+        where: { id: merchantId },
+        data: {
+          agreementStatus: "SIGNED",
+          agreementSentAt: merchant.agreementSentAt ?? now,
+          agreementSignedAt: now,
+          agreementStorageKey: storageKey,
+        },
+      }),
+      prisma.merchantAgreement.create({
+        data: { merchantId, documentType: "ARBITRATION_AGREEMENT", storageKey, status: "SIGNED", signedAt: now },
+      }),
+      prisma.auditLog.create({
+        data: {
+          actorType: "ADMIN",
+          actorId: adminId,
+          action: "AGREEMENT_FILE_UPLOADED",
+          resource: "Merchant",
+          resourceId: merchantId,
+          payload: { storageKey, sha256 },
+        },
+      }),
+    ]);
+
+    return {
+      storageKey,
+      sha256,
+      mimeType: mime,
+      sizeBytes: bytes.length,
+      onChainAgreementHash,
+      matchesOnChain: onChainAgreementHash === null ? null : onChainAgreementHash === sha256,
+    };
+  }
+
+  /** The merchant's stored signed agreement, decrypted, with its SHA-256 (AD-07). */
+  static async getMerchantAgreementFile(merchantId: string) {
+    const merchant = await prisma.merchant.findUnique({ where: { id: merchantId } });
+    if (!merchant) {
+      throw new NotFoundError(`Merchant with ID "${merchantId}" not found`);
+    }
+    if (!merchant.agreementStorageKey) {
+      throw new NotFoundError("No signed agreement file is stored for this merchant");
+    }
+    const buffer = await StorageService.readDecryptedFile(merchant.agreementStorageKey);
+    const { mime, ext } = detectFileType(buffer);
+    return { buffer, sha256: computeFileSha256(buffer), mimeType: mime, ext };
   }
 
   /**

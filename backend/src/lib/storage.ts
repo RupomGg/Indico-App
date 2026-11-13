@@ -143,24 +143,24 @@ export class StorageService {
     docHash: string,
     rawBytes: Buffer
   ): Promise<{ storageKey: string; encryptedBytes: Buffer }> {
-    this.init();
-
     const sanitizedHash = docHash.toLowerCase().replace(/^0x/, "");
-    const userDir = path.join(this.basePath, "assets", userId);
-    if (!fs.existsSync(userDir)) {
-      fs.mkdirSync(userDir, { recursive: true });
-    }
-
     const relativeKey = `assets/${userId}/${sanitizedHash}.enc`;
-    const fullPath = path.join(this.basePath, "assets", userId, `${sanitizedHash}.enc`);
-
-    const encryptedBytes = encryptAes256Gcm(rawBytes, env.DOCUMENT_ENCRYPTION_KEY);
-    await fs.promises.writeFile(fullPath, encryptedBytes);
-
+    const encryptedBytes = await this.saveEncryptedAt(relativeKey, rawBytes);
     return {
       storageKey: relativeKey,
       encryptedBytes,
     };
+  }
+
+  /**
+   * Encrypts `rawBytes` with AES-256-GCM and writes them at `relativeKey` under the storage root.
+   */
+  static async saveEncryptedAt(relativeKey: string, rawBytes: Buffer): Promise<Buffer> {
+    const fullPath = path.join(this.basePath, relativeKey);
+    await fs.promises.mkdir(path.dirname(fullPath), { recursive: true });
+    const encryptedBytes = encryptAes256Gcm(rawBytes, env.DOCUMENT_ENCRYPTION_KEY);
+    await fs.promises.writeFile(fullPath, encryptedBytes);
+    return encryptedBytes;
   }
 
   /**
@@ -181,4 +181,18 @@ export class StorageService {
     const ciphertext = await this.readRawCiphertext(storageKey);
     return decryptAes256Gcm(ciphertext, env.DOCUMENT_ENCRYPTION_KEY);
   }
+}
+
+/** The file type from its first bytes, never from its name: PDF, PNG or JPEG, else unknown. */
+export function detectFileType(buffer: Buffer): { mime: string; ext: string } {
+  if (buffer.length >= 4 && buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47) {
+    return { mime: "image/png", ext: "png" };
+  }
+  if (buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) {
+    return { mime: "image/jpeg", ext: "jpg" };
+  }
+  if (buffer.length >= 5 && buffer.subarray(0, 5).toString("utf8") === "%PDF-") {
+    return { mime: "application/pdf", ext: "pdf" };
+  }
+  return { mime: "application/octet-stream", ext: "bin" };
 }

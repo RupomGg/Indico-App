@@ -12,6 +12,7 @@ import {
   adminUserOperationResponseSchema,
 } from "./admin.schemas.js";
 import { authenticateAdmin } from "../../middleware/auth.js";
+import { BadRequestError } from "../../lib/errors.js";
 import { z } from "zod";
 
 export async function adminRoutes(fastify: FastifyInstance) {
@@ -303,6 +304,57 @@ export async function adminRoutes(fastify: FastifyInstance) {
           storageKey
         );
         return reply.send(result);
+      }
+    );
+
+    // POST /admin/merchants/:id/agreement/file (PRD §4.7 AD-07, D-69)
+    adminScope.post(
+      "/merchants/:id/agreement/file",
+      {
+        schema: {
+          description:
+            "Upload the merchant's signed agreement (PDF, PNG or JPEG, max 20 MB, multipart field `file`). " +
+            "Stored encrypted; returns its SHA-256, the hash to record on-chain with setMerchantApproved, " +
+            "and whether it matches the hash already recorded (AD-07, D-69)",
+          tags: ["Admin"],
+          params: z.object({ id: z.string() }),
+        },
+      },
+      async (request, reply) => {
+        const { id } = request.params as { id: string };
+        if (!request.isMultipart()) {
+          throw new BadRequestError("Send the signed agreement as multipart/form-data, field `file`");
+        }
+        const part = await request.file();
+        if (!part) {
+          throw new BadRequestError("No file uploaded in multipart form");
+        }
+        const result = await AdminOperationsService.uploadMerchantAgreementFile(
+          request.admin!.id,
+          id,
+          await part.toBuffer()
+        );
+        return reply.status(201).send(result);
+      }
+    );
+
+    // GET /admin/merchants/:id/agreement/file (PRD §4.7 AD-07)
+    adminScope.get(
+      "/merchants/:id/agreement/file",
+      {
+        schema: {
+          description: "Download the merchant's stored signed agreement; header X-Agreement-SHA256 carries its hash (AD-07)",
+          tags: ["Admin"],
+          params: z.object({ id: z.string() }),
+        },
+      },
+      async (request, reply) => {
+        const { id } = request.params as { id: string };
+        const file = await AdminOperationsService.getMerchantAgreementFile(id);
+        reply.header("Content-Type", file.mimeType);
+        reply.header("Content-Disposition", `attachment; filename="agreement-${id}.${file.ext}"`);
+        reply.header("X-Agreement-SHA256", file.sha256);
+        return reply.send(file.buffer);
       }
     );
 
