@@ -1,11 +1,9 @@
 import { z } from "zod";
+import { newPasswordSchema } from "../../lib/password.js";
 
 export const RegisterRequestSchema = z.object({
   email: z.string().email("Invalid email address").toLowerCase().trim(),
-  password: z
-    .string()
-    .min(8, "Password must be at least 8 characters")
-    .max(128, "Password must not exceed 128 characters"),
+  password: newPasswordSchema(),
 });
 
 export const RegisterResponseSchema = z.object({
@@ -47,8 +45,5 @@ export const ResetPasswordRequestSchema = z.object({
 
 export const ResetPasswordConfirmSchema = z.object({
   token: z.string().min(1, "Reset token is required").trim(),
-  newPassword: z
-    .string()
-    .min(8, "Password must be at least 8 characters")
-    .max(128, "Password must not exceed 128 characters"),
+  newPassword: newPasswordSchema(),
 });

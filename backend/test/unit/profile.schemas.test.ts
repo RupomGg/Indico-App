@@ -131,11 +131,12 @@ describe("Profile DTO Field Boundary Partition Tests (PRD §Input Testing §6.3)
     describe("field: newPassword", () => {
       const newPasswordPartitions: [string, any, boolean][] = [
         ["empty string", "", false],
-        ["min - 1 (7 chars)", "1234567", false],
-        ["min exactly (8 chars)", "12345678", true],
+        ["min - 1 (7 chars)", "Abcde1!", false],
+        ["min exactly (8 chars)", "Abcdef1!", true],
+        ["8 chars without upper, digit or symbol", "12345678", false],
         ["typical (16 chars)", "MyBrandNewPass1!", true],
-        ["max exactly (128 chars)", "a".repeat(128), true],
-        ["max + 1 (129 chars)", "a".repeat(129), false],
+        ["max exactly (128 chars)", "A1!" + "a".repeat(125), true],
+        ["max + 1 (129 chars)", "A1!" + "a".repeat(126), false],
         ["wrong type: number", 12345678, false],
         ["wrong type: null", null, false],
         ["absent", undefined, false],

@@ -129,7 +129,101 @@ behaviours the test web client got wrong; make sure the Flutter app gets them ri
 
 ---
 
-## 7. Corrections to the old FLUTTER_DEVELOPER_GUIDE.md
+## 7. Found in the review of `indico-debug.apk` (2026-11-14): still to do
+
+The app was checked against the PRD. Almost everything is implemented correctly. These are
+the gaps.
+
+| # | PRD / guide | What the app does now | What it should do |
+|---|---|---|---|
+| 7.1 | U-02 | An unapproved user can tap "Continue to App" and browse. | Show a waiting screen and nothing else until the admin approves: "Your account is waiting for approval", plus a **Check again** button (`GET /profile`, `GET /profile/wallet`) and **Log out**. |
+| 7.2 | U-10 | The ETH balance only appears on the Wallet settings screen. | On the connect-wallet screen, once the wallet is connected, show its Base ETH balance (`GET /profile/wallet` → `ethBalance`) and one plain sentence: "You need a small amount of ETH on Base to pay network costs." No jargon, no "gas". |
+| 7.3 | Guide 6.7 | "Estimated maximum" = available credit × 80%, ignoring the pool. | Show the **smaller** of your limit and the pool's available USDC, and say which one limits you ("Limited by pool liquidity"). Until the API exposes pool cash, keep the server's refusal message as the final word. |
+| 7.4 | Guide 6.6 | The Extend button shows a generic message. | Disabled until the window opens, labelled with the date: "Extension opens on 13 Jan 2027" (due date − 30 days). |
+| 7.5 | D-58 | `canExtend` is false after the due date. | After a pause, the contract allows a late extension until the grace period ends. Don't hide the button after the due date: call `POST /loans/prepare-extend` and show its refusal if it refuses. |
+| 7.6 | C-02 | 6 filter chips. | Filters for every type the PRD lists: minted, spent, borrowed, repaid, **locked, released, defaulted, admin adjustment**. A `CreditMinted` or `CreditBurned` that is not from an asset registration (no matching `AssetRegistered` in the same transaction) is an **admin adjustment**. |
+| 7.7 | AI-01 to AI-07 | The assistant matches phrases on the device. "Send credit" and "borrow" only open a screen, only "balance" is answered, and there is no repay or extend. | Use the backend assistant, section 7.8. |
+
+### 7.8 Password rule (sign-up, reset, change password)
+
+The backend now refuses a new password unless it has:
+- 8 to 128 characters,
+- at least one uppercase letter (A-Z),
+- at least one number (0-9),
+- at least one symbol: any character that is not a letter, a number or a space (`! @ # $ % - _ .`
+  and so on). An accented letter such as `é` is not a symbol.
+
+Show the rule under the password field on all three screens: "At least 8 characters, with at least
+one uppercase letter, one number and one symbol." Check it in the app before submitting, with one
+tick per rule as the user types. If the app sends a weak password anyway, the backend answers 400
+and lists every missing part, for example "Password must contain at least one uppercase letter,
+Password must contain at least one symbol".
+
+**Login is unchanged:** it accepts any non-empty password, so accounts created under the old
+8-character rule can still sign in. They meet the new rule the next time they change or reset it.
+
+### 7.9 User AI assistant endpoint
+
+The backend parses the command, prepares the transaction and checks it would succeed. The app
+shows the result and, for a transaction, asks the user to sign. The assistant never signs anything
+itself.
+
+```
+POST /api/v1/ai/user/prompt
+Authorization: Bearer <user token>        (approved users only; otherwise 403)
+Content-Type: application/json
+
+{ "prompt": "Borrow 500 USDC" }           (1 to 500 characters)
+```
+
+Response (200 for any valid request):
+
+```json
+{
+  "success": true,
+  "type": "MESSAGE | TRANSACTION_PREVIEW | UNKNOWN | ERROR",
+  "intent": "READ_STATUS | REQUEST_LOAN | REPAY_LOAN | EXTEND_LOAN | SPEND_CREDIT | UNKNOWN",
+  "text": "Prepared borrow preview for 500.000000 USDC …",
+  "requiresWalletSignature": true,
+  "preview": { "action": "Request Loan", "principal": "500.000000 USDC", "…": "…" },
+  "preparedTx": { "to": "0xBB19…90D3", "data": "0x…", "value": "0", "estimatedGasEth": "0.000…" },
+  "preparedTxs": [ { "to": "…", "data": "…", "value": "0", "estimatedGasEth": "…" } ]
+}
+```
+
+`preparedTxs` lists every transaction to sign, in order. `preparedTx` is present only when there is
+exactly one. **Always sign `preparedTxs`, in order, waiting for each receipt.** A repay whose USDC
+allowance is missing has two entries (USDC approval, then repay) and no `preparedTx`.
+
+For a balance question, `preview.maxBorrowable` is already the smaller of the user's 80% limit and
+the pool's cash, and `preview.poolAvailable` is the pool's cash (`null` if it could not be read).
+
+What it understands:
+
+| Example | `intent` | `type` |
+|---|---|---|
+| "What is my balance?", "Show my active loans" | `READ_STATUS` | `MESSAGE` |
+| "Borrow 500 USDC" | `REQUEST_LOAN` | `TRANSACTION_PREVIEW` |
+| "Repay loan #4" | `REPAY_LOAN` | `TRANSACTION_PREVIEW` |
+| "Extend loan #4" | `EXTEND_LOAN` | `TRANSACTION_PREVIEW` |
+| "What does TestMerchant offer?" | `SPEND_CREDIT` | `MESSAGE` (service list) |
+| "Buy Legal consultation from TestMerchant", "Pay TestMerchant 50" | `SPEND_CREDIT` | `TRANSACTION_PREVIEW` |
+| anything it can't map for certain | `UNKNOWN` | `UNKNOWN` (it never guesses an amount or a recipient) |
+
+How the screen must behave:
+
+1. `MESSAGE`, `UNKNOWN`, `ERROR`: show `text` with its line breaks. Nothing else happens.
+2. `TRANSACTION_PREVIEW`: show a confirmation card built from `preview` (action, amount, merchant
+   or loan), plus a **Confirm in wallet** button. Never send automatically. On tap, run the same
+   `sendPrepared` flow as the normal screens (fee dialog, bound-wallet check, receipt, then poll
+   the balance), passing the `preparedTxs` list (the `List<PreparedTx>` case `sendPrepared` already
+   handles). The fee dialog shows each transaction's `estimatedGasEth`.
+3. Loan numbers in commands are the on-chain loan id, the same number the loan screens show.
+4. Minting an asset stays as it is now: the assistant fills in the upload form and the user
+   uploads the document. No document or file content is ever sent to the assistant (AI-06).
+5. Keep the local "mint" parser. Send every other command to the endpoint.
+
+## 8. Corrections to the old FLUTTER_DEVELOPER_GUIDE.md
 
 These were wrong before this update; fix them if the app followed the old guide:
 

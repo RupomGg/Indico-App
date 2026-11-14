@@ -25,7 +25,7 @@ describe("Auth DTO Field Boundary Partition Tests (PRD §Input Testing §6.3)", 
       it.each(emailPartitionTable)("%s (%s) -> valid: %s", (_desc, email, expectedValid) => {
         const result = RegisterRequestSchema.safeParse({
           email,
-          password: "validPassword123",
+          password: "ValidPassword123!",
         });
         expect(result.success).toBe(expectedValid);
         if (expectedValid && typeof email === "string") {
@@ -37,11 +37,12 @@ describe("Auth DTO Field Boundary Partition Tests (PRD §Input Testing §6.3)", 
     describe("field: password", () => {
       const passwordPartitionTable: [string, any, boolean][] = [
         ["empty string", "", false],
-        ["min - 1 (7 characters)", "1234567", false],
-        ["min exactly (8 characters)", "12345678", true],
+        ["min - 1 (7 characters)", "Abcde1!", false],
+        ["min exactly (8 characters)", "Abcdef1!", true],
+        ["8 characters without upper, digit or symbol", "12345678", false],
         ["typical (16 characters)", "MySecurePass123!", true],
-        ["max exactly (128 characters)", "a".repeat(128), true],
-        ["max + 1 (129 characters)", "a".repeat(129), false],
+        ["max exactly (128 characters)", "A1!" + "a".repeat(125), true],
+        ["max + 1 (129 characters)", "A1!" + "a".repeat(126), false],
         ["wrong type: number", 12345678, false],
         ["wrong type: boolean", true, false],
         ["wrong type: null", null, false],
@@ -97,7 +98,7 @@ describe("Auth DTO Field Boundary Partition Tests (PRD §Input Testing §6.3)", 
     it("accepts valid token and new password within bounds", () => {
       const result = ResetPasswordConfirmSchema.safeParse({
         token: "token123",
-        newPassword: "BrandNewPassword123",
+        newPassword: "BrandNewPassword123!",
       });
       expect(result.success).toBe(true);
     });

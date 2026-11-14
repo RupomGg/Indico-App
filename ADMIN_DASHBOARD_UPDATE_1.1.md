@@ -138,20 +138,92 @@ settlement. Add:
 admin wallet's or the Safe's (finding P3). Until the backend adds `SAFE_ADDRESS`, label the card
 "Admin wallet ETH" and read the connected admin wallet's balance in the browser, or hide it.
 
+### 10. Admin AI console (AD-19), admin only
+
+The dashboard has no AI console page yet. The backend endpoint exists and is admin-only.
+
+**Endpoint**
+
+```
+POST /api/v1/ai/admin/prompt
+Authorization: Bearer <admin token>        (a user token gets 403, no token 401)
+Content-Type: application/json
+
+{ "prompt": "Pool liquidity status" }      (1 to 500 characters, trimmed)
+```
+
+**Response (always 200 for a valid request)**
+
+```json
+{
+  "success": true,
+  "type": "MESSAGE | ACTION_PREVIEW | UNKNOWN | ERROR",
+  "intent": "ADMIN_READ_POOL",
+  "text": "📊 Pool Operations State: …",
+  "requiresWalletSignature": false,
+  "preview": { "…": "structured details, optional" },
+  "preparedTx": { "to": "0x…", "data": "0x…", "value": "0" }
+}
+```
+
+`preparedTx` is present only when `type` is `ACTION_PREVIEW`.
+
+**What it understands today** (keyword-based, deterministic, no outside model):
+
+| Command (example) | `intent` | `type` | Wallet? |
+|---|---|---|---|
+| "Pool liquidity status" | `ADMIN_READ_POOL` | `MESSAGE` | No |
+| "Show active and overdue loans" | `ADMIN_READ_LOANS` | `MESSAGE` | No |
+| "Lookup user alice@example.com" or "… user 0x…" | `ADMIN_LOOKUP_USER` | `MESSAGE` | No |
+| "Issue credit of 1,000 to 0x… ref INV-001" | `ADMIN_ISSUE_CREDIT` | `ACTION_PREVIEW` | Yes, `adminIssueCredit` |
+| "Debit credit of 500 from 0x… ref CASH-001" | `ADMIN_DEBIT_CREDIT` | `ACTION_PREVIEW` | Yes, `adminDebitCredit` |
+| "Add service Legal consultation to merchant TestMerchant price 50" | `ADMIN_ADD_SERVICE` | `MESSAGE` | No, saved at once |
+| "Update price of Legal consultation for merchant TestMerchant to 60" | `ADMIN_UPDATE_SERVICE` | `MESSAGE` | No, saved at once |
+| "Send agreement to merchant TestMerchant" | `ADMIN_SEND_AGREEMENT` | `MESSAGE` | No; records it as sent, **no email is sent** |
+| anything else | `ADMIN_UNKNOWN` | `UNKNOWN` | No (the text lists the supported commands) |
+
+**How the page must behave**
+
+1. A chat panel: input box, the admin's command, then the response `text` (keep line breaks).
+2. `MESSAGE` and `UNKNOWN`: show `text` only. Nothing else happens.
+3. `ACTION_PREVIEW`: show a **confirmation card** built from `preview` (action, wallet, amount),
+   and a button **"Sign with admin wallet"**. Never send automatically. On click:
+   - Check `preparedTx.to` equals the ledger constant (`0xBB19…90D3`, item 1) and the wallet is on
+     chain 84532 and is the admin wallet; refuse otherwise.
+   - Send `{ to, data, value }` exactly as returned. Do not rebuild or edit the calldata.
+   - Show the transaction hash with a BaseScan link, then poll until `CreditMinted` /
+     `CreditBurned` appears (item 14).
+4. A cancelled or failed wallet step leaves nothing changed; say so.
+5. Never send the console's text anywhere but this endpoint, and never put document contents in it.
+
+**What the backend guarantees for credit commands**
+
+- The amount is read with the wallet address and the reference removed, in any order ("Issue credit
+  to 0x… amount 1000" is 1000). A missing amount, 0, or more than 6 decimals returns `UNKNOWN`.
+- Before a preview, the backend reads the ledger and returns `ERROR` (no `preparedTx`) if the
+  transaction would revert: ledger paused; issue to anything but a user; issue past the per-account
+  cap; debit of anything but a user or merchant; debit above available credit; ledger unreadable.
+- The on-chain memo is 32 random bytes, different on every preview, returned as `preview.memo`. The
+  admin's own reference (`ref …`) never goes on-chain; it is returned as `preview.reference` and
+  saved with the memo in the audit log (`AI_CREDIT_PREPARED`). Show both on the confirmation card.
+- A merchant is found by its wallet or its exact name; an unknown or ambiguous name returns
+  `UNKNOWN`. A merchant whose agreement is already signed cannot be marked sent again (`ERROR` here; `409` from `POST /admin/merchants/:id/agreement/send`).
+- "Lookup user" searches the database only (email or bound wallet).
+
 ---
 
 ## P2. Should fix
 
-10. **Transactions filter**: the event list shows `MerchantAgreementRecorded` and
+11. **Transactions filter**: the event list shows `MerchantAgreementRecorded` and
     `DepositBoxAssigned`, but the filter has no options for them. Add both.
-11. **Settings → Protocol parameters**: fix the extension row (item 8) and the ledger address
+12. **Settings → Protocol parameters**: fix the extension row (item 8) and the ledger address
     (item 1). Show the deposit-address rule.
-12. **Asset types**: the ledger numbers are **0 Arbitration award, 1 Bill of exchange, 2 Promissory
+13. **Asset types**: the ledger numbers are **0 Arbitration award, 1 Bill of exchange, 2 Promissory
     note, 3 Bond, 4 Real estate, 5 Jewellery**. Wherever the dashboard shows an asset's type, map it
     with this table.
-13. **After any wallet transaction**, poll the backend for a few seconds until the change appears
+14. **After any wallet transaction**, poll the backend for a few seconds until the change appears
     (the indexer runs a few seconds behind the chain), instead of showing the old values.
-14. **Pause**: if the dashboard offers pause/unpause (guardian), show that while paused no merchant
+15. **Pause**: if the dashboard offers pause/unpause (guardian), show that while paused no merchant
     can deposit or withdraw and no user can borrow, repay or extend.
 
 ---
@@ -177,3 +249,6 @@ Transactions list, Reports, Audit Logs. These worked correctly against the new l
 - [ ] Issue 10 credit to the user, then debit 5: `CreditMinted` and `CreditBurned` appear.
 - [ ] Loans page shows "0 extensions", no "/ 3".
 - [ ] "Sync merchant deposit" is gone.
+- [ ] AI console: "Pool liquidity status" answers with no wallet prompt; "Issue credit of 5 to
+      0x…" shows a confirmation card, and only the button opens the wallet, targeting `0xBB19…90D3`;
+      a user token on `/ai/admin/prompt` gets 403.

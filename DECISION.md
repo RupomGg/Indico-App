@@ -3398,6 +3398,36 @@ Gate (logs in `docs/gate-logs/C-090/`):
 - G10 pending: owner pushes.
 Commit: fix: user AI repay returns the USDC approval before the repay, max borrowable capped by pool cash (AI-03, L-04)
 
+### C-091 · U-01, U-03 · New passwords need an uppercase letter, a number and a symbol · 2026-11-14
+Type: feature (backend)
+Decisions: owner's choice, 2026-11-14: 8 or more characters with at least one uppercase letter,
+one number and one symbol, for registration, reset and change.
+Files:
+- New: `backend/src/lib/password.ts`: `newPasswordSchema(label)`, one rule for every new password:
+  8 to 128 characters, an uppercase `A-Z`, a digit `0-9`, a symbol (anything not a letter, digit
+  or whitespace, so an accented letter or a space is not one); each broken part reported, so the
+  message lists everything missing. `PASSWORD_RULE`, the sentence for the apps.
+- Changed: `backend/src/modules/auth/auth.schemas.ts` (register, reset confirm) and
+  `backend/src/modules/profile/profile.schemas.ts` (change password) use it. Login is unchanged
+  (any non-empty password), so accounts created under the old 8-character rule still sign in.
+- New: `backend/test/unit/password.test.ts`: a 16-row partition table run against all three
+  schemas, each refusal checked to name exactly the broken parts; each of 31 symbols accepted; the
+  rule sentence; login still accepting an old-rule password.
+- Changed: `backend/test/unit/auth.schemas.test.ts`, `profile.schemas.test.ts`: the boundary rows
+  use passwords that meet the rule; `12345678` is now a refused row.
+- Changed (local, not pushed): `FLUTTER_UPDATE_1.1.md` section 7.8, the rule for the app.
+Gate (logs in `docs/gate-logs/C-091/`):
+- Red phase: the new file failed to load (no rule module) and `12345678` was still accepted.
+- G1 pass: 547 passed, 0 failed, three runs alike.
+- G2 pass: `tsc --noEmit` exit 0.
+- G5 pass: the adversarial route sweep runs over the three routes, no 500.
+- G9 pass, `G9.log`: 9 of 9 caught, source restored byte-identical: W1 minimum 7; W2 maximum 129;
+  W3 to W5 each requirement removed; W6 a space counted as a symbol; W7 an accented letter
+  counted as a symbol; W8 any Unicode digit counted as a number; W9 a lowercase letter also
+  required.
+- G10 pending: owner pushes.
+Commit: feat: new passwords need 8 or more characters with an uppercase letter, a number and a symbol (U-01, U-03)
+
 ---
 
 ## Open items
