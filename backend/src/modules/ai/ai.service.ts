@@ -813,48 +813,64 @@ export class AiService {
     const merchantReply = await AiService.handleMerchantCommand(adminId, prompt);
     if (merchantReply) return merchantReply;
 
-    // 3. User Lookup
-    if (lower.includes("user") || lower.includes("lookup") || lower.includes("find user")) {
-      // Find email, 0x address, or UUID
-      const emailMatch = prompt.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
-      const addressMatch = prompt.match(/0x[a-fA-F0-9]{40}/);
+    // 3. Lookup a user or merchant by email, wallet or merchant name
+    const emailMatch = prompt.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
+    const addressMatch = prompt.match(/0x[a-fA-F0-9]{40}/);
+    const merchantName = addressMatch ? undefined : prompt.match(/\bmerchant\s+(.+?)\s*$/i)?.[1];
+    const mentionsUser = /\buser\b/i.test(prompt);
+    const lookupWord = /\b(look\s*up|lookup|find|show|who\s+is|details?|info)\b/i.test(prompt);
+    if ((lookupWord || mentionsUser) && (emailMatch || addressMatch || merchantName || mentionsUser)) {
+      const user =
+        emailMatch || addressMatch
+          ? await prisma.user.findFirst({
+              where: {
+                OR: [
+                  ...(emailMatch ? [{ email: emailMatch[0].toLowerCase() }] : []),
+                  ...(addressMatch ? [{ walletBinding: { walletAddress: addressMatch[0].toLowerCase() } }] : []),
+                ],
+              },
+              include: { walletBinding: true },
+            })
+          : null;
 
-      const user = await prisma.user.findFirst({
-        where: {
-          OR: [
-            ...(emailMatch ? [{ email: emailMatch[0].toLowerCase() }] : []),
-            ...(addressMatch
-              ? [
-                  {
-                    walletBinding: {
-                      walletAddress: addressMatch[0].toLowerCase(),
-                    },
-                  },
-                ]
-              : []),
-          ],
-        },
-        include: { walletBinding: true },
-      });
-
-      if (!user) {
+      if (user) {
+        const detail = await AdminOperationsService.getUserDetail(user.id);
         return {
           success: true,
           type: "MESSAGE",
           intent: "ADMIN_LOOKUP_USER",
           requiresWalletSignature: false,
-          text: "User not found. Please provide a valid email or bound wallet address (e.g. \"Lookup user alice@indico.example\").",
+          text: `👤 User Record (${detail.email}):\n• Status: ${detail.status} (Email Verified: ${detail.isEmailVerified})\n• Bound Wallet: ${detail.walletAddress || "None"}\n• On-Chain Approved: ${detail.isOnChainApproved ? "YES" : "NO"}\n• Credit Balance: ${detail.credit} USDC (Locked: ${detail.lockedCredit})\n• Registered Assets: ${detail.assets.length}`,
+          preview: detail,
         };
       }
 
-      const detail = await AdminOperationsService.getUserDetail(user.id);
+      // Not a user: the wallet or name may be a merchant's.
+      const merchantWhere = addressMatch
+        ? { walletAddress: addressMatch[0].toLowerCase() }
+        : merchantName
+          ? { name: { equals: merchantName, mode: "insensitive" as const } }
+          : null;
+      const merchants = merchantWhere
+        ? await prisma.merchant.findMany({ where: merchantWhere, include: { services: true }, take: 2 })
+        : [];
+      if (merchants.length > 1) {
+        return {
+          success: true,
+          type: "MESSAGE",
+          intent: "ADMIN_LOOKUP_MERCHANT",
+          requiresWalletSignature: false,
+          text: `More than one merchant is named "${merchantName}". Look it up by its wallet address.`,
+        };
+      }
+      if (merchants.length === 1) return AiService.merchantRecord(merchants[0]!, !!addressMatch);
+
       return {
         success: true,
         type: "MESSAGE",
         intent: "ADMIN_LOOKUP_USER",
         requiresWalletSignature: false,
-        text: `👤 User Record (${detail.email}):\n• Status: ${detail.status} (Email Verified: ${detail.isEmailVerified})\n• Bound Wallet: ${detail.walletAddress || "None"}\n• On-Chain Approved: ${detail.isOnChainApproved ? "YES" : "NO"}\n• Credit Balance: ${detail.credit} USDC (Locked: ${detail.lockedCredit})\n• Registered Assets: ${detail.assets.length}`,
-        preview: detail,
+        text: "User not found. No user or merchant matches that email, wallet or name (e.g. \"Lookup user alice@indico.example\" or \"Lookup merchant TestMerchant\").",
       };
     }
 
@@ -897,7 +913,7 @@ export class AiService {
       type: "UNKNOWN",
       intent: "ADMIN_UNKNOWN",
       requiresWalletSignature: false,
-      text: "Supported Admin Console Commands:\n• \"Pool liquidity status\"\n• \"Show active and overdue loans\"\n• \"Lookup user [email or wallet]\"\n• \"Issue credit of [amount] to [wallet]\"\n• \"Debit credit of [amount] from [wallet]\"\n  (add \"ref [your reference]\" to either; it stays off-chain)\n• \"Add service [name] to merchant [name or wallet] price [amount]\"\n• \"Update price of [service] for merchant [name or wallet] to [amount]\"\n• \"Send agreement to merchant [name or wallet]\" (records it as sent; no email is sent)",
+      text: "Supported Admin Console Commands:\n• \"Pool liquidity status\"\n• \"Show active and overdue loans\"\n• \"Lookup user [email or wallet]\" or \"Lookup merchant [name or wallet]\"\n• \"Issue credit of [amount] to [wallet]\"\n• \"Debit credit of [amount] from [wallet]\"\n  (add \"ref [your reference]\" to either; it stays off-chain)\n• \"Add service [name] to merchant [name or wallet] price [amount]\"\n• \"Update price of [service] for merchant [name or wallet] to [amount]\"\n• \"Send agreement to merchant [name or wallet]\" (records it as sent; no email is sent)",
     };
   }
 
@@ -983,9 +999,66 @@ export class AiService {
     };
   }
 
+  /** A merchant's database record plus its on-chain figures; figures read as unavailable if the ledger can't be read. */
+  private static async merchantRecord(
+    merchant: { id: string; name: string; walletAddress: string; agreementStatus: string; services?: unknown[] },
+    byWallet: boolean
+  ): Promise<AiResponse> {
+    const wallet = merchant.walletAddress as Address;
+    const read = (functionName: "approvedMerchant" | "depositBoxOf" | "credit" | "maxWithdraw") =>
+      publicClient.readContract({ address: env.INDICO_LEDGER_ADDRESS as Address, abi: INDICO_LEDGER_ABI, functionName, args: [wallet] } as any);
+    let approved: boolean | null = null, box: string | null = null, credit: bigint | null = null, position: bigint | null = null;
+    try {
+      const [a, b, c, d] = await Promise.all([read("approvedMerchant"), read("depositBoxOf"), read("credit"), read("maxWithdraw")]);
+      approved = Boolean(a);
+      box = /^0x0+$/.test(String(b)) ? null : String(b);
+      credit = c as bigint;
+      position = d as bigint;
+    } catch {
+      // On-chain figures stay unknown; the database fields are still shown.
+    }
+    const shown = (v: string | null) => v ?? "unavailable";
+    const creditText = credit === null ? null : formatAmount(credit);
+    const positionText = position === null ? null : formatAmount(position);
+    return {
+      success: true,
+      type: "MESSAGE",
+      intent: "ADMIN_LOOKUP_MERCHANT",
+      requiresWalletSignature: false,
+      text:
+        (byWallet ? "This wallet is a merchant, not a user.\n" : "") +
+        `🏢 Merchant Record (${merchant.name}):\n• Wallet: ${merchant.walletAddress}\n• Approved On-Chain: ${approved === null ? "unavailable" : approved ? "YES" : "NO"}\n• Agreement: ${merchant.agreementStatus}\n• Deposit Address: ${box ?? (approved === null ? "unavailable" : "none")}\n• Credit Received: ${shown(creditText)}${creditText ? " Credit" : ""}\n• Pool Position (withdrawable): ${shown(positionText)}${positionText ? " USDC" : ""}\n• Services: ${merchant.services?.length ?? 0}`,
+      preview: {
+        kind: "merchant",
+        id: merchant.id,
+        name: merchant.name,
+        walletAddress: merchant.walletAddress,
+        approvedOnChain: approved,
+        agreementStatus: merchant.agreementStatus,
+        depositAddress: box,
+        creditReceived: creditText,
+        poolPosition: positionText,
+        services: merchant.services?.length ?? 0,
+      },
+    };
+  }
+
   /** Add or update a merchant's service, or mark its agreement sent. Returns null if the prompt is none of these. */
   private static async handleMerchantCommand(adminId: string, prompt: string): Promise<AiResponse | null> {
-    const add = prompt.match(/^add\s+(?:a\s+)?service\s+(.+?)\s+(?:to|for)\s+(?:merchant\s+)?(.+?)\s+(?:at\s+)?price\s+(?:of\s+)?\$?(\S+)\s*$/i);
+    // "merchant" named first (so a service name may contain "for"), then the looser older wording.
+    const price = String.raw`\s+(?:(?:at\s+)?price(?:\s+of)?|at|for|to)\s+\$?([\d,]+(?:\.\d+)?)(?:\s*(?:usdc|credits?))?\s*$`;
+    const add =
+      prompt.match(new RegExp(String.raw`^add\s+(?:a\s+)?service\s+(.+?)\s+(?:to|for)\s+merchant\s+(.+?)` + price, "i")) ??
+      prompt.match(new RegExp(String.raw`^add\s+(?:a\s+)?service\s+(.+?)\s+(?:to|for)\s+(.+?)` + price, "i"));
+    if (!add && /^add\s+(?:a\s+)?service\b/i.test(prompt)) {
+      return {
+        success: true,
+        type: "UNKNOWN",
+        intent: "ADMIN_ADD_SERVICE",
+        requiresWalletSignature: false,
+        text: 'To add a service, write: "Add service [name] to merchant [name or wallet] price [amount]" (for example "Add service Legal consultation to merchant TestMerchant price 50").',
+      };
+    }
     const upd = prompt.match(/^(?:update|change|set)\s+(?:the\s+)?price\s+of\s+(.+?)\s+for\s+(?:merchant\s+)?(.+?)\s+to\s+\$?(\S+)\s*$/i);
     const send = prompt.match(/^send\s+(?:the\s+)?(?:arbitration\s+)?agreement\s+to\s+(?:merchant\s+)?(.+?)\s*$/i);
     const intent = add ? "ADMIN_ADD_SERVICE" : upd ? "ADMIN_UPDATE_SERVICE" : send ? "ADMIN_SEND_AGREEMENT" : null;

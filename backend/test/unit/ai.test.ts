@@ -1060,10 +1060,139 @@ describe("AI Assistant Module (PRD §4.6 AI-01 to AI-07; PRD §4.7 AD-19; Rule D
       });
     });
 
+    /**
+     * Lookup wording and the merchant fallback:
+     * | Input                                   | Expected                                   |
+     * |-----------------------------------------|--------------------------------------------|
+     * | "look up 0x…" (two words)                | a lookup, never the menu                   |
+     * | "find 0x…", "show 0x…", "who is 0x…"     | a lookup                                   |
+     * | "Show active and overdue loans"         | the loans answer, not a lookup             |
+     * | a user's wallet or email                | the user record                            |
+     * | a merchant's wallet                     | the merchant record, with on-chain figures |
+     * | "lookup merchant TestMerchant"          | the merchant record by exact name          |
+     * | neither                                 | "No user or merchant matches"              |
+     * | merchant found, ledger unreadable       | DB fields, on-chain figures "unavailable"  |
+     */
+    describe("Lookup wording and merchant fallback", () => {
+      const merchantWallet = "0x7b4C1E792d0ef3942f479E74de6043A6238a8fd1";
+      const merchantRow = {
+        id: "m-1",
+        name: "TestMerchant",
+        walletAddress: merchantWallet.toLowerCase(),
+        agreementStatus: "SIGNED",
+        services: [{ name: "Legal consultation" }],
+      };
+      const ledger = (o: Record<string, unknown> | Error) =>
+        vi.spyOn(publicClient, "readContract").mockImplementation((async ({ functionName }: any) => {
+          if (o instanceof Error) throw o;
+          return o[functionName];
+        }) as any);
+
+      it.each(["look up", "Look Up", "lookup", "find", "show", "who is"])("'%s 0x…' is a lookup", async (verb) => {
+        vi.spyOn(prisma.user, "findFirst").mockResolvedValue(null);
+        vi.spyOn(prisma.merchant, "findMany").mockResolvedValue([]);
+        const res = await AiService.handleAdminCommand(mockAdminId, `${verb} ${merchantWallet}`);
+        expect(res.intent).toMatch(/^ADMIN_LOOKUP_/);
+        expect(res.text).not.toContain("Supported Admin Console Commands");
+      });
+
+      it("keeps 'Show active and overdue loans' as the loans answer", async () => {
+        const loans = vi.spyOn(AdminOperationsService, "getLoansDashboard").mockResolvedValue({ items: [], total: 0 } as any);
+        const res = await AiService.handleAdminCommand(mockAdminId, "Show active and overdue loans");
+        expect(loans).toHaveBeenCalled();
+        expect(res.intent).toBe("ADMIN_READ_LOANS");
+      });
+
+      it("answers with the merchant's record when the wallet is a merchant's", async () => {
+        vi.spyOn(prisma.user, "findFirst").mockResolvedValue(null);
+        const find = vi.spyOn(prisma.merchant, "findMany").mockResolvedValue([merchantRow] as any);
+        ledger({
+          approvedMerchant: true,
+          depositBoxOf: "0x88da0AbFfec73ae74cab78672E3A72849e5B0DfC",
+          credit: 50_000_000n,
+          maxWithdraw: 20_000_000n,
+        });
+        const res = await AiService.handleAdminCommand(mockAdminId, `Lookup user ${merchantWallet}`);
+        expect(find.mock.calls[0]![0]).toMatchObject({ where: { walletAddress: merchantWallet.toLowerCase() } });
+        expect(res.type).toBe("MESSAGE");
+        expect(res.intent).toBe("ADMIN_LOOKUP_MERCHANT");
+        expect(res.text).toContain("TestMerchant");
+        expect(res.text).toContain("not a user");
+        expect(res.preview).toMatchObject({
+          kind: "merchant",
+          name: "TestMerchant",
+          approvedOnChain: true,
+          agreementStatus: "SIGNED",
+          depositAddress: "0x88da0AbFfec73ae74cab78672E3A72849e5B0DfC",
+          creditReceived: "50.000000",
+          poolPosition: "20.000000",
+          services: 1,
+        });
+      });
+
+      it("finds a merchant by exact name", async () => {
+        vi.spyOn(prisma.user, "findFirst").mockResolvedValue(null);
+        const find = vi.spyOn(prisma.merchant, "findMany").mockResolvedValue([merchantRow] as any);
+        ledger({ approvedMerchant: true, depositBoxOf: "0x88da0AbFfec73ae74cab78672E3A72849e5B0DfC", credit: 0n, maxWithdraw: 0n });
+        const res = await AiService.handleAdminCommand(mockAdminId, "Lookup merchant TestMerchant");
+        expect(find.mock.calls[0]![0]).toMatchObject({ where: { name: { equals: "TestMerchant", mode: "insensitive" } } });
+        expect(res.preview?.name).toBe("TestMerchant");
+      });
+
+      it("still shows the merchant's database fields when the ledger cannot be read", async () => {
+        vi.spyOn(prisma.user, "findFirst").mockResolvedValue(null);
+        vi.spyOn(prisma.merchant, "findMany").mockResolvedValue([merchantRow] as any);
+        ledger(new Error("rpc down"));
+        const res = await AiService.handleAdminCommand(mockAdminId, `look up ${merchantWallet}`);
+        expect(res.type).toBe("MESSAGE");
+        expect(res.preview).toMatchObject({ name: "TestMerchant", approvedOnChain: null, creditReceived: null });
+        expect(res.text).toMatch(/unavailable/i);
+      });
+
+      it("says neither when the wallet is no user and no merchant", async () => {
+        vi.spyOn(prisma.user, "findFirst").mockResolvedValue(null);
+        vi.spyOn(prisma.merchant, "findMany").mockResolvedValue([]);
+        const res = await AiService.handleAdminCommand(mockAdminId, `look up ${merchantWallet}`);
+        expect(res.text).toMatch(/no user or merchant matches/i);
+      });
+    });
+
+    /**
+     * Add-service wording: the merchant is named after "to merchant" / "for merchant"; the price
+     * after "price", "at", "for" or "to", optionally followed by "USDC" or "credit".
+     */
+    describe("Add-service wording", () => {
+      const merchant = { id: "m-1", name: "TestMerchant", walletAddress: mockMerchantWallet.toLowerCase() };
+
+      it.each([
+        ["Add service x service for merchant TestMerchant to 70", "x service", "70.000000"],
+        ["Add service Legal consultation to merchant TestMerchant price 50", "Legal consultation", "50.000000"],
+        ["Add service Audit to merchant TestMerchant at 12.5", "Audit", "12.500000"],
+        ["add a service Fee for filing for merchant TestMerchant for 5 USDC", "Fee for filing", "5.000000"],
+        ["Add service Review to merchant TestMerchant price of 9 credit", "Review", "9.000000"],
+      ])("%s", async (prompt, name, price) => {
+        vi.spyOn(prisma.merchant, "findMany").mockResolvedValue([merchant] as any);
+        const add = vi.spyOn(AdminOperationsService, "addMerchantService").mockResolvedValue({} as any);
+        const res = await AiService.handleAdminCommand(mockAdminId, prompt);
+        expect(res.intent).toBe("ADMIN_ADD_SERVICE");
+        expect(add).toHaveBeenCalledWith(mockAdminId, "m-1", { name, price, description: name });
+      });
+
+      it("explains the wording instead of showing the menu when the price is missing", async () => {
+        const add = vi.spyOn(AdminOperationsService, "addMerchantService").mockResolvedValue({} as any);
+        const res = await AiService.handleAdminCommand(mockAdminId, "Add service Audit for merchant TestMerchant");
+        expect(add).not.toHaveBeenCalled();
+        expect(res.intent).toBe("ADMIN_ADD_SERVICE");
+        expect(res.type).toBe("UNKNOWN");
+        expect(res.text).toContain("Add service [name] to merchant [name or wallet] price [amount]");
+      });
+    });
+
     it("lists the merchant commands in the menu", async () => {
       const res = await AiService.handleAdminCommand(mockAdminId, "restart servers");
       expect(res.text).toContain("Add service");
       expect(res.text).toContain("Send agreement");
+      expect(res.text).toContain("Lookup merchant [name or wallet]");
     });
 
     it("returns command menu for unrecognized admin commands", async () => {

@@ -37,6 +37,7 @@ export const INDICO_LEDGER_ABI = parseAbi([
 
   // Views
   "function credit(address user) external view returns (uint256)",
+  "function maxWithdraw(address merchant) external view returns (uint256)",
   "function participantRole(address account) external view returns (uint8)",
   "function paused() external view returns (bool)",
   "function lockedCredit(address user) external view returns (uint256)",

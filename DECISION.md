@@ -3428,6 +3428,47 @@ Gate (logs in `docs/gate-logs/C-091/`):
 - G10 pending: owner pushes.
 Commit: feat: new passwords need 8 or more characters with an uppercase letter, a number and a symbol (U-01, U-03)
 
+### C-092 · AD-19 · Admin AI console: lookup wording, merchant lookups, natural add-service wording · 2026-11-14
+Type: fix (backend)
+Decisions: none new
+Found by the owner testing the new admin dashboard's AI console:
+- "look up 0x…" showed the command menu: the lookup matched only "lookup" written as one word or
+  the word "user".
+- "Lookup user 0x7b4C…" answered "User not found": that wallet is TestMerchant's (an approved
+  merchant holding 50 credit, read from the ledger), and the lookup searched users only.
+- "Add service x service for merchant TestMerchant to 70" showed the menu: add-service accepted
+  only "… price N".
+Files:
+- Changed: `backend/src/modules/ai/ai.service.ts`:
+  - A lookup is any of "look up", "lookup", "find", "show", "who is", "details", "info" or "user"
+    with an email, a wallet, or "merchant <name>". "Show active and overdue loans" (no target) stays
+    the loans answer.
+  - A wallet or name that is not a user's but a merchant's returns `ADMIN_LOOKUP_MERCHANT`: name,
+    wallet, on-chain approval, agreement status, deposit address, credit received, pool position
+    (`maxWithdraw`), number of services. The database fields still show, and the on-chain figures
+    read "unavailable", when the ledger cannot be read. Neither: "User not found. No user or merchant
+    matches …". `ADMIN_LOOKUP_USER` is unchanged for users.
+  - Add-service takes the price after "price", "price of", "at", "for" or "to", with an optional
+    "USDC" or "credit" after it; the form naming "merchant" is tried first, so a service name may
+    contain "for". "Add service …" with no price answers with the correct wording instead of the
+    menu. The menu lists "Lookup merchant [name or wallet]".
+- Changed: `backend/src/lib/viem.ts`: `maxWithdraw` in the ABI.
+- Changed: `backend/test/unit/ai.test.ts`: two partition tables, 17 tests: six lookup verbs; the
+  loans answer kept; merchant record by wallet and by name; the ledger unreadable; neither; five
+  add-service wordings; the missing price; the menu line.
+- Changed (local, not pushed): `ADMIN_DASHBOARD_UPDATE_1.1.md` item 10.
+Gate (logs in `docs/gate-logs/C-092/`):
+- Red phase: 14 tests failed on the old code.
+- G1 pass: 564 passed, 0 failed, three runs alike, and again after the menu line (`G1-final.log`).
+- G2 pass: `tsc --noEmit` exit 0.
+- G9 pass, `G9.log`: 10 of 10 caught, source restored byte-identical: K1 "look up" not recognised;
+  K2 "show" alone always a lookup; K3 no merchant fallback; K4 name match case-sensitive; K5 a ledger
+  failure hides the merchant; K6 pool position read from credit; K7 the "merchant"-first wording
+  removed; K8 "to" not accepted before the price; K9 a unit suffix not accepted; K10 a missing price
+  shows the menu.
+- G10 pending: owner pushes, then Render redeploys.
+Commit: fix: admin AI console understands look up and find, looks up merchants, accepts natural add-service wording (AD-19)
+
 ---
 
 ## Open items

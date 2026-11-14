@@ -175,6 +175,7 @@ Content-Type: application/json
 | "Pool liquidity status" | `ADMIN_READ_POOL` | `MESSAGE` | No |
 | "Show active and overdue loans" | `ADMIN_READ_LOANS` | `MESSAGE` | No |
 | "Lookup user alice@example.com" or "… user 0x…" | `ADMIN_LOOKUP_USER` | `MESSAGE` | No |
+| "Look up 0x…" (a merchant's wallet) or "Lookup merchant TestMerchant" | `ADMIN_LOOKUP_MERCHANT` | `MESSAGE` | No; `preview` has `approvedOnChain`, `depositAddress`, `creditReceived`, `poolPosition` |
 | "Issue credit of 1,000 to 0x… ref INV-001" | `ADMIN_ISSUE_CREDIT` | `ACTION_PREVIEW` | Yes, `adminIssueCredit` |
 | "Debit credit of 500 from 0x… ref CASH-001" | `ADMIN_DEBIT_CREDIT` | `ACTION_PREVIEW` | Yes, `adminDebitCredit` |
 | "Add service Legal consultation to merchant TestMerchant price 50" | `ADMIN_ADD_SERVICE` | `MESSAGE` | No, saved at once |
@@ -208,7 +209,9 @@ Content-Type: application/json
   saved with the memo in the audit log (`AI_CREDIT_PREPARED`). Show both on the confirmation card.
 - A merchant is found by its wallet or its exact name; an unknown or ambiguous name returns
   `UNKNOWN`. A merchant whose agreement is already signed cannot be marked sent again (`ERROR` here; `409` from `POST /admin/merchants/:id/agreement/send`).
-- "Lookup user" searches the database only (email or bound wallet).
+- Lookups accept "look up", "lookup", "find", "show" or "who is". A wallet that is not a user but a
+  merchant returns the merchant's record. Add-service also accepts "… for merchant X to 70",
+  "… at 70", "… for 70 USDC".
 
 ---
 
