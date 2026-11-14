@@ -157,6 +157,8 @@ export class ApiClient {
   static async logout() {
     try {
       await this.request("/auth/logout", { method: "POST" });
+    } catch {
+      // An already-invalid session is still a successful logout on this device.
     } finally {
       this.setUserToken(null);
     }

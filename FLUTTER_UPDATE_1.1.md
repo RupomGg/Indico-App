@@ -108,7 +108,28 @@ Nothing in this flow touches the Flutter app. The admin dashboard team has its o
 
 ---
 
-## 6. Corrections to the old FLUTTER_DEVELOPER_GUIDE.md
+## 6. Found in the 2026-11-14 end-to-end test: check the app does this
+
+The full user journey (register, bind wallet, approval, terms, asset, pay a merchant, borrow, repay)
+was run on Base Sepolia against the new ledger. Every on-chain step worked. These are the
+behaviours the test web client got wrong; make sure the Flutter app gets them right.
+
+| # | Rule | Why |
+|---|---|---|
+| 6.1 | **Asset type numbers are 0 to 5**: 0 Arbitration award, 1 Bill of exchange, 2 Promissory note, 3 Bond, 4 Real estate, 5 Jewellery. Send the number, show the label from this table. | The test client sent 3 for "Promissory note"; the ledger recorded a **Bond**, permanently. |
+| 6.2 | **After every confirmed transaction, refresh balances by polling** `GET /history/balance` (and loans) every 2 s for up to ~30 s until the change appears. | The indexer runs a few seconds behind the chain; the test client kept showing 0 credit after minting 1,000. |
+| 6.3 | **Terms screen shows the full terms text** (`content` from `GET /terms/current`) and the estimated network cost before the user signs. | U-06, U-12. The test client showed only a title and the hash. |
+| 6.4 | **Review screen before registering an asset**: every field and the declared value, then confirm. | A-05. |
+| 6.5 | **Repay screen states the exact amount** ("Repay 10.00 USDC"), and that two wallet prompts follow (USDC approve, then repay). | The amount was missing in the test client. |
+| 6.6 | **Extend button**: disabled until the window opens, with the date it opens ("Extension opens on 13 Jan 2027"). The backend's refusal message contains a Unix timestamp; format it as a date. | |
+| 6.7 | **Max you can borrow now** = the smaller of the user's limit and the pool's available USDC. | The test client showed 760 while the pool held 20. |
+| 6.8 | **Logout always clears the local session**, even if the server answers 401 (expired session). Otherwise the user is stuck signed in to a dead session. | |
+| 6.9 | **Switching the wallet account** in Tangem or MetaMask must not lose the app's place; re-read the connected address and, if it differs from the bound wallet, say so instead of sending. | |
+| 6.10 | A refused action shows the backend's message (tested: "requested loan exceeds available pool liquidity", "spend exceeds available credit", "extension window is not open yet"), and **no wallet prompt opens**. | These all worked; keep it that way. |
+
+---
+
+## 7. Corrections to the old FLUTTER_DEVELOPER_GUIDE.md
 
 These were wrong before this update; fix them if the app followed the old guide:
 

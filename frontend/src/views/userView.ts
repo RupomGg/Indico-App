@@ -383,11 +383,12 @@ export class UserView {
             <div class="form-group">
               <label class="form-label">Asset Type</label>
               <select id="asset-type" class="form-select">
-                <option value="1">Arbitration Award (1)</option>
-                <option value="2">Bill of Exchange (2)</option>
-                <option value="3">Promissory Note (3)</option>
-                <option value="4">Bond (4)</option>
-                <option value="5">Commercial Invoice (5)</option>
+                <option value="0">Arbitration Award</option>
+                <option value="1">Bill of Exchange</option>
+                <option value="2">Promissory Note</option>
+                <option value="3">Bond</option>
+                <option value="4">Real Estate</option>
+                <option value="5">Jewellery</option>
               </select>
             </div>
 
@@ -1324,21 +1325,12 @@ export class UserView {
     }
   }
 
+  // The ledger's asset types (D-29): the number sent on-chain, 0 to 5.
   private static getAssetTypeName(type: number): string {
-    switch (type) {
-      case 0:
-      case 1:
-        return "Arbitration Award";
-      case 2:
-        return "Bill of Exchange";
-      case 3:
-        return "Promissory Note";
-      case 4:
-        return "Bond";
-      case 5:
-        return "Commercial Invoice";
-      default:
-        return "Asset Document";
-    }
+    return (
+      ["Arbitration Award", "Bill of Exchange", "Promissory Note", "Bond", "Real Estate", "Jewellery"][type] ??
+      "Asset Document"
+    );
   }
+
 }

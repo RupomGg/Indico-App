@@ -3290,6 +3290,35 @@ Open items: none raised. Storage is the local disk (`STORAGE_DRIVER=local`): on 
 persistent disk, uploaded agreements and asset documents are lost on redeploy.
 Commit: feat: admin uploads and downloads the merchant's signed agreement, stored encrypted and checked against the hash on-chain (AD-07, D-69)
 
+### C-088 · Fresh start and end-to-end interface test on Base Sepolia, ledger 1.1.0 · 2026-11-14
+Type: chore (test run, test tooling, docs)
+Decisions: none new
+- Both databases emptied at the owner's request (local, and the Neon database Render uses), keeping
+  `admin_users`; the indexer checkpoint set to the ledger's deployment block 57981793.
+- Full journey through the interface, the owner confirming every wallet prompt: merchant onboarded
+  with a signed PDF (agreement hash recorded, deposit box assigned, no wallet terms signature); user
+  registered, wallet bound, approved on-chain with the backend's account reference; terms signed;
+  asset registered (1,000 credit); 50 credit paid to the merchant (no fee); 20 USDC sent to the
+  merchant's deposit box and swept by Render's role-less keeper into 20 USDC of shares; 10 USDC
+  borrowed (12.5 locked); 10 USDC repaid (exact allowance). Refusals checked with no wallet prompt:
+  borrow above pool cash, spend above unlocked credit, extend before the window. The live
+  dashboard's indexer showed every event.
+- Found and not yet fixed (owner's call): the dashboard sends transactions to the retired ledger
+  `0x422D…` with the old two-argument approval; no email delivery exists (verification and reset
+  impossible with `NODE_ENV=production`); with `NODE_ENV=development` the API returns raw
+  verification and reset tokens (Render runs development); `DOCUMENT_ENCRYPTION_KEY` on Render is the
+  public placeholder; the indexer starts 50 blocks back when no checkpoint exists; the local Infura
+  RPC returns 402. Secrets pasted during the session must be rotated (Neon, keeper key, JWT secret).
+Files:
+- New: `backend/scripts/reset-db.mjs`: shows row counts, empties every table but `admin_users` only
+  with `--yes`, sets the indexer checkpoint, deletes stored files.
+- Changed: `frontend/src/api.ts` (logout clears the session even when the server rejects it),
+  `frontend/src/views/userView.ts` (asset types 0 to 5 as on the ledger; the old list sent
+  "Promissory note" as 3, recorded on-chain as a bond). Local test tool; `tsc --noEmit` exit 0.
+- New: `ADMIN_DASHBOARD_UPDATE_1.1.md`: what the admin dashboard must change, by priority.
+- Changed: `FLUTTER_UPDATE_1.1.md`: section 6, the app-level findings of this test.
+Commit: chore: database reset script, test frontend fixes, dashboard and Flutter update guides from the Sepolia interface test
+
 ---
 
 ## Open items
