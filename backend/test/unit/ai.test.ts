@@ -13,7 +13,9 @@ import { CreditService } from "../../src/modules/credit/credit.service.js";
 import { AdminOperationsService } from "../../src/modules/admin/admin.operations.service.js";
 import { env } from "../../src/config/env.js";
 import jwt from "jsonwebtoken";
-import { type Address } from "viem";
+import { type Address, decodeFunctionData } from "viem";
+import { publicClient, INDICO_LEDGER_ABI } from "../../src/lib/viem.js";
+import { ConflictError } from "../../src/lib/errors.js";
 
 /**
  * =======================================================================================
@@ -296,6 +298,7 @@ describe("AI Assistant Module (PRD §4.6 AI-01 to AI-07; PRD §4.7 AD-19; Rule D
       } as any);
 
       vi.spyOn(prisma.loan, "count").mockResolvedValue(1);
+      vi.spyOn(publicClient, "readContract").mockResolvedValue(100_000_000_000n as any); // pool 100,000
 
       const res = await AiService.handleUserPrompt(mockUserId, "What is my available credit?");
       expect(res.success).toBe(true);
@@ -304,6 +307,59 @@ describe("AI Assistant Module (PRD §4.6 AI-01 to AI-07; PRD §4.7 AD-19; Rule D
       expect(res.text).toContain("Available Credit: 8000.000000 USDC");
       expect(res.text).toContain("Max Borrowable Now (80% LTV): 6400.000000 USDC");
       expect(res.preview?.activeLoans).toBe(1);
+      expect(res.preview?.maxBorrowable).toBe("6400.000000 USDC");
+    });
+
+    /**
+     * Max borrowable = min(80% of available credit, pool cash):
+     * | pool cash          | expected                                   |
+     * |--------------------|--------------------------------------------|
+     * | above the limit    | the credit limit                           |
+     * | exactly the limit  | the credit limit (not "limited by pool")   |
+     * | below the limit    | the pool cash, "limited by pool liquidity" |
+     * | 0                  | 0, "limited by pool liquidity"             |
+     * | unreadable         | the credit limit, marked "before pool"     |
+     */
+    describe("max borrowable accounts for pool cash", () => {
+      const ask = async (pool: bigint | Error) => {
+        vi.spyOn(prisma.walletBinding, "findUnique").mockResolvedValue({ walletAddress: mockUserWallet } as any);
+        vi.spyOn(prisma.creditBalance, "findUnique").mockResolvedValue({
+          creditUnits: "10000000000",
+          lockedCreditUnits: "2000000000",
+        } as any);
+        vi.spyOn(prisma.loan, "count").mockResolvedValue(0);
+        const read = vi.spyOn(publicClient, "readContract");
+        if (pool instanceof Error) read.mockRejectedValue(pool);
+        else read.mockResolvedValue(pool as any);
+        return AiService.handleUserPrompt(mockUserId, "What is my balance?");
+      };
+
+      it("is the credit limit when the pool holds exactly that much", async () => {
+        const res = await ask(6_400_000_000n);
+        expect(res.preview?.maxBorrowable).toBe("6400.000000 USDC");
+        expect(res.text).not.toMatch(/limited by pool/i);
+      });
+
+      it("is the pool cash when the pool holds less", async () => {
+        const res = await ask(20_000_000n);
+        expect(res.preview?.maxBorrowable).toBe("20.000000 USDC");
+        expect(res.preview?.poolAvailable).toBe("20.000000 USDC");
+        expect(res.text).toContain("Max Borrowable Now: 20.000000 USDC (limited by pool liquidity)");
+      });
+
+      it("is 0 when the pool is empty", async () => {
+        const res = await ask(0n);
+        expect(res.preview?.maxBorrowable).toBe("0.000000 USDC");
+        expect(res.text).toMatch(/limited by pool liquidity/);
+      });
+
+      it("falls back to the credit limit, marked as such, when the pool cannot be read", async () => {
+        const res = await ask(new Error("rpc down"));
+        expect(res.type).toBe("MESSAGE");
+        expect(res.preview?.maxBorrowable).toBe("6400.000000 USDC");
+        expect(res.preview?.poolAvailable).toBeNull();
+        expect(res.text).toMatch(/before pool liquidity/i);
+      });
     });
 
     it("handles READ_STATUS loans inquiry when active loans exist", async () => {
@@ -433,6 +489,44 @@ describe("AI Assistant Module (PRD §4.6 AI-01 to AI-07; PRD §4.7 AD-19; Rule D
       expect(res.preview?.principalToRepay).toBe("5000.000000 USDC");
       expect(res.preview?.collateralToRelease).toBe("6250.000000 Credit");
       expect(res.preparedTx?.data).toBe("0xrepaycalldata");
+      expect(res.preparedTxs?.map((t) => t.data)).toEqual(["0xrepaycalldata"]);
+    });
+
+    it("returns the USDC approval before the repay, and no single preparedTx, when approval is needed", async () => {
+      vi.spyOn(LoansService, "prepareRepayCalldata").mockResolvedValue({
+        loanId: "1",
+        principal: "5000.000000",
+        principalUnits: "5000000000",
+        collateral: "6250.000000",
+        collateralUnits: "6250000000",
+        dueDate: 1735689600,
+        requiresApproval: true,
+        approvalTx: {
+          to: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+          data: "0xapprovecalldata",
+          value: "0",
+          gasCostEth: "0.0001",
+          canAfford: true,
+        },
+        repayTx: {
+          to: env.INDICO_LEDGER_ADDRESS,
+          data: "0xrepaycalldata",
+          value: "0",
+          gasCostEth: "0.0002",
+          canAfford: true,
+        },
+        userEthBalance: "0.05",
+        ethShortfall: "0",
+        canAfford: true,
+      } as any);
+
+      const res = await AiService.handleUserPrompt(mockUserId, "Repay loan #1");
+      expect(res.type).toBe("TRANSACTION_PREVIEW");
+      // A client that sends only preparedTx would repay without the allowance and revert.
+      expect(res.preparedTx).toBeUndefined();
+      expect(res.preparedTxs?.map((t) => t.data)).toEqual(["0xapprovecalldata", "0xrepaycalldata"]);
+      expect(res.preparedTxs?.[0]?.to).toBe("0x036CbD53842c5426634e7929541eC2318f3dCF7e");
+      expect(res.preview?.walletApprovals).toBe(2);
     });
 
     it("handles EXTEND_LOAN with valid loan ID by preparing extend preview", async () => {
@@ -592,6 +686,17 @@ describe("AI Assistant Module (PRD §4.6 AI-01 to AI-07; PRD §4.7 AD-19; Rule D
   // 4. Admin AI Operations Console (PRD §4.7 AD-19)
   // =========================================================================
   describe("Admin AI Console Execution (PRD §4.7 AD-19)", () => {
+    function mockLedger(o: { role: number; paused?: boolean; credit?: bigint; available?: bigint }) {
+      vi.spyOn(prisma.auditLog, "create").mockResolvedValue({} as any);
+      return vi.spyOn(publicClient, "readContract").mockImplementation((async ({ functionName }: any) => {
+        if (functionName === "participantRole") return o.role;
+        if (functionName === "paused") return o.paused ?? false;
+        if (functionName === "credit") return o.credit ?? 0n;
+        if (functionName === "available") return o.available ?? 0n;
+        throw new Error(`unexpected read ${functionName}`);
+      }) as any);
+    }
+
     it("handles pool liquidity query", async () => {
       vi.spyOn(AdminOperationsService, "getPoolDashboard").mockResolvedValue({
         poolCash: "250000.000000",
@@ -697,6 +802,7 @@ describe("AI Assistant Module (PRD §4.6 AI-01 to AI-07; PRD §4.7 AD-19; Rule D
     });
 
     it("prepares admin credit issuance calldata preview (PRD §4.7 AD-10)", async () => {
+      mockLedger({ role: 1 });
       const res = await AiService.handleAdminCommand(
         mockAdminId,
         `Issue credit of 1,000 to ${mockAdminWallet} for manual deposit`
@@ -713,6 +819,7 @@ describe("AI Assistant Module (PRD §4.6 AI-01 to AI-07; PRD §4.7 AD-19; Rule D
     });
 
     it("prepares admin credit debit calldata preview (PRD §4.7 AD-12)", async () => {
+      mockLedger({ role: 1, available: 1_000_000_000n });
       const res = await AiService.handleAdminCommand(
         mockAdminId,
         `Debit credit of 500 from ${mockAdminWallet} for cash settlement`
@@ -726,6 +833,237 @@ describe("AI Assistant Module (PRD §4.6 AI-01 to AI-07; PRD §4.7 AD-19; Rule D
       expect(res.preview?.creditToDebit).toBe("500.000000 Credit");
       expect(res.preparedTx?.to).toBe(env.INDICO_LEDGER_ADDRESS);
       expect(res.preparedTx?.data).toBeDefined();
+    });
+
+    /**
+     * Value-moving admin commands (AD-10, AD-11, AD-12). Partition table:
+     * | Input                                   | Expected                                    |
+     * |-----------------------------------------|---------------------------------------------|
+     * | amount before the address               | that amount                                 |
+     * | amount after the address                | that amount, never the "0" of "0x"          |
+     * | no amount, or 0                         | UNKNOWN with guidance, no preparedTx        |
+     * | more than 6 decimals                    | UNKNOWN, no preparedTx                      |
+     * | "ref INV-2026-77"                       | kept off-chain; memo is a random 32 bytes   |
+     * | digits inside the reference             | never taken as the amount                   |
+     * | issue to a non-user / paused / over cap | ERROR naming the reason, no preparedTx      |
+     * | debit above available, or of a non-user | ERROR, no preparedTx                        |
+     * | debit a merchant                        | preview (D-63)                              |
+     * | ledger unreadable                       | ERROR, no preparedTx                        |
+     */
+    describe("Admin credit commands: amount, reference, pre-check", () => {
+      const user = mockUserWallet;
+      const argsOf = (data: string) =>
+        decodeFunctionData({ abi: INDICO_LEDGER_ABI, data: data as `0x${string}` }).args as readonly unknown[];
+
+      it("reads the amount written after the address, not the 0 of 0x", async () => {
+        mockLedger({ role: 1 });
+        const res = await AiService.handleAdminCommand(mockAdminId, `Issue credit to ${user} amount 1000`);
+        expect(res.type).toBe("ACTION_PREVIEW");
+        expect(res.preview?.creditToIssue).toBe("1000.000000 Credit");
+        expect(argsOf(res.preparedTx!.data)[1]).toBe(1_000_000_000n);
+      });
+
+      it("refuses a missing or zero amount without a transaction", async () => {
+        mockLedger({ role: 1 });
+        for (const prompt of [`Issue credit to ${user}`, `Issue credit of 0 to ${user}`]) {
+          const res = await AiService.handleAdminCommand(mockAdminId, prompt);
+          expect(res.type).toBe("UNKNOWN");
+          expect(res.preparedTx).toBeUndefined();
+        }
+      });
+
+      it("refuses an amount with more than 6 decimals", async () => {
+        mockLedger({ role: 1 });
+        const res = await AiService.handleAdminCommand(mockAdminId, `Issue credit of 1.1234567 to ${user}`);
+        expect(res.type).toBe("UNKNOWN");
+        expect(res.preparedTx).toBeUndefined();
+      });
+
+      it("keeps the reference off-chain, uses a fresh random memo, and logs both", async () => {
+        mockLedger({ role: 1 });
+        const audit = vi.spyOn(prisma.auditLog, "create").mockResolvedValue({} as any);
+        const prompt = `Issue credit ref INV-2026-77 of 50 to ${user}`;
+        const a = await AiService.handleAdminCommand(mockAdminId, prompt);
+        const b = await AiService.handleAdminCommand(mockAdminId, prompt);
+
+        expect(a.preview?.creditToIssue).toBe("50.000000 Credit");
+        expect(a.preview?.reference).toBe("INV-2026-77");
+        expect(a.preview?.memo).toMatch(/^0x[0-9a-f]{64}$/);
+        expect(argsOf(a.preparedTx!.data)[2]).toBe(a.preview?.memo);
+        expect(a.preview?.memo).not.toBe(b.preview?.memo);
+        expect(a.preparedTx!.data.toLowerCase()).not.toContain(Buffer.from("INV-2026-77").toString("hex"));
+        expect(audit.mock.calls[0]![0].data).toMatchObject({
+          actorType: "ADMIN",
+          actorId: mockAdminId,
+          action: "AI_CREDIT_PREPARED",
+          payload: { kind: "ISSUE", wallet: user, amount: "50.000000", reference: "INV-2026-77", memo: a.preview?.memo },
+        });
+      });
+
+      it("refuses to issue to an address that is not a user", async () => {
+        mockLedger({ role: 2 });
+        const res = await AiService.handleAdminCommand(mockAdminId, `Issue credit of 10 to ${user}`);
+        expect(res.type).toBe("ERROR");
+        expect(res.text).toMatch(/not a registered user/i);
+        expect(res.preparedTx).toBeUndefined();
+      });
+
+      it("refuses while the ledger is paused", async () => {
+        mockLedger({ role: 1, paused: true });
+        const res = await AiService.handleAdminCommand(mockAdminId, `Issue credit of 10 to ${user}`);
+        expect(res.type).toBe("ERROR");
+        expect(res.text).toMatch(/paused/i);
+        expect(res.preparedTx).toBeUndefined();
+      });
+
+      it("allows an issue up to exactly the per-account cap and refuses one unit more (D-27)", async () => {
+        const cap = (1n << 128n) - 1n;
+        mockLedger({ role: 1, credit: cap - 5n });
+        const atCap = await AiService.handleAdminCommand(mockAdminId, `Issue credit of 0.000005 to ${user}`);
+        expect(atCap.type).toBe("ACTION_PREVIEW");
+
+        const over = await AiService.handleAdminCommand(mockAdminId, `Issue credit of 0.000006 to ${user}`);
+        expect(over.type).toBe("ERROR");
+        expect(over.text).toMatch(/cap/i);
+        expect(over.preparedTx).toBeUndefined();
+      });
+
+      it("refuses a debit above the available credit, and a debit of a non-user", async () => {
+        mockLedger({ role: 1, available: 100_000_000n });
+        const exact = await AiService.handleAdminCommand(mockAdminId, `Debit credit of 100 from ${user}`);
+        expect(exact.type).toBe("ACTION_PREVIEW");
+        const over =await AiService.handleAdminCommand(mockAdminId, `Debit credit of 100.000001 from ${user}`);
+        expect(over.type).toBe("ERROR");
+        expect(over.text).toMatch(/available/i);
+        expect(over.preparedTx).toBeUndefined();
+
+        vi.restoreAllMocks();
+        mockLedger({ role: 0 });
+        const none = await AiService.handleAdminCommand(mockAdminId, `Debit credit of 1 from ${user}`);
+        expect(none.type).toBe("ERROR");
+        expect(none.preparedTx).toBeUndefined();
+      });
+
+      it("allows debiting a merchant (D-63)", async () => {
+        mockLedger({ role: 2, available: 50_000_000n });
+        const res = await AiService.handleAdminCommand(mockAdminId, `Debit credit of 50 from ${mockMerchantWallet}`);
+        expect(res.type).toBe("ACTION_PREVIEW");
+        expect(res.preview?.creditToDebit).toBe("50.000000 Credit");
+      });
+
+      it("refuses when the ledger cannot be read", async () => {
+        vi.spyOn(publicClient, "readContract").mockRejectedValue(new Error("rpc down"));
+        vi.spyOn(prisma.auditLog, "create").mockResolvedValue({} as any);
+        const res = await AiService.handleAdminCommand(mockAdminId, `Issue credit of 10 to ${user}`);
+        expect(res.type).toBe("ERROR");
+        expect(res.preparedTx).toBeUndefined();
+      });
+    });
+
+    /**
+     * Merchant bookkeeping commands (AD-05, AD-06). No wallet: nothing moves money.
+     * | Input                                  | Expected                                  |
+     * |----------------------------------------|-------------------------------------------|
+     * | add service, merchant by name / wallet | service added at that price, MESSAGE      |
+     * | unknown merchant / two with that name  | UNKNOWN, nothing written                  |
+     * | update price of an existing service    | price updated, MESSAGE                    |
+     * | update price of an unknown service     | UNKNOWN listing the merchant's services   |
+     * | send agreement                         | marked sent, says no email is sent        |
+     * | send agreement already signed          | ERROR from the service, nothing written   |
+     */
+    describe("Admin merchant commands", () => {
+      const merchant = { id: "m-1", name: "TestMerchant", walletAddress: mockMerchantWallet.toLowerCase() };
+
+      it("adds a service to a merchant named in the command", async () => {
+        vi.spyOn(prisma.merchant, "findMany").mockResolvedValue([merchant] as any);
+        const add = vi.spyOn(AdminOperationsService, "addMerchantService").mockResolvedValue({} as any);
+        const res = await AiService.handleAdminCommand(
+          mockAdminId,
+          "Add service Legal consultation to merchant TestMerchant price 50"
+        );
+        expect(add).toHaveBeenCalledWith(mockAdminId, "m-1", {
+          name: "Legal consultation",
+          price: "50.000000",
+          description: "Legal consultation",
+        });
+        expect(res.type).toBe("MESSAGE");
+        expect(res.intent).toBe("ADMIN_ADD_SERVICE");
+        expect(res.requiresWalletSignature).toBe(false);
+      });
+
+      it("finds the merchant by wallet too", async () => {
+        const find = vi.spyOn(prisma.merchant, "findMany").mockResolvedValue([merchant] as any);
+        vi.spyOn(AdminOperationsService, "addMerchantService").mockResolvedValue({} as any);
+        await AiService.handleAdminCommand(mockAdminId, `Add service Audit to merchant ${mockMerchantWallet} price 99.5`);
+        expect(find.mock.calls[0]![0]).toMatchObject({ where: { walletAddress: mockMerchantWallet.toLowerCase() } });
+      });
+
+      it("refuses an unknown or ambiguous merchant without writing", async () => {
+        const add = vi.spyOn(AdminOperationsService, "addMerchantService").mockResolvedValue({} as any);
+        vi.spyOn(prisma.merchant, "findMany")
+          .mockResolvedValueOnce([] as any)
+          .mockResolvedValueOnce([merchant, { ...merchant, id: "m-2" }] as any);
+        const none = await AiService.handleAdminCommand(mockAdminId, "Add service X to merchant Nobody price 5");
+        const two = await AiService.handleAdminCommand(mockAdminId, "Add service X to merchant TestMerchant price 5");
+        expect(none.type).toBe("UNKNOWN");
+        expect(two.type).toBe("UNKNOWN");
+        expect(add).not.toHaveBeenCalled();
+      });
+
+      it("updates the price of an existing service", async () => {
+        vi.spyOn(prisma.merchant, "findMany").mockResolvedValue([merchant] as any);
+        vi.spyOn(AdminOperationsService, "getMerchantServices").mockResolvedValue({
+          services: [{ id: "s-1", name: "Legal consultation" }],
+        } as any);
+        const upd = vi.spyOn(AdminOperationsService, "updateMerchantService").mockResolvedValue({} as any);
+        const res = await AiService.handleAdminCommand(
+          mockAdminId,
+          "Update price of legal consultation for merchant TestMerchant to 60"
+        );
+        expect(upd).toHaveBeenCalledWith(mockAdminId, "m-1", "s-1", { price: "60.000000" });
+        expect(res.intent).toBe("ADMIN_UPDATE_SERVICE");
+        expect(res.type).toBe("MESSAGE");
+      });
+
+      it("refuses to update an unknown service and lists the merchant's services", async () => {
+        vi.spyOn(prisma.merchant, "findMany").mockResolvedValue([merchant] as any);
+        vi.spyOn(AdminOperationsService, "getMerchantServices").mockResolvedValue({
+          services: [{ id: "s-1", name: "Legal consultation" }],
+        } as any);
+        const upd = vi.spyOn(AdminOperationsService, "updateMerchantService").mockResolvedValue({} as any);
+        const res = await AiService.handleAdminCommand(
+          mockAdminId,
+          "Update price of Tax advice for merchant TestMerchant to 60"
+        );
+        expect(upd).not.toHaveBeenCalled();
+        expect(res.type).toBe("UNKNOWN");
+        expect(res.text).toContain("Legal consultation");
+      });
+
+      it("records an agreement as sent and says no email is sent", async () => {
+        vi.spyOn(prisma.merchant, "findMany").mockResolvedValue([merchant] as any);
+        const send = vi.spyOn(AdminOperationsService, "sendMerchantAgreement").mockResolvedValue({} as any);
+        const res = await AiService.handleAdminCommand(mockAdminId, "Send agreement to merchant TestMerchant");
+        expect(send).toHaveBeenCalledWith(mockAdminId, "m-1");
+        expect(res.intent).toBe("ADMIN_SEND_AGREEMENT");
+        expect(res.text).toMatch(/no email/i);
+      });
+
+      it("reports the refusal when the agreement is already signed", async () => {
+        vi.spyOn(prisma.merchant, "findMany").mockResolvedValue([merchant] as any);
+        vi.spyOn(AdminOperationsService, "sendMerchantAgreement").mockRejectedValue(
+          new ConflictError("Agreement already signed")
+        );
+        const res = await AiService.handleAdminCommand(mockAdminId, "Send agreement to merchant TestMerchant");
+        expect(res.type).toBe("ERROR");
+        expect(res.text).toContain("already signed");
+      });
+    });
+
+    it("lists the merchant commands in the menu", async () => {
+      const res = await AiService.handleAdminCommand(mockAdminId, "restart servers");
+      expect(res.text).toContain("Add service");
+      expect(res.text).toContain("Send agreement");
     });
 
     it("returns command menu for unrecognized admin commands", async () => {

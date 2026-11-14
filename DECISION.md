@@ -3319,6 +3319,85 @@ Files:
 - Changed: `FLUTTER_UPDATE_1.1.md`: section 6, the app-level findings of this test.
 Commit: chore: database reset script, test frontend fixes, dashboard and Flutter update guides from the Sepolia interface test
 
+### C-089 · AD-19 · Admin AI console: amount parsing, random memo, pre-check, merchant commands · 2026-11-14
+Type: fix and feature (backend)
+Decisions: D-27, D-63 applied; O-043 (memo opaque); admin audit D3 (signed agreement re-sent)
+Root causes, found in C-088's test:
+- The credit commands took the first number in the prompt as the amount, so "Issue credit to 0x…
+  amount 1000" prepared a transaction for 0 (the "0" of "0x").
+- The on-chain memo was a fixed text (`ADMIN_MANUAL_ISSUE`, `CASH_SETTLEMENT`), so no two issuances
+  could be told apart and no payment reference could be recorded.
+- Nothing checked the ledger before the preview, so a transaction that would revert (not a user,
+  paused, cap, above available) was handed to the admin to sign.
+- `sendMerchantAgreement` overwrote a SIGNED agreement with SENT, losing the signed state; the
+  shared function is fixed, so the REST route and the console both refuse it (409).
+- Adding or updating services and sending an agreement (AD-05, AD-06, AD-19) were missing.
+Files:
+- Changed: `backend/src/modules/ai/ai.service.ts`: `prepareAdminCredit` for issue and debit: the
+  amount is read after removing addresses and the reference; 0, missing or over 6 decimals is
+  refused; the ledger is read (`participantRole`, `paused`, `credit` or `available`) and every
+  reverting case returns ERROR with no transaction; the memo is 32 random bytes; the admin's
+  `ref …` stays off-chain, saved with the memo in an `AI_CREDIT_PREPARED` audit row.
+  `handleMerchantCommand`: add service, update a service's price, mark agreement sent; merchant by
+  wallet or exact name, unknown or ambiguous refused; service errors returned as ERROR. Menu lists
+  the new commands.
+- Changed: `backend/src/modules/admin/admin.operations.service.ts`: `sendMerchantAgreement` throws
+  `ConflictError` for a SIGNED agreement, before any write.
+- Changed: `backend/src/lib/viem.ts`: `participantRole` and `paused` views in the ABI.
+- Changed: `backend/test/unit/ai.test.ts`: two partition tables and 19 tests (amount in either
+  order, missing, zero, 7 decimals, reference and memo, each refusal, the cap and available on both
+  sides of the boundary, merchant debit, ledger unreadable, the three merchant commands with their
+  refusals, the menu); the two existing preview tests mock the ledger reads.
+  `admin.operations.test.ts`: a signed agreement is not re-sent.
+- Changed: `ADMIN_DASHBOARD_UPDATE_1.1.md` item 10: the new commands, what the backend now
+  guarantees, the limitations removed.
+Gate (logs in `docs/gate-logs/C-089/`):
+- Red phase: 17 new tests failed on the old code.
+- G1 pass: 394 passed, 0 failed, three runs alike.
+- G2 pass: `tsc --noEmit` exit 0.
+- G9 pass, `G9.log`: 14 of 14 caught, sources restored byte-identical: A1 amount read with the
+  address; A2 zero accepted; A3 fixed memo; A4 reference digits read as amount; A5 pause ignored;
+  A6 issue to a merchant; A7 cap off by one; A8 available ignored; A9 RPC failure ignored; A10 no
+  audit row; A11 ambiguous merchant accepted; A12 service match case-sensitive; A13 signed agreement
+  re-sent; A14 debit of exactly available refused. A7 was missed on the first run; the cap test now
+  checks both sides of the boundary, and the debit test likewise (A14).
+- G10 pending: owner pushes.
+Commit: fix: admin AI console reads the amount in any order, uses a random memo with an off-chain reference, checks the ledger before a preview, adds merchant service and agreement commands (AD-19)
+
+### C-090 · AI-03, L-04 · User AI assistant: repay with its USDC approval, max borrow capped by pool cash · 2026-11-14
+Type: fix (backend)
+Decisions: none new
+Root causes, found reviewing the Flutter debug APK against the PRD:
+- `REPAY_LOAN` returned only the repay transaction and dropped the USDC approval that
+  `prepareRepayCalldata` builds when the allowance is short, so a client signing it would send a
+  repay that reverts.
+- The balance answer's "Max Borrowable Now" was 80% of available credit only; a loan is also
+  refused above the pool's cash (L-04), so it overstated what could be borrowed.
+Files:
+- Changed: `backend/src/modules/ai/ai.schemas.ts`: `preparedTxs`, every transaction to sign in
+  order; `preparedTx` stays, set only when there is exactly one (so an older client can never send
+  a repay without its approval).
+- Changed: `backend/src/modules/ai/ai.service.ts`: repay returns `[approvalTx?, repayTx]` and
+  `preview.walletApprovals`; the balance answer reads `poolAvailable` and reports the smaller of
+  the limit and the pool's cash, says when the pool is the limit, and falls back to the limit,
+  marked "before pool liquidity", if the ledger cannot be read (`preview.poolAvailable` null).
+- Changed: `backend/test/unit/ai.test.ts`: a partition table and 4 tests for the maximum (pool
+  above, exactly at, below the limit, empty, unreadable); a repay needing approval returns both
+  transactions in order with no single `preparedTx`; the existing repay and balance tests assert
+  the new fields.
+- Changed: `FLUTTER_UPDATE_1.1.md` section 7.8: sign `preparedTxs` in order; the repay workaround
+  removed; loan numbers are the on-chain id (the API sends no `loanNumber`, so the app already
+  shows the on-chain id).
+Gate (logs in `docs/gate-logs/C-090/`):
+- Red phase: 5 tests failed on the old code.
+- G1 pass: 399 passed, 0 failed, three runs alike.
+- G2 pass: `tsc --noEmit` exit 0.
+- G9 pass, `G9.log`: 6 of 6 caught, source restored byte-identical: R1 approval dropped; R2 order
+  reversed; R3 a single `preparedTx` always sent; P1 pool ignored; P2 pool limit `<=`; P3 an RPC
+  failure read as an empty pool.
+- G10 pending: owner pushes.
+Commit: fix: user AI repay returns the USDC approval before the repay, max borrowable capped by pool cash (AI-03, L-04)
+
 ---
 
 ## Open items

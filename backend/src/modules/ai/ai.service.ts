@@ -1,6 +1,8 @@
-import { encodeFunctionData, isAddress, Address, stringToHex, pad } from "viem";
+import { randomBytes } from "node:crypto";
+import { encodeFunctionData, isAddress, Address, bytesToHex } from "viem";
 import { prisma } from "../../lib/prisma.js";
-import { INDICO_LEDGER_ABI } from "../../lib/viem.js";
+import { INDICO_LEDGER_ABI, publicClient } from "../../lib/viem.js";
+import { AppError } from "../../lib/errors.js";
 import { parseAmount, formatAmount } from "../../lib/amount.js";
 import { env } from "../../config/env.js";
 import { LoansService } from "../loans/loans.service.js";
@@ -85,24 +87,28 @@ export class AiService {
             loanId: intent.loanId,
           });
 
+          // The USDC approval, when needed, must be signed before the repay or the repay reverts.
+          const txs = [prepared.approvalTx, prepared.repayTx]
+            .filter((tx): tx is NonNullable<typeof tx> => tx != null)
+            .map((tx) => ({ to: tx.to, data: tx.data, value: tx.value, estimatedGasEth: tx.gasCostEth }));
+
           return {
             success: true,
             type: "TRANSACTION_PREVIEW",
             intent: "REPAY_LOAN",
             requiresWalletSignature: true,
-            text: `Prepared repayment preview for Loan #${prepared.loanId}. Principal of ${prepared.principal} USDC will be repaid and ${prepared.collateral} Credit collateral unlocked.`,
+            text:
+              `Prepared repayment preview for Loan #${prepared.loanId}. Principal of ${prepared.principal} USDC will be repaid and ${prepared.collateral} Credit collateral unlocked.` +
+              (txs.length > 1 ? " Your wallet will ask for 2 approvals: USDC spending, then the repayment." : ""),
             preview: {
               action: "Repay Loan",
               loanId: prepared.loanId,
               principalToRepay: `${prepared.principal} USDC`,
               collateralToRelease: `${prepared.collateral} Credit`,
+              walletApprovals: txs.length,
             },
-            preparedTx: {
-              to: prepared.repayTx.to,
-              data: prepared.repayTx.data,
-              value: prepared.repayTx.value,
-              estimatedGasEth: prepared.repayTx.gasCostEth,
-            },
+            ...(txs.length === 1 ? { preparedTx: txs[0] } : {}),
+            preparedTxs: txs,
           };
         } catch (err: any) {
           return {
@@ -248,8 +254,27 @@ export class AiService {
 
     const availableCredit = formatAmount(availableUnits);
     const lockedCredit = formatAmount(lockedUnits);
-    const maxBorrowUnits = (availableUnits * 8000n) / 10000n;
+    const limitUnits = (availableUnits * 8000n) / 10000n;
+    // A loan is also refused above the pool's cash, so the real maximum is the smaller of the two.
+    let poolUnits: bigint | null;
+    try {
+      poolUnits = (await publicClient.readContract({
+        address: env.INDICO_LEDGER_ADDRESS as Address,
+        abi: INDICO_LEDGER_ABI,
+        functionName: "poolAvailable",
+      })) as bigint;
+    } catch {
+      poolUnits = null;
+    }
+    const poolLimited = poolUnits !== null && poolUnits < limitUnits;
+    const maxBorrowUnits = poolLimited ? poolUnits! : limitUnits;
     const maxBorrow = formatAmount(maxBorrowUnits);
+    const maxBorrowLine =
+      poolUnits === null
+        ? `• Max Borrowable Now (80% LTV, before pool liquidity): ${maxBorrow} USDC`
+        : poolLimited
+          ? `• Max Borrowable Now: ${maxBorrow} USDC (limited by pool liquidity)`
+          : `• Max Borrowable Now (80% LTV): ${maxBorrow} USDC`;
 
     const activeLoansCount = await prisma.loan.count({
       where: { borrower: walletAddress, status: "ACTIVE" },
@@ -260,11 +285,12 @@ export class AiService {
       type: "MESSAGE",
       intent: "READ_STATUS",
       requiresWalletSignature: false,
-      text: `📊 Financial Summary:\n• Available Credit: ${availableCredit} USDC\n• Locked Collateral: ${lockedCredit} Credit\n• Max Borrowable Now (80% LTV): ${maxBorrow} USDC\n• Active Loans: ${activeLoansCount}`,
+      text: `📊 Financial Summary:\n• Available Credit: ${availableCredit} USDC\n• Locked Collateral: ${lockedCredit} Credit\n${maxBorrowLine}\n• Active Loans: ${activeLoansCount}`,
       preview: {
         availableCredit: `${availableCredit} USDC`,
         lockedCredit: `${lockedCredit} Credit`,
         maxBorrowable: `${maxBorrow} USDC`,
+        poolAvailable: poolUnits === null ? null : `${formatAmount(poolUnits)} USDC`,
         activeLoans: activeLoansCount,
       },
     };
@@ -775,99 +801,17 @@ export class AiService {
   /**
    * Dispatches admin commands to local deterministic engine (PRD §4.7 AD-19)
    */
-  static async handleAdminCommand(_adminId: string, rawPrompt: string): Promise<AiResponse> {
+  static async handleAdminCommand(adminId: string, rawPrompt: string): Promise<AiResponse> {
     const prompt = rawPrompt.trim();
     const lower = prompt.toLowerCase();
 
-    // 1. Issue Credit (PRD §4.7 AD-10, AD-11)
-    if (lower.includes("issue credit") || lower.includes("mint credit") || lower.includes("grant credit")) {
-      const addressMatch = prompt.match(/0x[a-fA-F0-9]{40}/);
-      const amountMatch = prompt.match(/\$?\s*([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]+)?|[0-9]+(?:\.[0-9]+)?)/);
+    // 1. Issue and debit credit (AD-10, AD-11, AD-12)
+    if (/\b(issue|mint|grant)\s+credit\b/.test(lower)) return AiService.prepareAdminCredit("ISSUE", adminId, prompt);
+    if (/\b(debit|burn|deduct)\s+credit\b/.test(lower)) return AiService.prepareAdminCredit("DEBIT", adminId, prompt);
 
-      if (!addressMatch || !amountMatch || !amountMatch[1]) {
-        return {
-          success: true,
-          type: "UNKNOWN",
-          intent: "ADMIN_ISSUE_CREDIT",
-          requiresWalletSignature: false,
-          text: "To issue credit, please provide the recipient's wallet address and amount (for example: \"Issue credit of 1,000 to 0x70997970C51812dc3A010C7d01b50e0d17dc79C8 for manual wire\").",
-        };
-      }
-
-      const recipient = addressMatch[0] as Address;
-      const amountUnits = parseAmount(amountMatch[1].replace(/,/g, ""));
-      const memoBytes = pad(stringToHex("ADMIN_MANUAL_ISSUE"), { size: 32 });
-
-      const data = encodeFunctionData({
-        abi: INDICO_LEDGER_ABI,
-        functionName: "adminIssueCredit",
-        args: [recipient, amountUnits, memoBytes],
-      });
-
-      return {
-        success: true,
-        type: "ACTION_PREVIEW",
-        intent: "ADMIN_ISSUE_CREDIT",
-        requiresWalletSignature: true,
-        text: `Prepared administrative issuance of ${formatAmount(amountUnits)} Credit to ${recipient}. Broadcast requires an Admin wallet signature on Base Sepolia.`,
-        preview: {
-          action: "adminIssueCredit (AD-10)",
-          recipient,
-          creditToIssue: `${formatAmount(amountUnits)} Credit`,
-          reasonMemo: "ADMIN_MANUAL_ISSUE",
-        },
-        preparedTx: {
-          to: env.INDICO_LEDGER_ADDRESS,
-          data,
-          value: "0",
-        },
-      };
-    }
-
-    // 2. Debit Credit (PRD §4.7 AD-12)
-    if (lower.includes("debit credit") || lower.includes("burn credit") || lower.includes("deduct credit")) {
-      const addressMatch = prompt.match(/0x[a-fA-F0-9]{40}/);
-      const amountMatch = prompt.match(/\$?\s*([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]+)?|[0-9]+(?:\.[0-9]+)?)/);
-
-      if (!addressMatch || !amountMatch || !amountMatch[1]) {
-        return {
-          success: true,
-          type: "UNKNOWN",
-          intent: "ADMIN_DEBIT_CREDIT",
-          requiresWalletSignature: false,
-          text: "To debit credit for a private cash settlement, please provide the user's wallet address and amount (for example: \"Debit credit of 500 from 0x7099... for settlement\").",
-        };
-      }
-
-      const userAddress = addressMatch[0] as Address;
-      const amountUnits = parseAmount(amountMatch[1].replace(/,/g, ""));
-      const memoBytes = pad(stringToHex("CASH_SETTLEMENT"), { size: 32 });
-
-      const data = encodeFunctionData({
-        abi: INDICO_LEDGER_ABI,
-        functionName: "adminDebitCredit",
-        args: [userAddress, amountUnits, memoBytes],
-      });
-
-      return {
-        success: true,
-        type: "ACTION_PREVIEW",
-        intent: "ADMIN_DEBIT_CREDIT",
-        requiresWalletSignature: true,
-        text: `Prepared administrative debit of ${formatAmount(amountUnits)} Credit from ${userAddress} for private settlement. Broadcast requires an Admin wallet signature on Base Sepolia.`,
-        preview: {
-          action: "adminDebitCredit (AD-12)",
-          userAddress,
-          creditToDebit: `${formatAmount(amountUnits)} Credit`,
-          reasonMemo: "CASH_SETTLEMENT",
-        },
-        preparedTx: {
-          to: env.INDICO_LEDGER_ADDRESS,
-          data,
-          value: "0",
-        },
-      };
-    }
+    // 2. Merchant bookkeeping (AD-05, AD-06): off-chain, no wallet signature
+    const merchantReply = await AiService.handleMerchantCommand(adminId, prompt);
+    if (merchantReply) return merchantReply;
 
     // 3. User Lookup
     if (lower.includes("user") || lower.includes("lookup") || lower.includes("find user")) {
@@ -953,7 +897,166 @@ export class AiService {
       type: "UNKNOWN",
       intent: "ADMIN_UNKNOWN",
       requiresWalletSignature: false,
-      text: "Supported Admin Console Commands:\n• \"Pool liquidity status\"\n• \"Show active and overdue loans\"\n• \"Lookup user [email or wallet]\"\n• \"Issue credit of [amount] to [wallet]\"\n• \"Debit credit of [amount] from [wallet]\"",
+      text: "Supported Admin Console Commands:\n• \"Pool liquidity status\"\n• \"Show active and overdue loans\"\n• \"Lookup user [email or wallet]\"\n• \"Issue credit of [amount] to [wallet]\"\n• \"Debit credit of [amount] from [wallet]\"\n  (add \"ref [your reference]\" to either; it stays off-chain)\n• \"Add service [name] to merchant [name or wallet] price [amount]\"\n• \"Update price of [service] for merchant [name or wallet] to [amount]\"\n• \"Send agreement to merchant [name or wallet]\" (records it as sent; no email is sent)",
     };
+  }
+
+  /** Prepares adminIssueCredit / adminDebitCredit after checking the ledger would accept it. */
+  private static async prepareAdminCredit(kind: "ISSUE" | "DEBIT", adminId: string, prompt: string): Promise<AiResponse> {
+    const intent = kind === "ISSUE" ? "ADMIN_ISSUE_CREDIT" : "ADMIN_DEBIT_CREDIT";
+    const fail = (type: "UNKNOWN" | "ERROR", text: string): AiResponse => ({
+      success: type === "UNKNOWN",
+      type,
+      intent,
+      requiresWalletSignature: false,
+      text,
+    });
+
+    const wallet = prompt.match(/0x[a-fA-F0-9]{40}/)?.[0] as Address | undefined;
+    const reference = prompt.match(REFERENCE_RE)?.[1] ?? null;
+    const amountUnits = parseCommandAmount(prompt.replace(/0x[a-fA-F0-9]{40}/g, " ").replace(REFERENCE_RE, " "));
+    if (!wallet || amountUnits === null) {
+      return fail(
+        "UNKNOWN",
+        kind === "ISSUE"
+          ? 'To issue credit, give the wallet and an amount above 0 with at most 6 decimals, e.g. "Issue credit of 1,000 to 0x7099...79C8 ref INV-001".'
+          : 'To debit credit, give the wallet and an amount above 0 with at most 6 decimals, e.g. "Debit credit of 500 from 0x7099...79C8 ref CASH-001".'
+      );
+    }
+
+    // The same refusals the ledger would give, so the admin never signs a transaction that reverts.
+    const read = (functionName: "participantRole" | "paused" | "credit" | "available", args: readonly unknown[]) =>
+      publicClient.readContract({ address: env.INDICO_LEDGER_ADDRESS as Address, abi: INDICO_LEDGER_ABI, functionName, args } as any);
+    let role: number, paused: boolean, balance: bigint;
+    try {
+      [role, paused, balance] = (await Promise.all([
+        read("participantRole", [wallet]),
+        read("paused", []),
+        read(kind === "ISSUE" ? "credit" : "available", [wallet]),
+      ])) as [number, boolean, bigint];
+    } catch {
+      return fail("ERROR", "Could not read the ledger to check this command. Nothing was prepared; try again.");
+    }
+    const amount = formatAmount(amountUnits);
+    if (paused) return fail("ERROR", "The ledger is paused; credit cannot be issued or debited until it is unpaused.");
+    if (kind === "ISSUE" && Number(role) !== 1) return fail("ERROR", `${wallet} is not a registered user; credit is issued to users only.`);
+    if (kind === "DEBIT" && Number(role) !== 1 && Number(role) !== 2) return fail("ERROR", `${wallet} is not a registered user or merchant.`);
+    if (kind === "ISSUE" && balance + amountUnits > CREDIT_CAP) {
+      return fail("ERROR", `Issuing ${amount} would pass the per-account credit cap for ${wallet}.`);
+    }
+    if (kind === "DEBIT" && amountUnits > balance) {
+      return fail("ERROR", `Debit of ${amount} exceeds the available credit of ${formatAmount(balance)} for ${wallet}.`);
+    }
+
+    // The memo is public on chain, so it is random; the admin's reference stays in the audit log (O-043).
+    const memo = bytesToHex(randomBytes(32));
+    const data = encodeFunctionData({
+      abi: INDICO_LEDGER_ABI,
+      functionName: kind === "ISSUE" ? "adminIssueCredit" : "adminDebitCredit",
+      args: [wallet, amountUnits, memo],
+    });
+    await prisma.auditLog.create({
+      data: {
+        actorType: "ADMIN",
+        actorId: adminId,
+        action: "AI_CREDIT_PREPARED",
+        resource: "Credit",
+        resourceId: wallet.toLowerCase(),
+        payload: { kind, wallet, amount, reference, memo },
+      },
+    });
+
+    return {
+      success: true,
+      type: "ACTION_PREVIEW",
+      intent,
+      requiresWalletSignature: true,
+      text:
+        kind === "ISSUE"
+          ? `Prepared issuance of ${amount} Credit to ${wallet}. It needs the admin wallet's signature.`
+          : `Prepared debit of ${amount} Credit from ${wallet}. It needs the admin wallet's signature.`,
+      preview:
+        kind === "ISSUE"
+          ? { action: "adminIssueCredit (AD-10)", recipient: wallet, creditToIssue: `${amount} Credit`, reference, memo }
+          : { action: "adminDebitCredit (AD-12)", userAddress: wallet, creditToDebit: `${amount} Credit`, reference, memo },
+      preparedTx: { to: env.INDICO_LEDGER_ADDRESS, data, value: "0" },
+    };
+  }
+
+  /** Add or update a merchant's service, or mark its agreement sent. Returns null if the prompt is none of these. */
+  private static async handleMerchantCommand(adminId: string, prompt: string): Promise<AiResponse | null> {
+    const add = prompt.match(/^add\s+(?:a\s+)?service\s+(.+?)\s+(?:to|for)\s+(?:merchant\s+)?(.+?)\s+(?:at\s+)?price\s+(?:of\s+)?\$?(\S+)\s*$/i);
+    const upd = prompt.match(/^(?:update|change|set)\s+(?:the\s+)?price\s+of\s+(.+?)\s+for\s+(?:merchant\s+)?(.+?)\s+to\s+\$?(\S+)\s*$/i);
+    const send = prompt.match(/^send\s+(?:the\s+)?(?:arbitration\s+)?agreement\s+to\s+(?:merchant\s+)?(.+?)\s*$/i);
+    const intent = add ? "ADMIN_ADD_SERVICE" : upd ? "ADMIN_UPDATE_SERVICE" : send ? "ADMIN_SEND_AGREEMENT" : null;
+    if (!intent) return null;
+
+    const reply = (type: "MESSAGE" | "UNKNOWN" | "ERROR", text: string): AiResponse => ({
+      success: type !== "ERROR",
+      type,
+      intent,
+      requiresWalletSignature: false,
+      text,
+    });
+
+    const query = (add?.[2] ?? upd?.[2] ?? send![1]!).trim();
+    const merchants = await prisma.merchant.findMany({
+      where: isAddress(query)
+        ? { walletAddress: query.toLowerCase() }
+        : { name: { equals: query, mode: "insensitive" } },
+      take: 2,
+    });
+    if (merchants.length === 0) return reply("UNKNOWN", `No merchant matches "${query}". Use its exact name or wallet address.`);
+    if (merchants.length > 1) return reply("UNKNOWN", `More than one merchant is named "${query}". Use its wallet address.`);
+    const merchant = merchants[0]!;
+
+    try {
+      if (send) {
+        await AdminOperationsService.sendMerchantAgreement(adminId, merchant.id);
+        return reply("MESSAGE", `Recorded the agreement as sent to ${merchant.name}. No email is sent; send the document yourself.`);
+      }
+
+      const priceText = (add?.[3] ?? upd![3])!;
+      const units = /^[\d,]+(?:\.\d+)?$/.test(priceText) ? parseCommandAmount(priceText) : null;
+      if (units === null) return reply("UNKNOWN", `"${priceText}" is not a price above 0 with at most 6 decimals.`);
+      const price = formatAmount(units);
+
+      if (add) {
+        const name = add[1]!.trim();
+        await AdminOperationsService.addMerchantService(adminId, merchant.id, { name, price, description: name });
+        return reply("MESSAGE", `Added "${name}" at ${price} credit to ${merchant.name}.`);
+      }
+
+      const wanted = upd![1]!.trim();
+      const { services } = await AdminOperationsService.getMerchantServices(merchant.id);
+      const service = services.find((sv: { name: string }) => sv.name.toLowerCase() === wanted.toLowerCase());
+      if (!service) {
+        const names = services.map((sv: { name: string }) => sv.name).join(", ") || "none";
+        return reply("UNKNOWN", `${merchant.name} has no service "${wanted}". Its services: ${names}.`);
+      }
+      await AdminOperationsService.updateMerchantService(adminId, merchant.id, service.id, { price });
+      return reply("MESSAGE", `Updated "${service.name}" for ${merchant.name} to ${price} credit.`);
+    } catch (err) {
+      if (err instanceof AppError) return reply("ERROR", err.message);
+      throw err;
+    }
+  }
+}
+
+/** "ref INV-001", "reference: X", "memo #X": an admin's own reference, kept off-chain. */
+const REFERENCE_RE = /\b(?:ref|reference|memo)\b\s*[:#]?\s*([A-Za-z0-9._\/-]{1,64})/i;
+
+/** Per-account credit cap enforced by the ledger (D-27). */
+const CREDIT_CAP = (1n << 128n) - 1n;
+
+/** First number in the text as 6-decimal units, or null if there is none, it is 0, or it has over 6 decimals. */
+function parseCommandAmount(text: string): bigint | null {
+  const match = text.match(/(?<![\w.])(\d{1,3}(?:,\d{3})+|\d+)(\.\d+)?(?![\w.])/);
+  if (!match) return null;
+  try {
+    const units = parseAmount(match[1]!.replace(/,/g, "") + (match[2] ?? ""));
+    return units > 0n ? units : null;
+  } catch {
+    return null;
   }
 }

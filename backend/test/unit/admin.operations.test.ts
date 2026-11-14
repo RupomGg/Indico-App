@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { AdminOperationsService } from "../../src/modules/admin/admin.operations.service.js";
 import { prisma } from "../../src/lib/prisma.js";
-import { NotFoundError, BadRequestError, PayloadTooLargeError } from "../../src/lib/errors.js";
+import { NotFoundError, BadRequestError, PayloadTooLargeError, ConflictError } from "../../src/lib/errors.js";
 import { publicClient } from "../../src/lib/viem.js";
 import { StorageService } from "../../src/lib/storage.js";
 import { computeFileSha256 } from "../../src/lib/crypto.js";
@@ -216,6 +216,16 @@ describe("Admin Operations (PRD §4.7 AD-02 to AD-22)", () => {
 
       const res = await AdminOperationsService.sendMerchantAgreement(mockAdminId, "m-1");
       expect(res.agreementStatus).toBe("SENT");
+    });
+
+    it("refuses to mark a signed agreement as sent again (D3)", async () => {
+      vi.spyOn(prisma.merchant, "findUnique").mockResolvedValue({ id: "m-1", agreementStatus: "SIGNED" } as any);
+      const update = vi.spyOn(prisma.merchant, "update").mockResolvedValue({} as any);
+
+      await expect(AdminOperationsService.sendMerchantAgreement(mockAdminId, "m-1")).rejects.toBeInstanceOf(
+        ConflictError
+      );
+      expect(update).not.toHaveBeenCalled();
     });
 
     it("marks agreement signed and records agreement document", async () => {

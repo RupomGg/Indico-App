@@ -1,6 +1,6 @@
 import { prisma } from "../../lib/prisma.js";
 import { parseAmount, formatAmount } from "../../lib/amount.js";
-import { BadRequestError, NotFoundError, PayloadTooLargeError } from "../../lib/errors.js";
+import { BadRequestError, ConflictError, NotFoundError, PayloadTooLargeError } from "../../lib/errors.js";
 import { StorageService, MAX_FILE_SIZE_BYTES, detectFileType } from "../../lib/storage.js";
 import { computeFileSha256 } from "../../lib/crypto.js";
 import {
@@ -638,6 +638,11 @@ export class AdminOperationsService {
 
     if (!merchant) {
       throw new NotFoundError(`Merchant with ID "${merchantId}" not found`);
+    }
+
+    // A signed agreement is final: marking it sent again would lose the signed state (D3).
+    if (merchant.agreementStatus === "SIGNED") {
+      throw new ConflictError("Agreement already signed for this merchant");
     }
 
     const updated = await prisma.merchant.update({

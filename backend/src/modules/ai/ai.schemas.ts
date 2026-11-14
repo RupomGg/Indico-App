@@ -36,6 +36,13 @@ export type AdminAiPromptInput = z.infer<typeof adminAiPromptSchema>;
  * - UNKNOWN: Unmapped/ambiguous intents directing user to standard screens.
  * - ERROR: Graceful failure message (insufficient balance, etc.)
  */
+const preparedTxSchema = z.object({
+  to: z.string(),
+  data: z.string(),
+  value: z.string().default("0"),
+  estimatedGasEth: z.string().optional(),
+});
+
 export const aiResponseSchema = z.object({
   success: z.boolean(),
   type: z.enum(["MESSAGE", "TRANSACTION_PREVIEW", "ACTION_PREVIEW", "UNKNOWN", "ERROR"]),
@@ -43,14 +50,9 @@ export const aiResponseSchema = z.object({
   text: z.string(),
   requiresWalletSignature: z.boolean(),
   preview: z.record(z.any()).optional(),
-  preparedTx: z
-    .object({
-      to: z.string(),
-      data: z.string(),
-      value: z.string().default("0"),
-      estimatedGasEth: z.string().optional(),
-    })
-    .optional(),
+  preparedTx: preparedTxSchema.optional(),
+  /** Every transaction to sign, in order. `preparedTx` is set only when there is exactly one. */
+  preparedTxs: z.array(preparedTxSchema).optional(),
 });
 
 export type AiResponse = z.infer<typeof aiResponseSchema>;
