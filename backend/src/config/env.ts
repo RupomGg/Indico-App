@@ -30,6 +30,11 @@ const envSchema = z.object({
     .regex(/^0x[a-fA-F0-9]{64}$/, "Invalid keeper private key")
     .optional(),
   RUN_WORKER: z.string().optional().default("false"),
+  // RPC budget. Defaults fit Alchemy's free plan: a check every 15 s on Base's 2-second blocks asks
+  // for about 7 blocks, under the free plan's 10-block eth_getLogs limit.
+  POLL_INTERVAL_MS: z.coerce.number().int().min(1000).default(15000),
+  SWEEP_INTERVAL_MS: z.coerce.number().int().min(5000).default(60000),
+  LOG_BLOCK_RANGE: z.coerce.number().int().min(1).max(10000).default(10),
 });
 
 export type Env = z.infer<typeof envSchema>;

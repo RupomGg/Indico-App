@@ -9,8 +9,25 @@ import {
   prepareExtendResponseSchema,
 } from "./loans.schemas.js";
 import { authenticate, requireApproved } from "../../middleware/auth.js";
+import { z } from "zod";
 
 export async function loansRoutes(fastify: FastifyInstance) {
+  // GET /loans/pool-available (PRD §4.4 L-04): read on demand, one ledger call
+  fastify.get(
+    "/pool-available",
+    {
+      preHandler: [authenticate],
+      schema: {
+        description: "USDC the pool can lend right now; a loan above it is refused (L-04)",
+        tags: ["Loans"],
+        response: {
+          200: z.object({ poolAvailable: z.string(), poolAvailableUnits: z.string() }),
+        },
+      },
+    },
+    async (_request, reply) => reply.send(await LoansService.getPoolAvailable())
+  );
+
   // POST /loans/prepare-borrow (PRD §4.1 U-11; §4.4 L-01 to L-10)
   fastify.post(
     "/prepare-borrow",

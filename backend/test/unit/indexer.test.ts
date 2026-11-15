@@ -2,6 +2,8 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { projectChainLog } from "../../src/modules/indexer/indexer.projector.js";
 import { IndexerService } from "../../src/modules/indexer/indexer.service.ts";
 import { DecodedChainLog } from "../../src/modules/indexer/indexer.schemas.js";
+import { prisma } from "../../src/lib/prisma.js";
+import { publicClient } from "../../src/lib/viem.js";
 
 /**
  * ============================================================================
@@ -551,7 +553,7 @@ describe("Deposit box keeper (D-70)", () => {
   });
 
   it("does nothing without a keeper key, and one failed sweep does not stop the rest", async () => {
-    expect(await IndexerService.sweepDepositBoxes(Object.keys(boxes), client as any, undefined)).toEqual([]);
+    expect(await IndexerService.sweepDepositBoxes(Object.keys(boxes), client as any, null)).toEqual([]);
     held["0x00000000000000000000000000000000000000b2"] = 7n;
     const keeper = {
       writeContract: vi.fn(async (q: any) => {
@@ -561,5 +563,96 @@ describe("Deposit box keeper (D-70)", () => {
     };
     const swept = await IndexerService.sweepDepositBoxes(Object.keys(boxes), client as any, keeper as any);
     expect(swept).toEqual(["0x00000000000000000000000000000000000000a2"]);
+  });
+});
+
+/**
+ * RPC budget (free plans): the indexer asks for at most LOG_BLOCK_RANGE blocks per query, and the
+ * deposit-box sweep runs on its own timer with each box address read once.
+ *
+ * nextRange(processed, safeHead, max):
+ * | Case                         | Expected                         |
+ * |------------------------------|----------------------------------|
+ * | processed == safeHead        | null (nothing to do)             |
+ * | processed > safeHead (reorg) | null                             |
+ * | 1 block behind               | [p+1, p+1]                       |
+ * | fewer than max behind        | [p+1, safeHead]                  |
+ * | exactly max behind           | [p+1, safeHead]                  |
+ * | more than max behind         | [p+1, p+max] (max blocks exactly) |
+ * | max = 1                      | one block per query              |
+ */
+describe("Indexer block ranges (free-plan RPC limits)", () => {
+  it.each([
+    ["caught up", 100n, 100n, 10, null],
+    ["checkpoint past head", 105n, 100n, 10, null],
+    ["one block behind", 99n, 100n, 10, [100n, 100n]],
+    ["fewer than max behind", 95n, 100n, 10, [96n, 100n]],
+    ["exactly max behind", 90n, 100n, 10, [91n, 100n]],
+    ["more than max behind", 0n, 100n, 10, [1n, 10n]],
+    ["max of one", 50n, 100n, 1, [51n, 51n]],
+  ] as const)("%s", (_d, processed, head, max, expected) => {
+    const r = IndexerService.nextRange(processed, head, max);
+    expect(r === null ? null : [r.fromBlock, r.toBlock]).toEqual(expected);
+    if (r) expect(Number(r.toBlock - r.fromBlock + 1n)).toBeLessThanOrEqual(max);
+  });
+});
+
+describe("Deposit box sweep schedule and box cache", () => {
+  const merchants = ["0x00000000000000000000000000000000000000c1", "0x00000000000000000000000000000000000000c2"];
+  const boxes: Record<string, string> = {
+    [merchants[0]!]: "0x00000000000000000000000000000000000000d1",
+    [merchants[1]!]: "0x0000000000000000000000000000000000000000",
+  };
+  const makeClient = () => ({
+    readContract: vi.fn(async (q: any) => (q.functionName === "depositBoxOf" ? boxes[q.args[0]] : 0n)),
+  });
+  const keeper = { writeContract: vi.fn(async () => "0xhash") };
+
+  beforeEach(() => {
+    IndexerService.resetSweepState();
+  });
+
+  it("reads an assigned box address once, but re-reads a merchant whose box is not assigned yet", async () => {
+    const client = makeClient();
+    await IndexerService.sweepDepositBoxes(merchants, client as any, keeper as any);
+    await IndexerService.sweepDepositBoxes(merchants, client as any, keeper as any);
+    const boxReads = client.readContract.mock.calls.filter((c: any) => c[0].functionName === "depositBoxOf");
+    expect(boxReads.map((c: any) => c[0].args[0])).toEqual([merchants[0], merchants[1], merchants[1]]);
+    const balanceReads = client.readContract.mock.calls.filter((c: any) => c[0].functionName === "balanceOf");
+    expect(balanceReads).toHaveLength(2);
+  });
+
+  it("sweeps on the first call, not again within the interval, and again once it has passed", async () => {
+    const client = makeClient();
+    const load = vi.fn(async () => merchants);
+    const t0 = 1_000_000;
+    expect(await IndexerService.sweepIfDue(t0, 60_000, load, client as any, keeper as any)).toBe(true);
+    expect(await IndexerService.sweepIfDue(t0 + 59_999, 60_000, load, client as any, keeper as any)).toBe(false);
+    expect(await IndexerService.sweepIfDue(t0 + 60_000, 60_000, load, client as any, keeper as any)).toBe(true);
+    expect(load).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not read the chain at all when no keeper key is configured", async () => {
+    const client = makeClient();
+    const load = vi.fn(async () => merchants);
+    expect(await IndexerService.sweepIfDue(1, 60_000, load, client as any, null)).toBe(false);
+    expect(load).not.toHaveBeenCalled();
+    expect(client.readContract).not.toHaveBeenCalled();
+  });
+
+  it("a failed merchant lookup does not stop the schedule", async () => {
+    const load = vi.fn(async () => {
+      throw new Error("db down");
+    });
+    expect(await IndexerService.sweepIfDue(5, 60_000, load, makeClient() as any, keeper as any)).toBe(false);
+  });
+
+  it("syncBlockRange no longer sweeps (the worker's timer does)", async () => {
+    vi.spyOn(publicClient, "getLogs").mockResolvedValue([] as any);
+    vi.spyOn(prisma, "$transaction").mockResolvedValue(undefined as any);
+    const find = vi.spyOn(prisma.merchant, "findMany");
+    await IndexerService.syncBlockRange(1n, 5n);
+    expect(find).not.toHaveBeenCalled();
+    vi.restoreAllMocks();
   });
 });

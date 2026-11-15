@@ -233,3 +233,67 @@ These were wrong before this update; fix them if the app followed the old guide:
 | Borrow via `POST /loans/prepare-request` | `POST /loans/prepare-borrow` |
 | Loans show "Accrued Interest" | There is no interest and no fee, ever. Show principal, collateral locked, due date, status |
 | Pay a merchant by scanning a QR invoice | The user picks a merchant from `GET /merchants`, taps a service to prefill the amount, or types any amount |
+
+---
+
+## 9. MetaMask on a phone: slow connect, endless loading after paying, double payment (2026-11-15)
+
+**Reported:** connecting MetaMask takes a long time; after confirming a payment in MetaMask the app
+loads forever; and every time the user opens MetaMask again it asks to confirm the same payment, so
+the user can pay two or more times.
+
+**Cause, from the app code (`wallet_service.dart`, `transaction_flow.dart`):**
+- Android pauses the app while MetaMask is in front, and the WalletConnect relay connection drops. The
+  app never reconnects it when it comes back: `reconnectRelay()` is never called. So MetaMask's answer
+  ("approved", "here is the transaction hash") never reaches the app.
+- `_request` waits for that answer with **no timeout**, so `sendPrepared` and the payment screen wait
+  forever.
+- The answer was never delivered, so MetaMask keeps the request pending and shows it again each time
+  it opens. Confirming again sends a **second, separate transaction**, and the contract executes it:
+  a second payment. The contract can't tell a repeat from a real new payment, and that is correct.
+- The modal is only created on the first connect (`_ensureModal`), so the first connect also has to
+  start the relay and load the wallet list. That's part of the slow connect. The dropped relay
+  connection is the rest of it, because the session approval is lost the same way.
+
+**Fix (all in the app):**
+
+1. **Reconnect the relay whenever the app comes back.** Add `Future<void> reconnectRelay()` to
+   `WalletService` (`ReownWalletService`: `await _modal?.reconnectRelay();`). Call it on resume, once
+   for the whole app, for example in `main.dart` or the app shell:
+   ```dart
+   late final _lifecycle = AppLifecycleListener(
+     onResume: () => ledger.walletService.reconnectRelay(),
+   );
+   ```
+   This is the main fix: MetaMask's answer arrives, the screen continues, and MetaMask stops showing
+   the request again.
+
+2. **Create the wallet modal early.** Call `_ensureModal(context)` once the user is signed in (shell
+   `initState`), not on the first tap. Optionally list only MetaMask and Tangem with
+   `featuredWalletIds` or `includedWalletIds`, so the wallet list loads faster.
+
+3. **Never wait forever, and detect a transaction sent without an answer.** In `sendTransaction`,
+   before the request, read the wallet's mined nonce (`eth_getTransactionCount(address, "latest")`,
+   the same RPC as `waitForReceipt`). Then wait for whichever comes first:
+   - MetaMask's answer (the hash): continue as now;
+   - the mined nonce going up: the transaction was sent and mined without the answer reaching the app.
+     Continue without a hash and let `afterTransaction`/`syncUntil` confirm it from the backend;
+   - 3 minutes: stop and say "We could not confirm this in your wallet. Check Activity before trying
+     again."
+
+4. **Stop a second payment.** While a transaction is pending, or after one was detected in step 3:
+   - keep the Pay / Borrow / Repay button disabled until the backend shows the change;
+   - on the confirmation screen, and whenever the app resumes with a payment already sent, show:
+     **"Your payment went through. If MetaMask asks you to confirm it again, tap Reject. Confirming
+     again pays twice."**
+
+5. **Test on a real Android phone with MetaMask** (no emulator):
+   - Connect: the app returns connected within a few seconds of approving in MetaMask.
+   - Pay a merchant: after confirming in MetaMask and coming back, the confirmation page appears.
+     Open MetaMask again: no second prompt.
+   - Kill the app's connection on purpose (airplane mode for 5 s while in MetaMask, then back on):
+     the app still reaches the confirmation page, from step 3.
+   - Repeat for borrow and repay (the repay has two prompts).
+   - Balance drops by exactly one payment each time.
+
+This is a **mainnet blocker**: with real USDC, a repeated prompt costs the user real money.

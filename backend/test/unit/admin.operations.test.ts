@@ -2,7 +2,9 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { AdminOperationsService } from "../../src/modules/admin/admin.operations.service.js";
 import { prisma } from "../../src/lib/prisma.js";
 import { NotFoundError, BadRequestError, PayloadTooLargeError, ConflictError } from "../../src/lib/errors.js";
-import { publicClient } from "../../src/lib/viem.js";
+import { publicClient, INDICO_LEDGER_ABI } from "../../src/lib/viem.js";
+import { env } from "../../src/config/env.js";
+import { decodeFunctionData, getAddress, type Hex } from "viem";
 import { StorageService } from "../../src/lib/storage.js";
 import { computeFileSha256 } from "../../src/lib/crypto.js";
 
@@ -57,34 +59,120 @@ describe("Admin Operations (PRD §4.7 AD-02 to AD-22)", () => {
       ).rejects.toThrow(NotFoundError);
     });
 
-    it("approves user and creates audit log", async () => {
-      vi.spyOn(prisma.user, "findUnique").mockResolvedValue({
+    /**
+     * One-step approval: the backend prepares setUserApproved(wallet, true, accountRef) for the
+     * admin wallet to sign; the database follows from the UserApprovalSet event (indexer).
+     * | Class                                   | Expected                                     |
+     * |-----------------------------------------|----------------------------------------------|
+     * | no wallet bound                         | 400, nothing read, nothing written           |
+     * | fresh wallet (role 0, no link)          | tx to the ledger, DB not approved, audit row |
+     * | revoked user, same link                 | tx (re-approval)                             |
+     * | already approved on-chain               | 409                                          |
+     * | wallet is a merchant (role 2)           | 409                                          |
+     * | wallet retired by an account move (3)   | 409                                          |
+     * | wallet linked to another account ref    | 409                                          |
+     * | ledger unreadable                       | 503, no tx                                   |
+     */
+    describe("approveUser prepares the on-chain approval", () => {
+      const wallet = "0x1111111111111111111111111111111111111111";
+      const ref = "0x" + "ab".repeat(32);
+      const zeroRef = "0x" + "00".repeat(32);
+      const bound = {
         id: "u-1",
         email: "user@test.com",
+        isEmailVerified: true,
         isApproved: false,
-      } as any);
+        createdAt: new Date(0),
+        updatedAt: new Date(0),
+        walletBinding: { walletAddress: wallet, accountRef: ref },
+      };
 
-      vi.spyOn(prisma.user, "update").mockResolvedValue({
-        id: "u-1",
-        email: "user@test.com",
-        isApproved: true,
-      } as any);
+      const chain = (role: number, approved: boolean, linked: string) =>
+        vi.spyOn(publicClient, "readContract").mockImplementation(async ({ functionName }: any) => {
+          if (functionName === "participantRole") return role;
+          if (functionName === "approvedUser") return approved;
+          if (functionName === "accountRefOf") return linked;
+          throw new Error(`unexpected read ${functionName}`);
+        });
 
-      vi.spyOn(prisma.auditLog, "create").mockResolvedValue({} as any);
+      it("refuses a user with no wallet, before reading the chain or writing", async () => {
+        vi.spyOn(prisma.user, "findUnique").mockResolvedValue({ ...bound, walletBinding: null } as any);
+        const read = vi.spyOn(publicClient, "readContract");
+        const audit = vi.spyOn(prisma.auditLog, "create").mockResolvedValue({} as any);
+        await expect(AdminOperationsService.approveUser(mockAdminId, "u-1")).rejects.toThrow(
+          /not connected a wallet/
+        );
+        expect(read).not.toHaveBeenCalled();
+        expect(audit).not.toHaveBeenCalled();
+      });
 
-      const res = await AdminOperationsService.approveUser(mockAdminId, "u-1");
-      expect(res.isApproved).toBe(true);
-      expect(prisma.auditLog.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({
-            actorType: "ADMIN",
-            actorId: mockAdminId,
-            action: "USER_APPROVED",
-            resource: "User",
-            resourceId: "u-1",
-          }),
-        })
-      );
+      it("returns the setUserApproved transaction and leaves the database to the indexer", async () => {
+        vi.spyOn(prisma.user, "findUnique").mockResolvedValue(bound as any);
+        chain(0, false, zeroRef);
+        const update = vi.spyOn(prisma.user, "update");
+        const audit = vi.spyOn(prisma.auditLog, "create").mockResolvedValue({} as any);
+
+        const res = await AdminOperationsService.approveUser(mockAdminId, "u-1");
+
+        expect(res.approvalTx.to.toLowerCase()).toBe(env.INDICO_LEDGER_ADDRESS.toLowerCase());
+        expect(res.approvalTx.value).toBe("0");
+        const call = decodeFunctionData({ abi: INDICO_LEDGER_ABI, data: res.approvalTx.data as Hex });
+        expect(call.functionName).toBe("setUserApproved");
+        expect(call.args).toEqual([getAddress(wallet), true, ref]);
+        expect(res.walletAddress).toBe(wallet);
+        expect(res.accountRef).toBe(ref);
+        expect(res.user.isApproved).toBe(false);
+        expect(res.rolePermanentWarning).toMatch(/permanent/);
+        expect(update).not.toHaveBeenCalled();
+        expect(audit).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({
+              actorType: "ADMIN",
+              actorId: mockAdminId,
+              action: "USER_APPROVAL_PREPARED",
+              resource: "User",
+              resourceId: "u-1",
+              payload: expect.objectContaining({ walletAddress: wallet, accountRef: ref }),
+            }),
+          })
+        );
+      });
+
+      it("re-approves a revoked user whose wallet is linked to the same reference", async () => {
+        vi.spyOn(prisma.user, "findUnique").mockResolvedValue(bound as any);
+        chain(1, false, ref);
+        vi.spyOn(prisma.auditLog, "create").mockResolvedValue({} as any);
+        const res = await AdminOperationsService.approveUser(mockAdminId, "u-1");
+        expect(decodeFunctionData({ abi: INDICO_LEDGER_ABI, data: res.approvalTx.data as Hex }).args).toEqual([
+          getAddress(wallet),
+          true,
+          ref,
+        ]);
+      });
+
+      it.each([
+        ["already approved on-chain", 1, true, ref, /already approved/],
+        ["a merchant wallet", 2, false, zeroRef, /merchant/],
+        ["a retired wallet", 3, false, zeroRef, /retired/],
+        ["linked to another account", 0, false, "0x" + "cd".repeat(32), /another account/],
+      ])("refuses %s with 409 and writes nothing", async (_name, role, approved, linked, message) => {
+        vi.spyOn(prisma.user, "findUnique").mockResolvedValue(bound as any);
+        chain(role as number, approved as boolean, linked as string);
+        const audit = vi.spyOn(prisma.auditLog, "create").mockResolvedValue({} as any);
+        const err = await AdminOperationsService.approveUser(mockAdminId, "u-1").catch((e) => e);
+        expect(err).toBeInstanceOf(ConflictError);
+        expect(err.message).toMatch(message as RegExp);
+        expect(audit).not.toHaveBeenCalled();
+      });
+
+      it("answers 503 when the ledger cannot be read, with no transaction", async () => {
+        vi.spyOn(prisma.user, "findUnique").mockResolvedValue(bound as any);
+        vi.spyOn(publicClient, "readContract").mockRejectedValue(new Error("rpc down"));
+        const audit = vi.spyOn(prisma.auditLog, "create").mockResolvedValue({} as any);
+        const err = await AdminOperationsService.approveUser(mockAdminId, "u-1").catch((e) => e);
+        expect(err.statusCode).toBe(503);
+        expect(audit).not.toHaveBeenCalled();
+      });
     });
 
     it("rejects / revokes user and creates audit log", async () => {

@@ -13,6 +13,7 @@ import {
 import { env } from "../../config/env.js";
 import { parseAmount, formatAmount } from "../../lib/amount.js";
 import {
+  AppError,
   BadRequestError,
   ForbiddenError,
   NotFoundError,
@@ -30,6 +31,21 @@ const EXTENSION_WINDOW = 30n * 86400n; // 30 days in seconds (D-13)
 const TERM = 90n * 86400n; // 90 days in seconds
 
 export class LoansService {
+  /** The pool's USDC available to lend now (L-04), so the app can show the borrowing maximum. */
+  static async getPoolAvailable() {
+    let units: bigint;
+    try {
+      units = (await publicClient.readContract({
+        address: env.INDICO_LEDGER_ADDRESS as Address,
+        abi: INDICO_LEDGER_ABI,
+        functionName: "poolAvailable",
+      })) as bigint;
+    } catch {
+      throw new AppError(503, "LEDGER_UNAVAILABLE", "Could not read the ledger. Please try again.");
+    }
+    return { poolAvailable: formatAmount(units), poolAvailableUnits: units.toString() };
+  }
+
   /**
    * Prepares calldata and pre-flight simulation for requesting a loan (PRD §4.4 L-01 to L-10).
    * Over-collateralised borrowing: requires posting 125% collateral in credit (80% LTV).

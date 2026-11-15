@@ -3469,6 +3469,104 @@ Gate (logs in `docs/gate-logs/C-092/`):
 - G10 pending: owner pushes, then Render redeploys.
 Commit: fix: admin AI console understands look up and find, looks up merchants, accepts natural add-service wording (AD-19)
 
+### C-093 · Indexer and keeper fit a free RPC plan · 2026-11-15
+Type: fix (backend)
+Decisions: owner's choice, 2026-11-15: Alchemy's free plan for mainnet, with the backend tuned to stay
+inside it.
+Root cause: the worker checked the chain every 3 s and, inside every `syncBlockRange`, read each
+approved merchant's `depositBoxOf` and its USDC balance: about 300 million Alchemy compute units a
+month with 5 merchants, against 30 million free (about $150 a month pay-as-you-go). This is also why
+Infura's free tier answered 402 on testnet. Alchemy's free plan also limits `eth_getLogs` to 10
+blocks per call; the worker asked for up to 2,000 when catching up.
+Files:
+- Changed: `backend/src/config/env.ts`: `POLL_INTERVAL_MS` (default 15,000, at least 1,000),
+  `SWEEP_INTERVAL_MS` (default 60,000, at least 5,000), `LOG_BLOCK_RANGE` (default 10, 1 to 10,000).
+  The defaults fit the free plan: a check every 15 s on Base's 2-second blocks asks for about 7
+  blocks. A provider without the 10-block limit can raise `LOG_BLOCK_RANGE` for faster catch-up.
+- Changed: `backend/src/modules/indexer/indexer.service.ts`: `nextRange` (at most `LOG_BLOCK_RANGE`
+  blocks, null when caught up); `sweepIfDue` (the deposit-box sweep on its own timer, nothing read
+  without a keeper key, a failed merchant lookup logged and retried next round); each assigned box
+  address read once and cached (a box never changes once assigned, D-70; an unassigned one is read
+  again); `syncBlockRange` no longer sweeps; "no keeper" is `null`, not `undefined`.
+- Changed: `backend/src/worker.ts`: uses `nextRange`, `sweepIfDue` and `POLL_INTERVAL_MS`.
+- Changed: `backend/test/unit/indexer.test.ts`: range partition table (7 rows), box cache, sweep
+  timer and its boundary, no keeper, failed lookup, `syncBlockRange` without a sweep. Fix to an
+  existing test: "does nothing without a keeper key" passed `undefined`, which JavaScript replaces by
+  the default keeper, so with a local keeper key it reached a real wallet and passed only because
+  that call failed; it now passes `null`.
+- New: `backend/test/unit/env.test.ts`: defaults, accepted and refused values for the three settings.
+Estimate after the change (5 merchants): about 15 million units for indexing, about 5 million for
+the sweep, under 1 million for about 100 user actions a day: about 21 million a month, inside the
+free 30 million. New transactions reach the read model within about 15 s, deposits within a minute.
+Live check: the worker run for 30 s against Base Sepolia indexed exactly 10 blocks, swept once, and
+waited for the next check.
+Gate (logs in `docs/gate-logs/C-093/`):
+- Red phase: 29 tests failed on the old code.
+- G1 pass: 593 passed, 0 failed, three runs alike.
+- G2 pass: `tsc --noEmit` exit 0.
+- G9 pass, `G9.log`: 12 of 12 caught, sources restored byte-identical: Q1 range one block too long;
+  Q2 caught-up check off by one; Q3 range past the head; Q4 box never cached; Q5 empty box cached; Q6
+  sweep timer ignored; Q7 timer boundary `<=`; Q8 sweeps without a keeper; Q9 lookup failure
+  escapes; Q10 default poll 3 s; Q11 default range 2,000; Q12 no minimum poll.
+- G10 pending: owner pushes, then Render redeploys.
+Commit: fix: indexer and keeper fit a free RPC plan: 15 s checks, at most 10 blocks per log query, deposit boxes swept once a minute with cached addresses
+
+### C-094 · AD-02 · User approval in one step: the Approve button prepares the on-chain approval · 2026-11-15
+Type: feature (backend)
+Decisions: owner's request, 2026-11-15; D-22, D-60, D-64, CLAUDE.md rule 6 and rule 9 applied
+Why: approving a user took two separate admin actions, `POST /admin/users/:id/approve` (database
+only) and then `setUserApproved` sent by the dashboard, so a user could be approved in one place and
+not the other. The backend holds no key with a role (rule 6), so it cannot send the on-chain approval
+itself; one button now means one wallet signature, and the database follows the chain (rule 9),
+through the indexer, which already sets `isApproved` from `UserApprovalSet`.
+Files:
+- Changed: `backend/src/modules/admin/admin.operations.service.ts`: `approveUser` no longer writes
+  `isApproved`. It refuses a user with no bound wallet (400, before any read), reads
+  `participantRole`, `approvedUser` and `accountRefOf`, and refuses what the ledger would refuse:
+  already approved, a merchant wallet (D-22), a retired wallet (D-64), a wallet linked to another
+  reference (D-60) (409 each); an unreadable ledger is 503. Otherwise it records
+  `USER_APPROVAL_PREPARED` in the audit log and returns `approvalTx` =
+  `setUserApproved(wallet, true, accountRef)` to the ledger, with the D-22 warning.
+- Changed: `backend/src/modules/admin/admin.schemas.ts`, `admin.routes.ts`: the approve response is
+  `{ user, walletAddress, accountRef, rolePermanentWarning, approvalTx }`.
+- Changed: `backend/src/lib/viem.ts`: `accountRefOf` in the ABI.
+- Changed: `backend/test/unit/admin.operations.test.ts`: partition table and 8 tests replacing the
+  old "approves user" test, which asserted the database write this change removes.
+- Changed (local, not pushed): `ADMIN_DASHBOARD_UPDATE_1.1.md` item 11.
+Not changed: `reject` still writes the database only; revoking on-chain stays the dashboard's
+separate transaction. The local test frontend (`frontend/`) still shows its two buttons.
+Gate (logs in `docs/gate-logs/C-094/`):
+- Red phase: the 8 new tests failed on the old code.
+- G1 pass: 600 passed, 0 failed, three runs alike.
+- G2 pass: `tsc --noEmit` exit 0.
+- G9 pass, `G9.log`: 9 of 9 caught, source restored byte-identical: V1 no wallet check; V2 already
+  approved ignored; V3 merchant allowed; V4 retired allowed; V5 link mismatch ignored; V6 approve
+  false; V7 zero reference; V8 ledger failure read as a fresh wallet; V9 wrong audit action.
+- G10 pending: owner pushes, then Render redeploys.
+Commit: feat: admin approves a user in one step, the backend prepares setUserApproved and the database follows the chain (AD-02)
+
+### C-095 · L-04 · `GET /loans/pool-available`, so the borrow screen stops asking the AI assistant · 2026-11-15
+Type: feature (backend)
+Decisions: none new
+Why: the app's borrow screen learnt the pool's cash by sending "What is my balance?" to
+`POST /ai/user/prompt` each time it opened (one AI request and several ledger reads), because no
+endpoint returned it.
+Files:
+- Changed: `backend/src/modules/loans/loans.service.ts`: `getPoolAvailable()`, one `poolAvailable()`
+  read on the ledger, returned as `{ poolAvailable: "20.000000", poolAvailableUnits: "20000000" }`;
+  an unreadable ledger is 503 `LEDGER_UNAVAILABLE`.
+- Changed: `backend/src/modules/loans/loans.routes.ts`: `GET /loans/pool-available`, signed-in users.
+- Changed: `backend/test/unit/loans.test.ts`: partition table and 5 tests (0, 1 unit, 20 USDC,
+  2^128 exact, ledger unreadable); `routes.inject.test.ts`: 401 without a session.
+Gate (logs in `docs/gate-logs/C-095/`):
+- Red phase: the 6 new tests failed on the old code.
+- G1 pass: 606 passed, 0 failed, three runs alike.
+- G2 pass: `tsc --noEmit` exit 0.
+- G9 pass, `G9.log`: 4 of 4 caught, sources restored byte-identical: P1 wrong view read; P2 ledger
+  failure answered as an empty pool; P3 float formatting; P4 no authentication.
+- G10 pending: owner pushes, then Render redeploys. The app switches to it in its next build.
+Commit: feat: GET /loans/pool-available returns the pool's lendable USDC for the borrow screen (L-04)
+
 ---
 
 ## Open items

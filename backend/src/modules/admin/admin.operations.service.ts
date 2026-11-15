@@ -1,6 +1,6 @@
 import { prisma } from "../../lib/prisma.js";
 import { parseAmount, formatAmount } from "../../lib/amount.js";
-import { BadRequestError, ConflictError, NotFoundError, PayloadTooLargeError } from "../../lib/errors.js";
+import { AppError, BadRequestError, ConflictError, NotFoundError, PayloadTooLargeError } from "../../lib/errors.js";
 import { StorageService, MAX_FILE_SIZE_BYTES, detectFileType } from "../../lib/storage.js";
 import { computeFileSha256 } from "../../lib/crypto.js";
 import {
@@ -8,7 +8,7 @@ import {
   INDICO_LEDGER_ABI,
 } from "../../lib/viem.js";
 import { env } from "../../config/env.js";
-import { formatEther, type Address, type Hex } from "viem";
+import { encodeFunctionData, formatEther, type Address, type Hex } from "viem";
 import type {
   AdminUserListQuery,
   AdminCreateMerchantInput,
@@ -19,8 +19,11 @@ import type {
 
 export class AdminOperationsService {
   /**
-   * Approves a registered user account (PRD §4.7 AD-02; O-024).
-   * Note: approving a bound wallet makes its on-chain role permanent (D-22).
+   * Approves a registered user in one step (PRD §4.7 AD-02; O-024): checks the ledger would accept
+   * it and returns `setUserApproved(wallet, true, accountRef)` for the admin wallet to sign. The
+   * backend holds no key with a role, so it never sends it; the database becomes approved when the
+   * indexer sees `UserApprovalSet`. Only possible once the user has bound a wallet.
+   * Approving a wallet makes its on-chain role permanent (D-22).
    */
   static async approveUser(adminId: string, userId: string) {
     const user = await prisma.user.findUnique({
@@ -31,37 +34,73 @@ export class AdminOperationsService {
     if (!user) {
       throw new NotFoundError(`User with ID "${userId}" not found`);
     }
+    if (!user.walletBinding) {
+      throw new BadRequestError(
+        "User has not connected a wallet yet. Approval is possible once their wallet is bound."
+      );
+    }
 
-    const updated = await prisma.user.update({
-      where: { id: userId },
-      data: { isApproved: true },
-      select: {
-        id: true,
-        email: true,
-        isEmailVerified: true,
-        isApproved: true,
-        createdAt: true,
-        updatedAt: true,
-      },
-    });
+    const wallet = user.walletBinding.walletAddress as Address;
+    const accountRef = user.walletBinding.accountRef as Hex;
+    const read = (functionName: "participantRole" | "approvedUser" | "accountRefOf") =>
+      publicClient.readContract({
+        address: env.INDICO_LEDGER_ADDRESS as Address,
+        abi: INDICO_LEDGER_ABI,
+        functionName,
+        args: [wallet],
+      });
 
+    let role: number, approved: boolean, linkedRef: string;
+    try {
+      const [r, a, l] = await Promise.all([read("participantRole"), read("approvedUser"), read("accountRefOf")]);
+      [role, approved, linkedRef] = [Number(r), Boolean(a), String(l)];
+    } catch {
+      throw new AppError(503, "LEDGER_UNAVAILABLE", "Could not read the ledger. Please try again.");
+    }
+
+    // The ledger's own refusals (D-22, D-60, D-64), answered before the admin signs.
+    if (approved) throw new ConflictError("This wallet is already approved on-chain.");
+    if (role === 2) throw new ConflictError("This wallet belongs to a merchant and can never be a user (D-22).");
+    if (role === 3) throw new ConflictError("This wallet was retired by an account move and cannot be approved.");
+    if (!/^0x0+$/.test(linkedRef) && linkedRef.toLowerCase() !== accountRef.toLowerCase()) {
+      throw new ConflictError("This wallet is linked to another account on-chain.");
+    }
+
+    const rolePermanentWarning =
+      "Approving makes this wallet a user permanently on-chain: it can never become a merchant (D-22).";
     await prisma.auditLog.create({
       data: {
         actorType: "ADMIN",
         actorId: adminId,
-        action: "USER_APPROVED",
+        action: "USER_APPROVAL_PREPARED",
         resource: "User",
         resourceId: userId,
-        payload: {
-          email: user.email,
-          walletAddress: user.walletBinding?.walletAddress ?? null,
-          rolePermanentWarning:
-            "Approved wallet address permanently assumes USER role on-chain (D-22)",
-        },
+        payload: { email: user.email, walletAddress: wallet, accountRef, rolePermanentWarning },
       },
     });
 
-    return updated;
+    return {
+      user: {
+        id: user.id,
+        email: user.email,
+        isEmailVerified: user.isEmailVerified,
+        isApproved: user.isApproved,
+        createdAt: user.createdAt,
+        updatedAt: user.updatedAt,
+      },
+      walletAddress: wallet,
+      accountRef,
+      rolePermanentWarning,
+      approvalTx: {
+        to: env.INDICO_LEDGER_ADDRESS,
+        data: encodeFunctionData({
+          abi: INDICO_LEDGER_ABI,
+          functionName: "setUserApproved",
+          args: [wallet, true, accountRef],
+        }),
+        value: "0",
+      },
+    };
   }
 
   /**

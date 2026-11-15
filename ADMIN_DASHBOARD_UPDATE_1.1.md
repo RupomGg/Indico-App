@@ -109,6 +109,30 @@ Could not be tested on the live dashboard (no user registered there yet). Verify
   and the reverse.
 - Database approval and chain approval must not drift: show both states, as the Merchants page does.
 
+**Updated 2026-11-15: one Approve button.** `POST /admin/users/:id/approve` no longer marks the user
+approved in the database. It checks the ledger and returns the one transaction to sign:
+
+```json
+{
+  "user": { "id": "…", "email": "…", "isApproved": false, "…": "…" },
+  "walletAddress": "0x…",
+  "accountRef": "0x…",
+  "rolePermanentWarning": "Approving makes this wallet a user permanently on-chain: …",
+  "approvalTx": { "to": "0xBB19…90D3", "data": "0x…", "value": "0" }
+}
+```
+
+1. Show **Approve** only for users with a bound wallet (`walletAddress` not null). Otherwise show
+   "Waiting for the user to connect a wallet". The endpoint answers 400 if called anyway.
+2. On click: call the endpoint, show `rolePermanentWarning`, then send `approvalTx` exactly as
+   returned from the admin wallet (`to`, `data`, `value`). Do not build the calldata yourself and do
+   not call any other approve endpoint.
+3. After the transaction confirms, reload the user. `isApproved` becomes true within about 15 s,
+   when the indexer sees `UserApprovalSet`.
+4. Errors to show as they come: 409 "already approved on-chain", "belongs to a merchant",
+   "retired by an account move", "linked to another account"; 503 "could not read the ledger".
+5. Remove the separate "Approve on-chain" button. Reject is unchanged.
+
 ### 7. Credits: issue and debit (AD-10, AD-11, AD-12)
 
 The Credits page only explains that credit is issued "from the Safe". There is no way to do it.

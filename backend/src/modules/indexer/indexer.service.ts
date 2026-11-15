@@ -7,6 +7,43 @@ import { projectChainLog } from "./indexer.projector.js";
 import { DecodedChainLog, IndexerStatusResponse } from "./indexer.schemas.js";
 
 export class IndexerService {
+  /** Deposit box per merchant. A box is assigned once, at the first approval, and never changes (D-70). */
+  private static depositBoxCache = new Map<string, Address>();
+  private static lastSweepAt: number | null = null;
+
+  static resetSweepState() {
+    IndexerService.depositBoxCache.clear();
+    IndexerService.lastSweepAt = null;
+  }
+
+  /** The next block range to index, at most `maxRange` blocks, or null when caught up. */
+  static nextRange(processed: bigint, safeHead: bigint, maxRange: number) {
+    if (processed >= safeHead) return null;
+    const fromBlock = processed + 1n;
+    const last = fromBlock + BigInt(maxRange) - 1n;
+    return { fromBlock, toBlock: last < safeHead ? last : safeHead };
+  }
+
+  /** Sweeps the approved merchants' deposit boxes at most once per `intervalMs`. Returns whether it ran. */
+  static async sweepIfDue(
+    now: number = Date.now(),
+    intervalMs: number = env.SWEEP_INTERVAL_MS,
+    loadMerchants: () => Promise<string[]> = async () =>
+      (await prisma.merchant.findMany({ where: { isApproved: true } })).map((m) => m.walletAddress),
+    client: Pick<typeof publicClient, "readContract"> = publicClient,
+    keeper: Pick<NonNullable<typeof keeperWalletClient>, "writeContract"> | null = keeperWalletClient ?? null
+  ) {
+    if (!keeper) return false;
+    if (IndexerService.lastSweepAt !== null && now - IndexerService.lastSweepAt < intervalMs) return false;
+    IndexerService.lastSweepAt = now;
+    try {
+      await IndexerService.sweepDepositBoxes(await loadMerchants(), client, keeper);
+      return true;
+    } catch (err: any) {
+      console.warn("[Keeper] sweep round skipped:", err?.message || err);
+      return false;
+    }
+  }
   /**
    * Processes a single decoded log within an atomic transaction.
    */
@@ -39,20 +76,24 @@ export class IndexerService {
   static async sweepDepositBoxes(
     merchantWallets: string[],
     client: Pick<typeof publicClient, "readContract"> = publicClient,
-    keeper: Pick<NonNullable<typeof keeperWalletClient>, "writeContract"> | undefined = keeperWalletClient
+    keeper: Pick<NonNullable<typeof keeperWalletClient>, "writeContract"> | null = keeperWalletClient ?? null
   ) {
     if (!keeper) return [];
     const swept: string[] = [];
     for (const wallet of merchantWallets) {
       const merchant = wallet as Address;
       try {
-        const box = (await client.readContract({
-          address: env.INDICO_LEDGER_ADDRESS as Address,
-          abi: INDICO_LEDGER_ABI,
-          functionName: "depositBoxOf",
-          args: [merchant],
-        })) as Address;
-        if (box === zeroAddress) continue;
+        let box = IndexerService.depositBoxCache.get(merchant.toLowerCase());
+        if (!box) {
+          box = (await client.readContract({
+            address: env.INDICO_LEDGER_ADDRESS as Address,
+            abi: INDICO_LEDGER_ABI,
+            functionName: "depositBoxOf",
+            args: [merchant],
+          })) as Address;
+          if (box === zeroAddress) continue;
+          IndexerService.depositBoxCache.set(merchant.toLowerCase(), box);
+        }
         const inBox = (await client.readContract({
           address: env.USDC_ADDRESS as Address,
           abi: ERC20_ABI,
@@ -81,11 +122,6 @@ export class IndexerService {
     if (fromBlock > toBlock) {
       return { syncedBlocks: 0, eventsProcessed: 0 };
     }
-
-    // 1. Sweep merchant deposit boxes into the pool (D-70).
-    await IndexerService.sweepDepositBoxes(
-      (await prisma.merchant.findMany({ where: { isApproved: true } })).map((m) => m.walletAddress)
-    );
 
     const rawLogs = await publicClient.getLogs({
       address: env.INDICO_LEDGER_ADDRESS as `0x${string}`,

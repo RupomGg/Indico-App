@@ -4,7 +4,6 @@ import { env } from "./config/env.js";
 import { IndexerService } from "./modules/indexer/indexer.service.js";
 
 const CONFIRMATIONS = 2n;
-const POLL_INTERVAL_MS = 3000; // 3 seconds when caught up
 
 let isRunning = true;
 
@@ -30,15 +29,9 @@ export async function runIndexerLoop() {
         ? checkpoint.lastProcessedBlock
         : (safeHead > 50n ? safeHead - 50n : 0n);
 
-      if (currentProcessed < safeHead) {
-        const remaining = safeHead - currentProcessed;
-        const batchSize = remaining > 2000n ? 2000n : (remaining > 500n ? 500n : remaining);
-        const fromBlock = currentProcessed + 1n;
-        const toBlock =
-          fromBlock + batchSize - 1n < safeHead
-            ? fromBlock + batchSize - 1n
-            : safeHead;
-
+      const range = IndexerService.nextRange(currentProcessed, safeHead, env.LOG_BLOCK_RANGE);
+      if (range) {
+        const { fromBlock, toBlock } = range;
         const result = await IndexerService.syncBlockRange(fromBlock, toBlock);
         console.log(
           `📦 [Indexer] Synced blocks [${fromBlock} -> ${toBlock}] (${safeHead - toBlock} behind, head: ${latestBlock}). Processed ${result.eventsProcessed} event(s).`
@@ -46,7 +39,10 @@ export async function runIndexerLoop() {
         caughtUp = toBlock >= safeHead;
       }
 
-      // 3. Periodic Overdue Loan Check (Liquidation Keeper Alert)
+      // 3. Move merchant deposits into the pool, on its own slower timer (D-70)
+      await IndexerService.sweepIfDue();
+
+      // 4. Periodic Overdue Loan Check (Liquidation Keeper Alert)
       const nowSeconds = Math.floor(Date.now() / 1000);
       const overdueLoans = await prisma.loan.findMany({
         where: {
@@ -64,12 +60,8 @@ export async function runIndexerLoop() {
       console.error("❌ [Worker] Error during sync loop:", err?.message || err);
     }
 
-    // If still catching up, wait 500ms to avoid Infura 429
-    if (!caughtUp) {
-      await new Promise((resolve) => setTimeout(resolve, 500));
-    } else {
-      await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
-    }
+    // Catching up: short pause between ranges; caught up: wait for the next check.
+    await new Promise((resolve) => setTimeout(resolve, caughtUp ? env.POLL_INTERVAL_MS : 500));
   }
 }
 

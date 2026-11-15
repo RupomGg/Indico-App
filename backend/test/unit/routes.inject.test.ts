@@ -39,6 +39,11 @@ describe("HTTP Route Adversarial & Corner-Case Injection (PRD §Input Testing §
       expect(body.error.code).toBe("UNAUTHORIZED");
     });
 
+    it("GET /api/v1/loans/pool-available without auth header returns 401", async () => {
+      const response = await app.inject({ method: "GET", url: "/api/v1/loans/pool-available" });
+      expect(response.statusCode).toBe(401);
+    });
+
     it("GET /api/v1/profile/wallet without auth header returns 401", async () => {
       const response = await app.inject({
         method: "GET",

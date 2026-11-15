@@ -57,6 +57,39 @@ describe("Loans Module (PRD §4.1 U-11; §4.4 L-01 to L-10; §4.5 R-01 to R-06)"
     vi.restoreAllMocks();
   });
 
+  /**
+   * GET /loans/pool-available: the pool's lendable USDC, read from the ledger (L-04).
+   * | Class            | poolAvailable()   | Expected                                |
+   * |------------------|-------------------|-----------------------------------------|
+   * | empty pool       | 0                 | "0.000000", units "0"                   |
+   * | one unit         | 1                 | "0.000001"                              |
+   * | typical          | 20 USDC           | "20.000000", units "20000000"           |
+   * | above uint128    | 2^128             | exact decimal string, no float rounding |
+   * | ledger unreadable| RPC throws        | 503 LEDGER_UNAVAILABLE                  |
+   */
+  describe("GET /loans/pool-available", () => {
+    it.each([
+      [0n, "0.000000"],
+      [1n, "0.000001"],
+      [20_000_000n, "20.000000"],
+      [2n ** 128n, "340282366920938463463374607431768.211456"],
+    ])("reads poolAvailable %s from the ledger", async (units, formatted) => {
+      const read = vi.spyOn(publicClient, "readContract").mockResolvedValue(units as any);
+      const res = await LoansService.getPoolAvailable();
+      expect(res).toEqual({ poolAvailable: formatted, poolAvailableUnits: units.toString() });
+      expect(read).toHaveBeenCalledWith(
+        expect.objectContaining({ functionName: "poolAvailable", abi: INDICO_LEDGER_ABI })
+      );
+    });
+
+    it("answers 503 when the ledger cannot be read", async () => {
+      vi.spyOn(publicClient, "readContract").mockRejectedValue(new Error("rpc down"));
+      const err = await LoansService.getPoolAvailable().catch((e) => e);
+      expect(err.statusCode).toBe(503);
+      expect(err.code).toBe("LEDGER_UNAVAILABLE");
+    });
+  });
+
   describe("POST /loans/prepare-borrow", () => {
     it("throws BadRequestError if user has no bound wallet", async () => {
       vi.spyOn(prisma.walletBinding, "findUnique").mockResolvedValue(null);

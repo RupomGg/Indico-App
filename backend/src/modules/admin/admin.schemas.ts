@@ -53,6 +53,15 @@ export const adminUserOperationResponseSchema = z.object({
   updatedAt: z.date().or(z.string()),
 });
 
+/** POST /admin/users/:id/approve: the one transaction the admin wallet signs. */
+export const adminApproveUserResponseSchema = z.object({
+  user: adminUserOperationResponseSchema,
+  walletAddress: z.string(),
+  accountRef: z.string(),
+  rolePermanentWarning: z.string(),
+  approvalTx: z.object({ to: z.string(), data: z.string(), value: z.string() }),
+});
+
 export const adminAddServiceSchema = z.object({
   name: z.string().min(2),
   price: amountSchema,

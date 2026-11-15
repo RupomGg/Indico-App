@@ -10,6 +10,7 @@ import {
   adminUpdateServiceSchema,
   adminAuditLogQuerySchema,
   adminUserOperationResponseSchema,
+  adminApproveUserResponseSchema,
 } from "./admin.schemas.js";
 import { authenticateAdmin } from "../../middleware/auth.js";
 import { BadRequestError } from "../../lib/errors.js";
@@ -92,11 +93,12 @@ export async function adminRoutes(fastify: FastifyInstance) {
       "/users/:id/approve",
       {
         schema: {
-          description: "Approve a user account; warns that on-chain role becomes permanent (AD-02, D-22)",
+          description:
+            "Approve a user in one step: returns setUserApproved for the admin wallet to sign; the user is approved in the database once the indexer sees it on-chain. Needs a bound wallet (AD-02, D-22)",
           tags: ["Admin"],
           params: z.object({ id: z.string() }),
           response: {
-            200: adminUserOperationResponseSchema,
+            200: adminApproveUserResponseSchema,
           },
         },
       },

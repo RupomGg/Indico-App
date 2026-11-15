@@ -49,6 +49,7 @@ export const INDICO_LEDGER_ABI = parseAbi([
   "function termsHash() external view returns (bytes32)",
   "function termsSigned(address user) external view returns (bool)",
   "function approvedUser(address user) external view returns (bool)",
+  "function accountRefOf(address wallet) external view returns (bytes32)",
   "function approvedMerchant(address merchant) external view returns (bool)",
   "function merchantAgreement(address merchant) external view returns (bytes32)",
   "function depositBoxOf(address merchant) external view returns (address)",
