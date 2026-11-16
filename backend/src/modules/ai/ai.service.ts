@@ -7,6 +7,7 @@ import { parseAmount, formatAmount } from "../../lib/amount.js";
 import { env } from "../../config/env.js";
 import { LoansService } from "../loans/loans.service.js";
 import { CreditService } from "../credit/credit.service.js";
+import { HistoryService } from "../history/history.service.js";
 import { AdminOperationsService } from "../admin/admin.operations.service.js";
 import { AiResponse } from "./ai.schemas.js";
 
@@ -24,14 +25,36 @@ export class AiService {
         return this.handleUserReadStatus(userId, intent.target as "BALANCE" | "LOANS" | "TRANSACTIONS" | "ALL");
       }
 
+      case "INFO": {
+        return {
+          success: true,
+          type: "MESSAGE",
+          intent: "READ_STATUS",
+          requiresWalletSignature: false,
+          text: INFO_TEXT[intent.info!],
+          ...(intent.info === "HELP" ? { suggestions: STARTERS } : {}),
+        };
+      }
+
+      case "MULTIPLE": {
+        return {
+          success: true,
+          type: "UNKNOWN",
+          intent: "UNKNOWN",
+          requiresWalletSignature: false,
+          text: 'Please ask for these one at a time: one payment, one loan, or one repayment. For example "Borrow 500 USDC", then "Repay loan #4".',
+        };
+      }
+
       case "REQUEST_LOAN": {
-        if (!intent.amount || Number(intent.amount) <= 0) {
+        if (!intent.amount || !(Number(intent.amount) > 0)) {
           return {
             success: true,
             type: "UNKNOWN",
             intent: "REQUEST_LOAN",
             requiresWalletSignature: false,
-            text: "Please specify a positive USDC amount to borrow (for example: \"Borrow 5,000 USDC\"). Or visit the Loans screen directly.",
+            text: 'How much do you want to borrow? Write a positive amount in numbers, for example "Borrow 500 USDC". Or use the Loans screen.',
+            suggestions: [{ label: "Borrow…", prompt: "Borrow " }],
           };
         }
 
@@ -73,12 +96,16 @@ export class AiService {
 
       case "REPAY_LOAN": {
         if (!intent.loanId) {
+          const loans = await AiService.activeLoans(userId);
           return {
             success: true,
             type: "UNKNOWN",
             intent: "REPAY_LOAN",
             requiresWalletSignature: false,
-            text: "Please specify which loan ID to repay (for example: \"Repay loan #1\"). You can view your loans by asking \"Show my active loans\".",
+            text: loans.length
+              ? 'Which loan do you want to repay? Tell me its number, for example "Repay loan #4".'
+              : "You have no active loans to repay.",
+            suggestions: loans.slice(0, 6).map(repaySuggestion),
           };
         }
 
@@ -123,12 +150,16 @@ export class AiService {
 
       case "EXTEND_LOAN": {
         if (!intent.loanId) {
+          const loans = await AiService.activeLoans(userId);
           return {
             success: true,
             type: "UNKNOWN",
             intent: "EXTEND_LOAN",
             requiresWalletSignature: false,
-            text: "Please specify which loan ID to extend (for example: \"Extend loan #1\"). Extensions must be within 30 days of the due date.",
+            text: loans.length
+              ? 'Which loan do you want to extend? Tell me its number, for example "Extend loan #4". A loan can be extended in the last 30 days before it is due.'
+              : "You have no active loans to extend.",
+            suggestions: loans.filter(extensionOpen).slice(0, 6).map(extendSuggestion),
           };
         }
 
@@ -185,7 +216,8 @@ export class AiService {
           type: "UNKNOWN",
           intent: "UNKNOWN",
           requiresWalletSignature: false,
-          text: "I couldn't map that request with certainty. Supported commands:\n• \"What is my available credit and loan status?\"\n• \"What services can I buy?\"\n• \"Buy Software Dev package 1 from Sparktech\"\n• \"Borrow 5,000 USDC\"\n• \"Repay loan #1\"\n• \"Extend loan #1\"\nOr navigate to the dedicated screen in the navigation menu.",
+          text: `I couldn't map that request with certainty. ${INFO_TEXT.HELP}`,
+          suggestions: STARTERS,
         };
       }
     }
@@ -198,6 +230,25 @@ export class AiService {
     userId: string,
     target: "BALANCE" | "LOANS" | "TRANSACTIONS" | "ALL"
   ): Promise<AiResponse> {
+    if (target === "TRANSACTIONS") {
+      const { items } = await HistoryService.getUserTransactions(userId);
+      const lines = items
+        .filter((e) => HISTORY_LABELS[e.eventName])
+        .slice(0, 8)
+        .map((e) => {
+          const raw = e.data?.amount ?? e.data?.principal ?? e.data?.value;
+          const amount = raw !== undefined && /^\d+$/.test(String(raw)) ? `: ${formatAmount(BigInt(raw))}` : "";
+          return `• ${new Date(e.blockTimestamp * 1000).toISOString().slice(0, 10)} ${HISTORY_LABELS[e.eventName]}${amount}`;
+        });
+      return {
+        success: true,
+        type: "MESSAGE",
+        intent: "READ_STATUS",
+        requiresWalletSignature: false,
+        text: lines.length ? `Your recent transactions:\n${lines.join("\n")}` : "You have no transactions yet.",
+      };
+    }
+
     const binding = await prisma.walletBinding.findUnique({ where: { userId } });
     if (!binding) {
       return {
@@ -286,6 +337,10 @@ export class AiService {
       intent: "READ_STATUS",
       requiresWalletSignature: false,
       text: `📊 Financial Summary:\n• Available Credit: ${availableCredit} USDC\n• Locked Collateral: ${lockedCredit} Credit\n${maxBorrowLine}\n• Active Loans: ${activeLoansCount}`,
+      suggestions: [
+        ...(await AiService.activeLoans(userId)).filter(extensionOpen).flatMap((l) => [repaySuggestion(l), extendSuggestion(l)]),
+        ...(maxBorrowUnits > 0n ? [{ label: `Borrow (up to ${short(maxBorrowUnits)} USDC)`, prompt: "Borrow " }] : []),
+      ].slice(0, 6),
       preview: {
         availableCredit: `${availableCredit} USDC`,
         lockedCredit: `${lockedCredit} Credit`,
@@ -297,7 +352,8 @@ export class AiService {
   }
 
   /**
-   * Resolves merchant and services, presents service catalog, and prepares service purchase calldata (PRD §4.3, §4.6)
+   * Resolves the merchant and service and prepares a payment (PRD §4.3, §4.6). A merchant is named by
+   * its full name or wallet, never guessed from part of a name (AI-05); two candidates mean a question.
    */
   private static async handleUserSpendCredit(
     userId: string,
@@ -306,496 +362,261 @@ export class AiService {
     amountStr: string | null,
     target?: string
   ): Promise<AiResponse> {
-    // 1. Fetch approved merchants with their cataloged services
-    let merchantsWithServices: Array<any> = [];
+    let merchants: Array<any> = [];
     try {
-      merchantsWithServices = await prisma.merchant.findMany({
-        where: { isApproved: true },
-        include: {
-          services: true,
-        },
-      });
+      merchants = await prisma.merchant.findMany({ where: { isApproved: true }, include: { services: true } });
     } catch {
-      // Fallback if DB is disconnected in unit tests
+      // No merchant list; every lookup below then finds nothing.
     }
-
-    // Collect all services flattened with their merchant
-    const allServices = merchantsWithServices.flatMap((m) =>
-      (m.services || []).map((s: any) => ({
-        ...s,
-        merchant: m,
-      }))
-    );
-
-    // 2. Target = SERVICES or General Inquiry: List service catalog
-    if (target === "SERVICES" || (!merchantQuery && !serviceQuery && !amountStr)) {
-      // If user asked about a specific merchant's offerings (e.g. "what does sparktech offer?")
-      if (merchantQuery) {
-        const targetMerchant = merchantsWithServices.find(
-          (m) =>
-            m.name.toLowerCase().includes(merchantQuery.toLowerCase()) ||
-            (isAddress(merchantQuery) && m.walletAddress.toLowerCase() === merchantQuery.toLowerCase())
-        );
-
-        if (targetMerchant) {
-          const servicesList =
-            targetMerchant.services && targetMerchant.services.length > 0
-              ? targetMerchant.services
-                  .map(
-                    (s: any) =>
-                      `• **${s.name}**: ${formatAmount(BigInt(s.priceUnits))} Credit\n  _${s.description || "No description provided"}_`
-                  )
-                  .join("\n")
-              : "• No specific services currently listed for this merchant.";
-
-          return {
-            success: true,
-            type: "MESSAGE",
-            intent: "SPEND_CREDIT",
-            requiresWalletSignature: false,
-            text: `🛍️ **${targetMerchant.name} Service Catalog**:\n${servicesList}\n\nTo purchase a service, simply say:\n• "Buy [Service Name] from ${targetMerchant.name}"\n• "Pay for [Service Name]"`,
-            preview: {
-              merchant: targetMerchant.name,
-              services: (targetMerchant.services || []).map((s: any) => ({
-                name: s.name,
-                price: `${formatAmount(BigInt(s.priceUnits))} Credit`,
-              })),
-            },
-          };
-        }
-      }
-
-      // Overall Catalog of all merchants and their services
-      const catalogSections = merchantsWithServices.map((m) => {
-        const sList =
-          m.services && m.services.length > 0
-            ? m.services
-                .map((s: any) => `  - **${s.name}**: ${formatAmount(BigInt(s.priceUnits))} Credit (${s.description})`)
-                .join("\n")
-            : "  - _Custom credit settlement_";
-        return `🏢 **${m.name}**:\n${sList}`;
-      });
-
-      const catalogText =
-        catalogSections.length > 0
-          ? catalogSections.join("\n\n")
-          : "No approved merchants or services are currently registered.";
-
-      return {
-        success: true,
-        type: "MESSAGE",
-        intent: "SPEND_CREDIT",
-        requiresWalletSignature: false,
-        text: `🛍️ **Available Merchant Services Directory** (PRD §4.3):\nClients spend credit on specific cataloged services provided by approved merchants ($0 platform fees):\n\n${catalogText}\n\nTo purchase, simply say:\n• "Buy [Service Name] from [Merchant Name]"\n• "Pay for [Service Name]"`,
-        preview: {
-          totalServices: allServices.length,
-          platformFee: "$0 (Zero Fee)",
-        },
-      };
-    }
-
-    // 3. User wants to buy a specific service: match service by name
-    let matchedService: any = null;
-    if (serviceQuery) {
-      const sq = serviceQuery.toLowerCase();
-      matchedService = allServices.find((s) => {
-        const sName = s.name.toLowerCase();
-        return sName.includes(sq) || sq.includes(sName);
-      });
-    }
-
-    // Also check if merchantQuery matches a service name (e.g. user typed "pay for ICC Emergency Arbitrator Filing")
-    if (!matchedService && merchantQuery) {
-      const mq = merchantQuery.toLowerCase();
-      matchedService = allServices.find((s) => s.name.toLowerCase().includes(mq));
-    }
-
-    // If a service was matched, we know the exact merchant and the exact fixed price!
-    if (matchedService) {
-      const servicePrice = formatAmount(BigInt(matchedService.priceUnits));
-      const merchant = matchedService.merchant;
-
-      try {
-        const prepared = await CreditService.prepareSpendCalldata(userId, {
-          merchantAddress: merchant.walletAddress,
-          amount: servicePrice,
-        });
-
-        return {
-          success: true,
-          type: "TRANSACTION_PREVIEW",
-          intent: "SPEND_CREDIT",
-          requiresWalletSignature: true,
-          text: `Prepared purchase preview for service **"${matchedService.name}"** from **${merchant.name}** for **${prepared.amount} Credit** ($0 fee). Please confirm with your wallet.`,
-          preview: {
-            action: "Purchase Merchant Service",
-            service: matchedService.name,
-            merchant: merchant.name,
-            merchantWallet: merchant.walletAddress,
-            servicePrice: `${prepared.amount} Credit`,
-            description: matchedService.description,
-            platformFee: "$0 (No fee)",
-          },
-          preparedTx: {
-            to: prepared.to,
-            data: prepared.data,
-            value: prepared.value,
-            estimatedGasEth: prepared.gasCostEth,
-          },
-        };
-      } catch (err: any) {
-        return {
-          success: false,
-          type: "ERROR",
-          intent: "SPEND_CREDIT",
-          requiresWalletSignature: false,
-          text: err?.message || `Failed to prepare purchase of service "${matchedService.name}".`,
-        };
-      }
-    }
-
-    // 4. User specified a merchant name, but no specific service
-    if (merchantQuery) {
-      let targetMerchant = merchantsWithServices.find(
-        (m) =>
-          m.name.toLowerCase().includes(merchantQuery.toLowerCase()) ||
-          (isAddress(merchantQuery) && m.walletAddress.toLowerCase() === merchantQuery.toLowerCase())
-      );
-
-      // Fallback query if not loaded in merchantsWithServices
-      if (!targetMerchant) {
-        try {
-          targetMerchant = await prisma.merchant.findFirst({
-            where: {
-              isApproved: true,
-              OR: [
-                { name: { contains: merchantQuery, mode: "insensitive" } },
-                ...(isAddress(merchantQuery) ? [{ walletAddress: merchantQuery.toLowerCase() }] : []),
-              ],
-            },
-            include: { services: true },
-          });
-        } catch {
-          // DB error
-        }
-      }
-
-      if (!targetMerchant) {
-        const names = merchantsWithServices.map((m) => `• ${m.name}`).join("\n");
-        return {
-          success: false,
-          type: "ERROR",
-          intent: "SPEND_CREDIT",
-          requiresWalletSignature: false,
-          text: `Merchant "${merchantQuery}" was not found among approved merchants.${names ? `\n\nApproved Merchants:\n${names}` : ""}`,
-        };
-      }
-
-      // If this merchant has cataloged services, guide the user to select one
-      if (targetMerchant.services && targetMerchant.services.length > 0) {
-        const sList = targetMerchant.services
-          .map((s: any) => `• **${s.name}**: ${formatAmount(BigInt(s.priceUnits))} Credit (${s.description})`)
-          .join("\n");
-
-        return {
-          success: true,
-          type: "MESSAGE",
-          intent: "SPEND_CREDIT",
-          requiresWalletSignature: false,
-          text: `Credit is spent on specific services. **${targetMerchant.name}** offers the following services:\n\n${sList}\n\nTo purchase one, say:\n• "Buy ${targetMerchant.services[0].name} from ${targetMerchant.name}"`,
-          preview: {
-            merchant: targetMerchant.name,
-            services: targetMerchant.services,
-          },
-        };
-      }
-
-      // Fallback if merchant has no cataloged services and an amount is provided
-      if (amountStr && Number(amountStr) > 0) {
-        try {
-          const prepared = await CreditService.prepareSpendCalldata(userId, {
-            merchantAddress: targetMerchant.walletAddress,
-            amount: amountStr,
-          });
-
-          return {
-            success: true,
-            type: "TRANSACTION_PREVIEW",
-            intent: "SPEND_CREDIT",
-            requiresWalletSignature: true,
-            text: `Prepared payment of ${prepared.amount} Credit to merchant "${targetMerchant.name}". Merchant will receive an on-chain receipt upon confirmation ($0 fee).`,
-            preview: {
-              action: "Spend Credit",
-              merchant: targetMerchant.name,
-              merchantWallet: targetMerchant.walletAddress,
-              amountToSpend: `${prepared.amount} Credit`,
-              fee: "$0 (No fee)",
-            },
-            preparedTx: {
-              to: prepared.to,
-              data: prepared.data,
-              value: prepared.value,
-              estimatedGasEth: prepared.gasCostEth,
-            },
-          };
-        } catch (err: any) {
-          return {
-            success: false,
-            type: "ERROR",
-            intent: "SPEND_CREDIT",
-            requiresWalletSignature: false,
-            text: err?.message || "Failed to prepare spend transaction.",
-          };
-        }
-      }
-    }
-
-    // 5. User specified amount but no merchant or service
-    if (amountStr && !merchantQuery && !serviceQuery) {
-      const names = merchantsWithServices.map((m) => `• ${m.name}`).join("\n");
-      return {
-        success: true,
-        type: "MESSAGE",
-        intent: "SPEND_CREDIT",
-        requiresWalletSignature: false,
-        text: `You specified ${amountStr} Credit. Credit is spent on specific services offered by approved merchants.\n\nApproved Merchants:\n${names}\n\nAsk: "What services can I buy?" to browse catalog offerings.`,
-      };
-    }
-
-    // 5. Default Fallback
-    return {
-      success: true,
-      type: "MESSAGE",
+    const reply = (type: AiResponse["type"], text: string, extra: Partial<AiResponse> = {}): AiResponse => ({
+      success: type !== "ERROR",
+      type,
       intent: "SPEND_CREDIT",
       requiresWalletSignature: false,
-      text: "Please specify which service or merchant you would like to purchase from (for example: \"Buy Software Dev package 1 from Sparktech\"). Or ask: \"What services can I buy?\"",
+      text,
+      ...extra,
+    });
+    const price = (s: any) => `${formatAmount(BigInt(s.priceUnits))} credit`;
+    const catalog = (m: any) =>
+      reply(
+        "MESSAGE",
+        (m.services?.length
+          ? `${m.name} offers:\n${m.services.map((s: any) => `• ${s.name}: ${price(s)}${s.description ? ` (${s.description})` : ""}`).join("\n")}\n\nSay "Buy ${m.services[0].name} from ${m.name}", or pay any amount with "Pay ${m.name} 50".`
+          : `${m.name} has no services listed. Pay any amount with "Pay ${m.name} 50".`),
+        {
+          preview: { merchant: m.name, services: (m.services || []).map((s: any) => ({ name: s.name, price: price(s) })) },
+          suggestions: (m.services || []).slice(0, 6).map((s: any) => ({
+            label: `Buy ${s.name} (${short(BigInt(s.priceUnits))})`,
+            prompt: `Buy ${s.name} from ${m.name}`,
+          })),
+        }
+      );
+    const offers = (list: Array<any>) => list.slice(0, 6).map((m) => ({ label: m.name, prompt: `What does ${m.name} offer?` }));
+    const names = merchants.map((m) => `• ${m.name}`).join("\n");
+
+    const found = merchantQuery ? AiService.resolveMerchant(merchants, merchantQuery) : null;
+    if (found && "ambiguous" in found) {
+      return reply("UNKNOWN", `Which merchant do you mean?\n${found.ambiguous.map((m) => `• ${m.name}`).join("\n")}\nWrite the full name.`, {
+        suggestions: found.ambiguous.slice(0, 6).map((m) => ({
+          label: m.name,
+          prompt: amountStr ? `Pay ${m.name} ${amountStr}` : serviceQuery ? `Buy ${serviceQuery} from ${m.name}` : `What does ${m.name} offer?`,
+        })),
+      });
+    }
+    const merchant = found?.merchant ?? null;
+
+    // Questions about what can be bought
+    if (target === "SERVICES" || (!merchantQuery && !serviceQuery && !amountStr)) {
+      if (merchant) return catalog(merchant);
+      const sections = merchants.map((m) =>
+        `${m.name}:\n${m.services?.length ? m.services.map((s: any) => `  - ${s.name}: ${price(s)}`).join("\n") : "  - Any amount"}`
+      );
+      return reply(
+        "MESSAGE",
+        `Available Merchant Services Directory (no platform fees):\n\n${sections.length ? sections.join("\n\n") : "No approved merchants yet."}\n\nTo pay, say "Buy [service] from [merchant]" or "Pay [merchant] [amount]".`,
+        { preview: { totalServices: merchants.reduce((n, m) => n + (m.services?.length ?? 0), 0), platformFee: "$0 (Zero Fee)" }, suggestions: offers(merchants) }
+      );
+    }
+
+    if (amountStr !== null && !(Number(amountStr) > 0)) {
+      return reply("UNKNOWN", 'Please write a positive amount in numbers, for example "Pay TestMerchant 50".');
+    }
+    if (merchantQuery && !merchant) {
+      return reply(
+        "ERROR",
+        `Merchant "${merchantQuery}" was not found among approved merchants. Write the merchant's full name and the amount in numbers, for example "Pay TestMerchant 50".${names ? `\n\nApproved merchants:\n${names}` : ""}`,
+        { suggestions: offers(merchants) }
+      );
+    }
+
+    const prepare = async (m: any, amount: string, extraPreview: Record<string, unknown>, text: (a: string) => string) => {
+      try {
+        const prepared = await CreditService.prepareSpendCalldata(userId, { merchantAddress: m.walletAddress, amount });
+        return reply("TRANSACTION_PREVIEW", text(prepared.amount), {
+          requiresWalletSignature: true,
+          preview: { merchant: m.name, merchantWallet: m.walletAddress, platformFee: "$0 (No fee)", ...extraPreview, ...(extraPreview.action === "Spend Credit" ? { amountToSpend: `${prepared.amount} Credit` } : { servicePrice: `${prepared.amount} Credit` }) },
+          preparedTx: { to: prepared.to, data: prepared.data, value: prepared.value, estimatedGasEth: prepared.gasCostEth },
+        });
+      } catch (err: any) {
+        return reply("ERROR", err?.message || "Failed to prepare the payment.");
+      }
     };
+
+    // A named service, at the named merchant when one is given
+    if (serviceQuery) {
+      const q = serviceQuery.trim().toLowerCase();
+      const pool = (merchant ? [merchant] : merchants).flatMap((m) => (m.services || []).map((s: any) => ({ ...s, merchant: m })));
+      const exact = pool.filter((s) => s.name.toLowerCase() === q);
+      const hits = exact.length ? exact : pool.filter((s) => s.name.toLowerCase().includes(q));
+      if (hits.length > 1) {
+        return reply("UNKNOWN", `Which one do you mean?\n${hits.map((s) => `• ${s.name} from ${s.merchant.name}: ${price(s)}`).join("\n")}`, {
+          suggestions: hits.slice(0, 6).map((s) => ({
+            label: `${s.name} from ${s.merchant.name} (${short(BigInt(s.priceUnits))})`,
+            prompt: `Buy ${s.name} from ${s.merchant.name}`,
+          })),
+        });
+      }
+      if (hits.length === 1) {
+        const s = hits[0];
+        return prepare(s.merchant, formatAmount(BigInt(s.priceUnits)), { action: "Purchase Merchant Service", service: s.name, description: s.description },
+          (a) => `Prepared purchase of "${s.name}" from ${s.merchant.name} for ${a} credit (no fee). Please confirm in your wallet.`);
+      }
+      if (merchant) return catalog(merchant);
+      return reply("ERROR", `No approved merchant offers "${serviceQuery}". Ask "What services can I buy?" to see them.`);
+    }
+
+    // Any amount to a named merchant (C-04)
+    if (merchant && amountStr) {
+      return prepare(merchant, amountStr, { action: "Spend Credit", fee: "$0 (No fee)" },
+        (a) => `Prepared payment of ${a} credit to ${merchant.name}. The merchant gets an on-chain receipt when you confirm (no fee).`);
+    }
+    if (merchant) return catalog(merchant);
+
+    return reply("MESSAGE", `You specified ${amountStr} Credit. Credit is spent with approved merchants:\n${names}\n\nSay "Pay [merchant] ${amountStr}", or ask "What services can I buy?".`);
+  }
+
+  /** The user's active loans from the read model; none when unbound or unreadable. */
+  private static async activeLoans(userId: string): Promise<Array<any>> {
+    try {
+      const binding = await prisma.walletBinding.findUnique({ where: { userId } });
+      if (!binding) return [];
+      return await prisma.loan.findMany({ where: { borrower: binding.walletAddress, status: "ACTIVE" }, orderBy: { loanId: "asc" } });
+    } catch {
+      return [];
+    }
+  }
+
+  /** A merchant by wallet, full name, or the first whole words of exactly one name. */
+  static resolveMerchant(merchants: Array<any>, query: string): { merchant: any } | { ambiguous: Array<any> } | null {
+    const q = query.trim().toLowerCase();
+    if (isAddress(q)) {
+      const m = merchants.find((x) => x.walletAddress.toLowerCase() === q);
+      return m ? { merchant: m } : null;
+    }
+    const exact = merchants.filter((m) => m.name.toLowerCase() === q);
+    const hits = exact.length ? exact : merchants.filter((m) => m.name.toLowerCase().startsWith(`${q} `));
+    if (hits.length === 1) return { merchant: hits[0] };
+    return hits.length ? { ambiguous: hits } : null;
   }
 
   /**
    * Deterministic local intent parser for User Assistant (Option A - Zero API Keys)
-   * Adheres strictly to PRD §4.6 AI-01 and AI-05 (never guesses, refuses ambiguous intents)
+   * Adheres strictly to PRD §4.6 AI-01 and AI-05 (never guesses, refuses ambiguous intents).
+   * Amounts, loan numbers and durations are kept apart; two commands in one message are refused.
    */
   static parseUserIntent(prompt: string): {
-    type: "READ_STATUS" | "REQUEST_LOAN" | "REPAY_LOAN" | "EXTEND_LOAN" | "SPEND_CREDIT" | "UNKNOWN";
+    type: "READ_STATUS" | "REQUEST_LOAN" | "REPAY_LOAN" | "EXTEND_LOAN" | "SPEND_CREDIT" | "MULTIPLE" | "INFO" | "UNKNOWN";
     target: "BALANCE" | "LOANS" | "TRANSACTIONS" | "ALL" | "GUIDE" | "SERVICES";
     amount: string | null;
     loanId: string | null;
     merchantQuery: string;
     serviceQuery: string;
+    info: InfoTopic | null;
   } {
-    const lower = prompt.toLowerCase();
+    const lower = prompt.toLowerCase().trim();
+    type Result = ReturnType<typeof AiService.parseUserIntent>;
+    const out = (r: Partial<Result> & Pick<Result, "type">): Result => ({
+      target: "ALL", amount: null, loanId: null, merchantQuery: "", serviceQuery: "", info: null, ...r,
+    });
 
-    // 1. Check for prompt injection or adversarial overrides
-    if (
-      lower.includes("ignore all instructions") ||
-      lower.includes("system prompt") ||
-      lower.includes("give me admin") ||
-      lower.includes("bypass")
-    ) {
-      return {
-        type: "UNKNOWN",
-        target: "ALL",
-        amount: null,
-        loanId: null,
-        merchantQuery: "",
-        serviceQuery: "",
-      };
+    if (/ignore all instructions|system prompt|give me admin|bypass/.test(lower)) return out({ type: "UNKNOWN" });
+    if (/^(?:hi|hello|hey|help|menu|commands|what can you do|thanks|thank you)[\s!?.]*$/.test(lower)) {
+      return out({ type: "INFO", info: "HELP" });
+    }
+    if (/\b(?:interest|apr|fees?|charges?)\b/.test(lower) && !/\d/.test(lower)) return out({ type: "INFO", info: "NO_INTEREST" });
+    if (/\b(?:sell|withdraw|cash\s*out|convert|exchange|swap|redeem)\b/.test(lower)) return out({ type: "INFO", info: "NO_CASHOUT" });
+
+    const repay = /\brepay\b|\bpay\s*(?:back|off)\b|\b(?:settle|clear|close)\s+(?:my\s+|the\s+)?loan\b|\bpay\s+(?:my\s+|the\s+)?loan\b/.test(lower);
+    const extend = /\b(?:extend|roll\s*over|rollover|renew)\b/.test(lower);
+    const borrowQuestion = /\b(?:how much|what) can i (?:borrow|take)\b|\bcan i borrow\b|\bborrow(?:ing)? limit\b/.test(lower);
+    const borrow =
+      !borrowQuestion &&
+      /\bborrow\b|\bloan\s+me\b|\b(?:need|want|get|take(?:\s+out)?|request|apply\s+for)\s+(?:a\s+|an\s+|another\s+|new\s+)?loan\b/.test(lower);
+    const spend = /\b(?:pay|spend|send|transfer|buy|purchase|order|hire)\b/.test(
+      lower.replace(/\brepay\b|\bpay\s*(?:back|off)\b|\bpay\s+(?:my\s+|the\s+)?loan\b/g, " ")
+    );
+    if ([repay, extend, borrow, spend].filter(Boolean).length > 1) return out({ type: "MULTIPLE" });
+
+    if (spend && (lower.includes("@") || /\b(?:friend|someone|somebody|person|people|user|family|my\s+(?:brother|sister|mom|mother|dad|father|wife|husband|son|daughter))\b/.test(lower))) {
+      return out({ type: "INFO", info: "NO_USER_TRANSFER" });
     }
 
-    // 2. Read Status / Balance / Borrowing Limit inquiries (Check before action intents)
-    if (
-      lower.includes("how much can i borrow") ||
-      lower.includes("what can i borrow") ||
-      lower.includes("how much can i take") ||
-      lower.includes("can i borrow") ||
-      lower.includes("borrow limit") ||
-      lower.includes("borrowing limit") ||
-      lower.includes("credit limit") ||
-      lower.includes("balance") ||
-      (lower.includes("credit") &&
-        !lower.includes("pay") &&
-        !lower.includes("spend") &&
-        !lower.includes("send") &&
-        !lower.includes("transfer") &&
-        !lower.includes("buy") &&
-        !lower.includes("purchase") &&
-        !lower.includes("issue") &&
-        !lower.includes("debit")) ||
-      lower.includes("status") ||
-      (lower.includes("how much") && !lower.includes("pay") && !lower.includes("spend") && !lower.includes("send") && !lower.includes("buy")) ||
-      lower.includes("limit")
-    ) {
-      return {
-        type: "READ_STATUS",
-        target: "BALANCE",
-        amount: null,
-        loanId: null,
-        merchantQuery: "",
-        serviceQuery: "",
-      };
+    // Questions
+    if (/\b(?:history|transactions?|activity|statement)\b|\bwhat did i (?:spend|buy|pay)\b|\bspent\b/.test(lower)) {
+      return out({ type: "READ_STATUS", target: "TRANSACTIONS" });
+    }
+    if (!repay && !extend && !borrow &&
+      /\bloans?\b.*\b(?:status|due)\b|\b(?:my|active|open|list|show|all)\s+loans?\b|\bwhen\b.*\bdue\b|\bhow much do i owe\b|\bdo i owe\b/.test(lower)) {
+      return out({ type: "READ_STATUS", target: "LOANS" });
+    }
+    if (borrowQuestion || /\bbalance\b|\bstatus\b|\blimit\b|\bhow much\b/.test(lower) || (/\bcredit\b/.test(lower) && !spend && !repay && !extend && !borrow)) {
+      return out({ type: "READ_STATUS", target: "BALANCE" });
     }
 
-    if (lower.includes("my loans") || lower.includes("active loans") || lower.includes("list loans")) {
-      return {
-        type: "READ_STATUS",
-        target: "LOANS",
-        amount: null,
-        loanId: null,
-        merchantQuery: "",
-        serviceQuery: "",
-      };
+    // Loan actions: a loan number only counts after "loan", "#" or "id", or alone after repay/extend
+    if (repay || extend) {
+      const type = repay ? "REPAY_LOAN" : "EXTEND_LOAN";
+      const tagged = new Set([...lower.matchAll(/(?:\bloan\s*(?:#|no\.?|number|id)?\s*|#\s*|\bid\s*)(\d+)\b/g)].map((m) => m[1]));
+      const bare = lower.match(/^(?:repay|extend)\s+#?(\d+)\s*$/)?.[1];
+      if (bare) tagged.add(bare);
+      const others = amountsIn(lower).filter((a) => !tagged.has(a));
+      if (tagged.size > 1 || (tagged.size === 1 && others.length > 0)) return out({ type: "MULTIPLE" });
+      return out({ type, target: "LOANS", loanId: tagged.size === 1 ? [...tagged][0] ?? null : null });
     }
 
-    // 3. Loan Repayment
-    if (lower.includes("repay") || lower.includes("pay back") || lower.includes("settle loan") || lower.includes("clear loan")) {
-      const loanMatch = lower.match(/(?:loan|#|id)\s*#?\s*(\d+)/i) || lower.match(/\b(\d+)\b/);
-      const loanId = loanMatch && loanMatch[1] ? loanMatch[1] : null;
-      return {
-        type: "REPAY_LOAN",
-        target: "LOANS",
-        amount: null,
-        loanId,
-        merchantQuery: "",
-        serviceQuery: "",
-      };
+    if (borrow) {
+      const amounts = amountsIn(lower);
+      return out({ type: "REQUEST_LOAN", target: "LOANS", amount: amounts.length === 1 ? amounts[0] ?? null : null });
     }
 
-    // 4. Loan Extension
-    if (lower.includes("extend") || lower.includes("rollover") || lower.includes("roll over") || lower.includes("renew")) {
-      const loanMatch = lower.match(/(?:loan|#|id)\s*#?\s*(\d+)/i) || lower.match(/\b(\d+)\b/);
-      const loanId = loanMatch && loanMatch[1] ? loanMatch[1] : null;
-      return {
-        type: "EXTEND_LOAN",
-        target: "LOANS",
-        amount: null,
-        loanId,
-        merchantQuery: "",
-        serviceQuery: "",
-      };
+    // What can be bought
+    if (/\b(?:service|services|catalog|offering|offer)\b|\bwhat can i (?:buy|purchase)\b|\bwhat does\b|\bhow (?:to|do i) spend\b|\bwhere can i spend\b|\bwho can i pay\b|\b(?:list|show|which|approved)\s+merchants\b/.test(lower) ||
+      lower === "spend credit" || lower === "spend") {
+      const about = lower.match(/\b(?:from|at|by|of|for|with|does)\s+([a-z0-9_\- ]+)/)?.[1] ?? "";
+      const merchantQuery = /\bspend|\bpay|\bbuy/.test(lower) && !/\bwhat does\b/.test(lower) && !/\bfrom\b|\bat\b|\bwith\b/.test(lower)
+        ? ""
+        : about.replace(/\b(?:offer|offers|services?|credit|usdc|sell|sells|have|has)\b/g, "").replace(/\s+/g, " ").trim();
+      if (!spend || !amountsIn(lower).length) return out({ type: "SPEND_CREDIT", target: "SERVICES", merchantQuery });
     }
 
-    // 5. Loan Request / Borrow
-    if (lower.includes("borrow") || lower.includes("request loan") || lower.includes("take loan") || lower.includes("take out a loan")) {
-      const amountMatch = lower.match(/\$?\s*([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]+)?|[0-9]+(?:\.[0-9]+)?)/);
-      const amount = amountMatch && amountMatch[1] ? amountMatch[1].replace(/,/g, "") : null;
-      return {
-        type: "REQUEST_LOAN",
-        target: "LOANS",
-        amount,
-        loanId: null,
-        merchantQuery: "",
-        serviceQuery: "",
-      };
-    }
-
-    // 6. Spend Credit & Services Catalog Inquiries
-    if (
-      lower.includes("service") ||
-      lower.includes("catalog") ||
-      lower.includes("offering") ||
-      lower.includes("what can i buy") ||
-      lower.includes("what can i purchase") ||
-      lower.includes("what does") ||
-      lower.includes("how to spend") ||
-      lower.includes("how do i spend") ||
-      lower.includes("where can i spend") ||
-      lower.includes("who can i pay") ||
-      lower.includes("list merchants") ||
-      lower.includes("show merchants") ||
-      lower.includes("approved merchants") ||
-      lower.trim() === "spend credit" ||
-      lower.trim() === "spend"
-    ) {
-      let merchantQuery = "";
-      const toMatch = lower.match(/(?:from|at|by|of|for|with|does)\s+([a-zA-Z0-9_\- ]+)/i);
-      if (toMatch && toMatch[1]) {
-        merchantQuery = toMatch[1].replace(/\b(offer|services|service|credit|usdc|\?)\b/gi, "").trim();
-      }
-
-      return {
-        type: "SPEND_CREDIT",
-        target: "SERVICES",
-        amount: null,
-        loanId: null,
-        merchantQuery,
-        serviceQuery: "",
-      };
-    }
-
-    // 7. Spend Credit Transactions (Pay, Spend, Send, Transfer, Buy, Purchase)
-    if (
-      lower.includes("spend") ||
-      lower.includes("send") ||
-      lower.includes("transfer") ||
-      lower.includes("buy") ||
-      lower.includes("purchase") ||
-      lower.includes("order") ||
-      lower.includes("hire") ||
-      (lower.includes("pay") && !lower.includes("repay") && !lower.includes("pay back") && !lower.includes("pay loan"))
-    ) {
+    if (spend) {
+      const amounts = amountsIn(lower);
+      const amount = amounts.length === 1 ? amounts[0] ?? null : null;
       let merchantQuery = "";
       let serviceQuery = "";
-      let amount: string | null = null;
-
-      // Extract amount if present
-      const amountMatch = lower.match(/\$?\s*([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]+)?|[0-9]+(?:\.[0-9]+)?)/);
-      amount = amountMatch && amountMatch[1] ? amountMatch[1].replace(/,/g, "") : null;
-
-      // Check for format: "buy <service> from/at/by/with <merchant>"
-      const buyWithMerchantMatch = lower.match(
-        /(?:buy|purchase|order|hire|pay for)\s+([a-zA-Z0-9_\- ]+?)\s+(?:from|at|by|with)\s+([a-zA-Z0-9_\- ]+)/i
-      );
-
-      if (buyWithMerchantMatch && buyWithMerchantMatch[1] && buyWithMerchantMatch[2]) {
-        serviceQuery = buyWithMerchantMatch[1].replace(/\b(credit|usdc)\b/gi, "").trim();
-        merchantQuery = buyWithMerchantMatch[2].replace(/\b(credit|usdc)\b/gi, "").trim();
+      const words = (t = "") => t.replace(/\b(?:credit|usdc|dollars|merchant)\b|\$/g, "").replace(/\s+/g, " ").trim();
+      const clean = (t = "") => words(t.replace(/-?\d[\d,.]*/g, ""));
+      const buyFrom = lower.match(/\b(?:buy|purchase|order|hire|pay for)\s+([a-z0-9_\- ]+?)\s+(?:from|at|by|with)\s+([a-z0-9_\- ]+)/);
+      if (buyFrom) {
+        serviceQuery = words(buyFrom[1]);
+        merchantQuery = clean(buyFrom[2]);
       } else {
-        // Extract merchant if after "from", "at", "by", "with", "to"
-        const merchantMatch = lower.match(/(?:from|at|by|with|to)\s+([a-zA-Z0-9_\- ]+)/i);
-        if (merchantMatch && merchantMatch[1]) {
-          merchantQuery = merchantMatch[1].replace(/\b(credit|usdc|dollars|\$|merchant|company|corp)\b/gi, "").trim();
+        const to = lower.match(/\b(?:from|at|by|with|to)\s+([a-z0-9_\- ]+)/)?.[1];
+        if (to) {
+          const [m, service] = to.split(/\s+for\s+/);
+          merchantQuery = clean(m);
+          serviceQuery = service ? words(service) : "";
         }
-
-        // Extract service name if after "buy", "purchase", "order", "hire", "pay for"
-        const serviceMatch = lower.match(
-          /(?:buy|purchase|order|hire|pay for)\s+([a-zA-Z0-9_\- ]+?)(?:\s*$)/i
-        );
-        if (serviceMatch && serviceMatch[1]) {
-          serviceQuery = serviceMatch[1].replace(/\b(credit|usdc)\b/gi, "").trim();
-        }
-      }
-
-      // Check direct format: "pay sparktech 250"
-      if (!merchantQuery) {
-        const directPayMatch = lower.match(
-          /(?:pay|send|transfer)\s+([a-zA-Z\s]+?)\s+\$?([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]+)?|[0-9]+(?:\.[0-9]+)?)(?:\s*credit|\s*usdc)?$/i
-        );
-
-        if (directPayMatch && directPayMatch[1] && directPayMatch[2] && !directPayMatch[1].includes("to ") && !directPayMatch[1].includes("credit")) {
-          merchantQuery = directPayMatch[1].trim();
-          amount = directPayMatch[2].replace(/,/g, "");
+        const bought = lower.match(/\b(?:buy|purchase|order|hire|pay for)\s+([a-z0-9_\- ]+?)\s*$/)?.[1];
+        if (bought && !serviceQuery) serviceQuery = words(bought);
+        if (!merchantQuery) {
+          const direct = lower.match(/\b(?:pay|send|transfer)\s+([a-z][a-z0-9_\- ]*?)\s+-?\$?\d/);
+          if (direct) merchantQuery = clean(direct[1]);
+          else if (!bought) merchantQuery = clean(lower.match(/\b(?:pay|send|transfer|spend)\s+([a-z][a-z0-9_\- ]*)$/)?.[1] ?? "");
         }
       }
-
-      return {
+      // A wallet address names the merchant exactly
+      merchantQuery = lower.match(/0x[a-f0-9]{40}/)?.[0] ?? merchantQuery;
+      return out({
         type: "SPEND_CREDIT",
         target: !amount && !merchantQuery && !serviceQuery ? "SERVICES" : "ALL",
         amount,
-        loanId: null,
         merchantQuery,
         serviceQuery,
-      };
+      });
     }
 
-    return {
-      type: "UNKNOWN",
-      target: "ALL",
-      amount: null,
-      loanId: null,
-      merchantQuery: "",
-      serviceQuery: "",
-    };
+    return out({ type: "UNKNOWN" });
   }
 
   /**
@@ -1132,4 +953,62 @@ function parseCommandAmount(text: string): bigint | null {
   } catch {
     return null;
   }
+}
+
+type InfoTopic = "HELP" | "NO_INTEREST" | "NO_CASHOUT" | "NO_USER_TRANSFER";
+
+const INFO_TEXT: Record<InfoTopic, string> = {
+  HELP:
+    'Supported commands:\n• "What is my balance?"\n• "Show my loans"\n• "Show my transactions"\n• "What services can I buy?"\n• "Pay [merchant] [amount]"\n• "Buy [service] from [merchant]"\n• "Borrow [amount] USDC"\n• "Repay loan #[number]"\n• "Extend loan #[number]"\nTo add an asset, type "mint" and follow the upload card.',
+  NO_INTEREST:
+    "Indico charges no interest and no fees. You repay exactly what you borrowed, and payments to merchants have no fee. The only cost is the small network fee your wallet shows before you sign.",
+  NO_CASHOUT:
+    "Credit cannot be sold, withdrawn or converted to money in the app. You can spend it with approved merchants, or borrow USDC against it (up to 80%).",
+  NO_USER_TRANSFER:
+    'Credit can only be spent with approved merchants. It cannot be sent to another person. Ask "What services can I buy?" to see the merchants.',
+};
+
+const HISTORY_LABELS: Record<string, string> = {
+  CreditMinted: "Credit added",
+  CreditBurned: "Credit removed",
+  Spent: "Paid a merchant",
+  LoanOpened: "Borrowed",
+  LoanRepaid: "Repaid a loan",
+  LoanExtended: "Extended a loan",
+  LoanDefaulted: "Loan defaulted",
+  AssetRegistered: "Asset registered",
+};
+
+/**
+ * Every amount in a message, in base form ("1,500.50" → "1500.50", "-50" kept negative), leaving out
+ * durations ("90 days") and numbers that are part of a word or an address.
+ */
+function amountsIn(text: string): string[] {
+  return [...text.matchAll(/(?<![\w.,])(-\s*)?\$?(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)(?![\w.,])(?!\s*(?:days?|months?|weeks?|years?|%))/g)].map(
+    (m) => `${m[1] ? "-" : ""}${(m[2] ?? "").replace(/,/g, "")}`
+  );
+}
+
+/** Starter questions offered with the help reply and when a message is not understood. */
+const STARTERS = ["What is my balance?", "Show my loans", "What services can I buy?", "Show my transactions"].map((prompt) => ({
+  label: prompt,
+  prompt,
+}));
+
+/** "9.500000" → "9.50", "1.234500" → "1.2345": amounts for button labels. */
+function short(units: bigint): string {
+  return formatAmount(units).replace(/(\.\d{2}\d*?)0+$/, "$1");
+}
+
+/** Inside the 30-day extension window, or past the due date (a late extension may still be allowed, D-58). */
+function extensionOpen(loan: { dueDate: bigint | number }): boolean {
+  return Date.now() / 1000 >= Number(loan.dueDate) - 30 * 86400;
+}
+
+function repaySuggestion(loan: { loanId: bigint | number; principalUnits: string }) {
+  return { label: `Repay loan #${loan.loanId} (${short(BigInt(loan.principalUnits))} USDC)`, prompt: `Repay loan #${loan.loanId}` };
+}
+
+function extendSuggestion(loan: { loanId: bigint | number }) {
+  return { label: `Extend loan #${loan.loanId}`, prompt: `Extend loan #${loan.loanId}` };
 }

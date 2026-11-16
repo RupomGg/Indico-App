@@ -3567,6 +3567,113 @@ Gate (logs in `docs/gate-logs/C-095/`):
 - G10 pending: owner pushes, then Render redeploys. The app switches to it in its next build.
 Commit: feat: GET /loans/pool-available returns the pool's lendable USDC for the borrow screen (L-04)
 
+### C-096 · AI-01, AI-05, C-04 · User assistant: everyday wording, no guessed amounts or merchants · 2026-11-15
+Type: fix (backend)
+Decisions: none new; AI-05 (never guess an amount or recipient), C-04 (any amount), S-06 (no transfer between users)
+Root causes, found by running 45 everyday phrasings through `parseUserIntent`:
+- The first number in a message was taken for whatever was being parsed: "pay back 500" prepared a
+  repayment of loan #500, "extend my loan by 90 days" loan #90, "pay 50 to TestMerchant and borrow
+  100" a loan of 50; "borrow -50" dropped the minus sign; "pay off loan 2" became a payment of 2.
+- A merchant was the first whose name contained the words typed ("pay 50 to Test"), a guess at the
+  recipient, and a service could come from another merchant than the one named.
+- A merchant listing services could not be paid an amount (C-04).
+- Common wordings were not understood ("I need a loan of 500", "pay loan 2", "when is my loan due"),
+  history was unreachable, and questions about interest, cashing out or sending credit to a person
+  got an unrelated answer (the merchant list or the balance).
+- Replies carried `**` markers the app shows as plain text.
+Files:
+- Changed: `backend/src/modules/ai/ai.service.ts`:
+  - `parseUserIntent`: two new results, `MULTIPLE` (two commands or two loans: refused, one at a
+    time) and `INFO` (help, no interest or fees, no cash-out, no transfer to a person: fixed answers).
+    `amountsIn` reads every amount (commas, decimals, a leading minus) and skips durations and numbers
+    inside words or addresses; one amount is used, two or more is none. A loan number counts only
+    after "loan", "#", "number" or "id", or alone after repay or extend. More wordings for borrowing,
+    repaying, loan questions and history. A wallet address names the merchant.
+  - `resolveMerchant`: a merchant by wallet, full name, or the first whole words of exactly one name;
+    two candidates are listed and nothing is prepared.
+  - `handleUserSpendCredit`: rewritten on it; a named service is looked up at the named merchant only,
+    a service offered by two merchants is a question, any amount can be paid to a merchant, a
+    negative amount is refused, replies are plain text.
+  - `handleUserReadStatus`: history from `HistoryService.getUserTransactions`, newest first, 8 lines.
+  - Reply texts for a missing loan number or amount ask the question directly.
+- Changed: `backend/test/unit/ai.test.ts`: partition table, 47 phrasings and 18 behaviour tests. Two
+  existing tests changed with the behaviour they encoded: the payment test names its merchant in full
+  (partial names are no longer matched), and the no-amount borrow reply has new wording.
+Gate (logs in `docs/gate-logs/C-096/`):
+- Red phase: 44 of the new tests failed on the old code.
+- G1 pass: 670 passed, 0 failed, three runs alike.
+- G2 pass: `tsc --noEmit` exit 0.
+- G9 pass, `G9.log`: 16 of 16 caught, source restored byte-identical: U1 partial merchant name
+  accepted; U2 ambiguous merchant picks the first; U3 two commands allowed; U4 durations read as
+  amounts; U5 minus sign dropped; U6 negative payment accepted; U7 negative loan accepted; U8 any
+  number read as a loan; U9 two loans allowed; U10 service from any merchant; U11 ambiguous service
+  picks the first; U12 typed amount ignored for a merchant with services; U13 credit sent to a person;
+  U14 history unreachable; U15 wallet address ignored; U16 markdown back.
+- G10 pending: owner pushes, then Render redeploys. The app needs no change.
+Commit: fix: user AI assistant understands everyday wording and never guesses an amount, loan or merchant (AI-01, AI-05, C-04)
+
+### C-097 · AI-01, AI-03 · User assistant: tap-to-answer suggestions · 2026-11-15
+Type: feature (backend)
+Decisions: none new; AI-04 (a suggestion only fills in a command, money still needs the preview and the
+wallet)
+Why: when the assistant needed more (which loan, which merchant, which service), the user had to type
+the whole command again.
+Files:
+- Changed: `backend/src/modules/ai/ai.schemas.ts`: optional `suggestions`, at most 6 `{ label, prompt }`;
+  the app sends `prompt`, or puts it in the input box when it ends with a space. Older apps ignore it.
+- Changed: `backend/src/modules/ai/ai.service.ts`: suggestions for: which loan to repay (each active
+  loan with its amount); which loan to extend (loans inside their 30-day window or overdue); which
+  merchant (the same command with each full name, keeping the amount); which service (each merchant's);
+  a merchant's services; the directory and a merchant not found (each merchant); help and not
+  understood (four starter questions); a loan with no amount ("Borrow " to fill in); the balance answer
+  (repay and extend each loan in its window, and "Borrow" when something can be borrowed). Repay or
+  extend with no active loan now says so. `activeLoans` reads the read model and returns none when
+  unbound or unreadable.
+- Changed: `backend/test/unit/ai.test.ts`: partition table and 14 tests. One C-096 test now gives the
+  user an active loan, since with none the reply rightly says there is no loan instead of asking which.
+Gate (logs in `docs/gate-logs/C-097/`):
+- Red phase: 12 of the new tests failed on the old code.
+- G1 pass: 684 passed, 0 failed, three runs alike.
+- G2 pass: `tsc --noEmit` exit 0.
+- G9 pass, `G9.log`: 10 of 10 caught, source restored byte-identical: S1 extend offers loans outside the
+  window; S2 window a day early; S3 merchant button drops the amount; S4 repay button without the loan
+  number; S5 borrow button with nothing to borrow; S6 no cap on the balance answer; S7 no cap on the
+  directory; S8 no starters when not understood; S9 long amounts in labels; S10 service button without
+  its merchant. S2 and S6 were missed on the first run; a loan just outside the window and a balance
+  answer with 9 candidates now catch them.
+- G10 pending: owner pushes, then Render redeploys.
+Commit: feat: user AI assistant replies carry tap-to-answer suggestions for loans, merchants and services (AI-01, AI-03)
+
+### C-098 · fix · C-093 corrected: the indexer keeps up with Base's 0.2-second blocks · 2026-11-16
+Type: fix (backend)
+Decisions: none new
+Root cause: C-093 assumed a block every 2 seconds and set `LOG_BLOCK_RANGE` to 10 by default. Measured
+on 2026-11-16, Base Sepolia and Base mainnet both make 10,000 blocks in 2,000 seconds, a block every 0.2
+seconds. Ten blocks is 2 seconds of chain, and one round of the worker (head, checkpoint, log query,
+database transaction, sweep check, overdue query, 500 ms pause) takes longer than that on Render, so the
+indexer fell further behind every round. Found when two spends from `0x2D70...8314` (blocks 59472332 and
+59475223, 50 credit each, both on-chain) did not reach the read model, and the app and dashboard showed
+the balance before them. The spends went through MetaMask's EIP-7702 relayer, which the indexer handles:
+it reads logs by the ledger's address, not by sender.
+Files:
+- Changed: `backend/src/config/env.ts`: `LOG_BLOCK_RANGE` defaults to 200, the public Base RPC's
+  `eth_getLogs` limit; the comment states the block time and the rule (one query must cover a poll
+  interval's blocks, 5 a second).
+- Changed: `backend/test/unit/env.test.ts`: the default is 200; a new test that by default one log query
+  covers more than a whole poll interval of 0.2-second blocks.
+Correction to C-093: its cost estimate (about 21 million Alchemy units a month) is wrong. With 0.2-second
+blocks and Alchemy's free 10-block log limit, no polling interval keeps up within the free 30 million;
+mainnet needs a provider that allows larger log ranges, or a paid plan. To be priced again before P3.3.
+Gate (logs in `docs/gate-logs/C-098/`):
+- Red phase, `red.log`: the 2 changed tests failed on the old default.
+- G1 pass: 685 passed, 0 failed, three runs alike.
+- G2 pass: `tsc --noEmit` exit 0.
+- G9 pass, `G9.log`: 3 of 3 caught, source restored byte-identical: M1 default back to 10; M2 default
+  70, under one poll interval; M3 poll default 60 s.
+- G10 pending: owner pushes, then Render redeploys. Until then, `LOG_BLOCK_RANGE=200` on Render applies
+  the fix; an existing value of 10 there overrides the new default and must be changed or removed.
+Commit: fix: indexer reads 200 blocks per log query by default, so it keeps up with 0.2-second Base blocks (C-093 corrected)
+
 ---
 
 ## Open items

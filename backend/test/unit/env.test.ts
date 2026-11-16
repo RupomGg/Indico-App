@@ -7,16 +7,24 @@ import { parseEnv } from "../../src/config/env.js";
  * |-------------------|---------|--------------------|----------------------------------|
  * | POLL_INTERVAL_MS  | 15000   | 1000, 3000, 60000  | 0, 999, -1, "abc", 1.5           |
  * | SWEEP_INTERVAL_MS | 60000   | 5000, 300000       | 0, 4999, "abc"                   |
- * | LOG_BLOCK_RANGE   | 10      | 1, 10, 2000, 10000 | 0, 10001, -5, "x"                |
+ * | LOG_BLOCK_RANGE   | 200     | 1, 10, 2000, 10000 | 0, 10001, -5, "x"                |
+ *
+ * Base makes a block every 0.2 s (measured on Sepolia and mainnet, 2026-11-16), so one log query must
+ * cover at least a whole poll interval, or the indexer falls further behind every round.
  */
 const base = { DATABASE_URL: "postgres://x", JWT_SECRET: "a".repeat(32) };
 
 describe("Indexer timing settings", () => {
-  it("defaults to the free-plan friendly values", () => {
+  it("defaults to values that fit Base's public RPC", () => {
     const env = parseEnv(base);
     expect(env.POLL_INTERVAL_MS).toBe(15000);
     expect(env.SWEEP_INTERVAL_MS).toBe(60000);
-    expect(env.LOG_BLOCK_RANGE).toBe(10);
+    expect(env.LOG_BLOCK_RANGE).toBe(200);
+  });
+
+  it("by default one log query covers more than a whole poll interval of 0.2 s blocks", () => {
+    const env = parseEnv(base);
+    expect(env.LOG_BLOCK_RANGE * 200).toBeGreaterThan(env.POLL_INTERVAL_MS);
   });
 
   it.each([

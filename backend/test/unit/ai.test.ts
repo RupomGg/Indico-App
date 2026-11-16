@@ -10,6 +10,7 @@ import {
 } from "../../src/modules/ai/ai.schemas.js";
 import { LoansService } from "../../src/modules/loans/loans.service.js";
 import { CreditService } from "../../src/modules/credit/credit.service.js";
+import { HistoryService } from "../../src/modules/history/history.service.js";
 import { AdminOperationsService } from "../../src/modules/admin/admin.operations.service.js";
 import { env } from "../../src/config/env.js";
 import jwt from "jsonwebtoken";
@@ -441,7 +442,7 @@ describe("AI Assistant Module (PRD §4.6 AI-01 to AI-07; PRD §4.7 AD-19; Rule D
       expect(res.success).toBe(true);
       expect(res.type).toBe("UNKNOWN");
       expect(res.requiresWalletSignature).toBe(false);
-      expect(res.text).toContain("Please specify a positive USDC amount");
+      expect(res.text).toMatch(/how much do you want to borrow/i);
     });
 
     it("gracefully catches business logic errors on REQUEST_LOAN (e.g. InsufficientAvailableCredit)", async () => {
@@ -558,12 +559,9 @@ describe("AI Assistant Module (PRD §4.6 AI-01 to AI-07; PRD §4.7 AD-19; Rule D
     });
 
     it("handles SPEND_CREDIT to approved merchant by preparing spend transaction", async () => {
-      vi.spyOn(prisma.merchant, "findFirst").mockResolvedValue({
-        id: "m-1",
-        name: "Sparktech Solutions",
-        walletAddress: mockMerchantWallet,
-        isApproved: true,
-      } as any);
+      vi.spyOn(prisma.merchant, "findMany").mockResolvedValue([
+        { id: "m-1", name: "Sparktech", walletAddress: mockMerchantWallet, isApproved: true, services: [] },
+      ] as any);
 
       vi.spyOn(CreditService, "prepareSpendCalldata").mockResolvedValue({
         to: env.INDICO_LEDGER_ADDRESS,
@@ -585,7 +583,7 @@ describe("AI Assistant Module (PRD §4.6 AI-01 to AI-07; PRD §4.7 AD-19; Rule D
       expect(res.success).toBe(true);
       expect(res.type).toBe("TRANSACTION_PREVIEW");
       expect(res.requiresWalletSignature).toBe(true);
-      expect(res.preview?.merchant).toBe("Sparktech Solutions");
+      expect(res.preview?.merchant).toBe("Sparktech");
       expect(res.preview?.amountToSpend).toBe("250.000000 Credit");
       expect(res.preparedTx?.data).toBe("0xspendcalldata");
     });
@@ -679,6 +677,387 @@ describe("AI Assistant Module (PRD §4.6 AI-01 to AI-07; PRD §4.7 AD-19; Rule D
       expect(res.type).toBe("UNKNOWN");
       expect(res.requiresWalletSignature).toBe(false);
       expect(res.text).toContain("Supported commands");
+    });
+  });
+
+  // =========================================================================
+  // 3b. Everyday wording (C-096): what users actually type
+  // =========================================================================
+  /**
+   * The parser must never mistake one number for another, never mix two commands, and answer the
+   * things the platform does not do instead of showing an unrelated screen.
+   * | Class                                  | Example                                  | Expected                          |
+   * |----------------------------------------|------------------------------------------|-----------------------------------|
+   * | borrow, other wordings                 | "I need a loan of 500", "loan me 500"    | REQUEST_LOAN 500                  |
+   * | negative or word amount                | "borrow -50", "borrow five hundred"      | REQUEST_LOAN, no usable amount    |
+   * | duration next to an amount             | "borrow 500 for 90 days"                 | amount 500, not 90                |
+   * | amount is not a loan number            | "pay back 500", "extend my loan by 90 d" | no loan number                    |
+   * | loan number forms                      | "repay loan #4", "pay loan 2", "extend 2"| that loan                         |
+   * | two loans or two commands              | "repay loan 2 and 3", "pay … and borrow" | refused, one at a time            |
+   * | loan questions                         | "my loan status", "when is my loan due"  | READ_STATUS LOANS                 |
+   * | history questions                      | "history", "what did I spend last week"  | READ_STATUS TRANSACTIONS          |
+   * | things the platform does not do        | interest, sell/withdraw/convert credit   | fixed answer                      |
+   * | credit to a person                     | email, "my friend"                       | fixed answer, never a payment     |
+   * | greeting or help                       | "hello", "help"                          | help menu                         |
+   * | merchant asked about                   | "What does TestMerchant offer?"          | merchant "testmerchant"           |
+   * | service after merchant                 | "spend 50 at TestMerchant for consult…"  | merchant and service split        |
+   */
+  describe("Everyday wording", () => {
+    it.each([
+      ["Borrow 500 USDC", "REQUEST_LOAN", { amount: "500" }],
+      ["I need a loan of 500", "REQUEST_LOAN", { amount: "500" }],
+      ["loan me 500", "REQUEST_LOAN", { amount: "500" }],
+      ["can I get a loan of 1,500.50", "REQUEST_LOAN", { amount: "1500.50" }],
+      ["borrow 500 for 90 days", "REQUEST_LOAN", { amount: "500" }],
+      ["borrow -50", "REQUEST_LOAN", { amount: "-50" }],
+      ["borrow five hundred", "REQUEST_LOAN", { amount: null }],
+      ["borrow 500 or 600", "REQUEST_LOAN", { amount: null }],
+      ["Repay loan #4", "REPAY_LOAN", { loanId: "4" }],
+      ["pay loan 2", "REPAY_LOAN", { loanId: "2" }],
+      ["pay off loan 2", "REPAY_LOAN", { loanId: "2" }],
+      ["repay 3", "REPAY_LOAN", { loanId: "3" }],
+      ["pay back 500", "REPAY_LOAN", { loanId: null }],
+      ["Extend loan #4", "EXTEND_LOAN", { loanId: "4" }],
+      ["extend 2", "EXTEND_LOAN", { loanId: "2" }],
+      ["extend my loan by 90 days", "EXTEND_LOAN", { loanId: null }],
+      ["repay loan 2 and 3", "MULTIPLE", {}],
+      ["pay 50 to TestMerchant and borrow 100", "MULTIPLE", {}],
+      ["my loan status", "READ_STATUS", { target: "LOANS" }],
+      ["when is my loan due", "READ_STATUS", { target: "LOANS" }],
+      ["how much do I owe", "READ_STATUS", { target: "LOANS" }],
+      ["show my transactions", "READ_STATUS", { target: "TRANSACTIONS" }],
+      ["history", "READ_STATUS", { target: "TRANSACTIONS" }],
+      ["what did I spend last week", "READ_STATUS", { target: "TRANSACTIONS" }],
+      ["How much interest do I pay?", "INFO", { info: "NO_INTEREST" }],
+      ["are there any fees", "INFO", { info: "NO_INTEREST" }],
+      ["sell my credit", "INFO", { info: "NO_CASHOUT" }],
+      ["withdraw my credit", "INFO", { info: "NO_CASHOUT" }],
+      ["convert credit to usdc", "INFO", { info: "NO_CASHOUT" }],
+      ["send credit to my friend", "INFO", { info: "NO_USER_TRANSFER" }],
+      ["transfer 50 to alice@gmail.com", "INFO", { info: "NO_USER_TRANSFER" }],
+      ["hello", "INFO", { info: "HELP" }],
+      ["help", "INFO", { info: "HELP" }],
+      ["What does TestMerchant offer?", "SPEND_CREDIT", { merchantQuery: "testmerchant", target: "SERVICES" }],
+      ["Pay TestMerchant 50", "SPEND_CREDIT", { merchantQuery: "testmerchant", amount: "50" }],
+      ["pay 50 to TestMerchant", "SPEND_CREDIT", { merchantQuery: "testmerchant", amount: "50" }],
+      ["spend 50 at TestMerchant for consultation", "SPEND_CREDIT", { merchantQuery: "testmerchant", serviceQuery: "consultation", amount: "50" }],
+      ["Buy Legal consultation from TestMerchant", "SPEND_CREDIT", { merchantQuery: "testmerchant", serviceQuery: "legal consultation" }],
+      ["pay -20 to TestMerchant", "SPEND_CREDIT", { merchantQuery: "testmerchant", amount: "-20" }],
+      ["pay 50 to 0x2222222222222222222222222222222222222222", "SPEND_CREDIT", { merchantQuery: "0x2222222222222222222222222222222222222222", amount: "50" }],
+      ["pay $25.50 to Sparktech Labs", "SPEND_CREDIT", { merchantQuery: "sparktech labs", amount: "25.50" }],
+      ["repay loan number 3", "REPAY_LOAN", { loanId: "3" }],
+      ["I want to borrow 200 to pay rent", "MULTIPLE", {}],
+      ["borrow 1e6", "REQUEST_LOAN", { amount: null }],
+      ["borrow 0x10", "REQUEST_LOAN", { amount: null }],
+      ["pay 10 to TestMerchant for 2 hours of consultation", "SPEND_CREDIT", { amount: null }],
+    ])("%s", (prompt, type, fields) => {
+      const intent = AiService.parseUserIntent(prompt as string);
+      expect(intent.type).toBe(type);
+      for (const [k, v] of Object.entries(fields as object)) expect((intent as any)[k]).toEqual(v);
+    });
+
+    const merchants = [
+      { name: "TestMerchant", walletAddress: mockMerchantWallet, services: [{ name: "Legal consultation", priceUnits: "50000000", description: "1 hour" }] },
+      { name: "Sparktech Solutions", walletAddress: "0x3333333333333333333333333333333333333333", services: [] },
+      { name: "Sparktech Labs", walletAddress: "0x4444444444444444444444444444444444444444", services: [{ name: "Legal consultation", priceUnits: "70000000", description: "Other" }] },
+    ];
+    const spendOk = (amount: string) =>
+      vi.spyOn(CreditService, "prepareSpendCalldata").mockResolvedValue({
+        to: env.INDICO_LEDGER_ADDRESS, data: "0xspend", value: "0", merchantAddress: mockMerchantWallet,
+        amount, amountUnits: "0", estimatedGasUnits: "1", gasCostEth: "0.0001", gasCostUsd: "0.3",
+        userEthBalance: "0.1", ethShortfall: "0", ethShortfallUnits: "0", canAfford: true,
+      } as any);
+
+    it("pays any typed amount to a merchant that also lists services (C-04)", async () => {
+      vi.spyOn(prisma.merchant, "findMany").mockResolvedValue(merchants as any);
+      const spend = spendOk("50.000000");
+      const res = await AiService.handleUserPrompt(mockUserId, "Pay TestMerchant 50");
+      expect(res.type).toBe("TRANSACTION_PREVIEW");
+      expect(spend).toHaveBeenCalledWith(mockUserId, { merchantAddress: mockMerchantWallet, amount: "50" });
+    });
+
+    it("pays a merchant named by its wallet address", async () => {
+      vi.spyOn(prisma.merchant, "findMany").mockResolvedValue(merchants as any);
+      const spend = spendOk("50.000000");
+      const res = await AiService.handleUserPrompt(mockUserId, `pay 50 to ${mockMerchantWallet}`);
+      expect(res.type).toBe("TRANSACTION_PREVIEW");
+      expect(spend).toHaveBeenCalledWith(mockUserId, { merchantAddress: mockMerchantWallet, amount: "50" });
+    });
+
+    it("asks for the amount in numbers when it is written in words", async () => {
+      vi.spyOn(prisma.merchant, "findMany").mockResolvedValue(merchants as any);
+      const spend = spendOk("50.000000");
+      const res = await AiService.handleUserPrompt(mockUserId, "pay TestMerchant fifty");
+      expect(res.text).toMatch(/amount in numbers/);
+      expect(spend).not.toHaveBeenCalled();
+    });
+
+    it("never guesses a merchant from part of a name", async () => {
+      vi.spyOn(prisma.merchant, "findMany").mockResolvedValue(merchants as any);
+      const spend = spendOk("50.000000");
+      const res = await AiService.handleUserPrompt(mockUserId, "pay 50 to Test");
+      expect(res.type).not.toBe("TRANSACTION_PREVIEW");
+      expect(res.text).toContain("not found");
+      expect(spend).not.toHaveBeenCalled();
+    });
+
+    it("asks which one when a name fits two merchants, and pays none", async () => {
+      vi.spyOn(prisma.merchant, "findMany").mockResolvedValue(merchants as any);
+      const spend = spendOk("50.000000");
+      const res = await AiService.handleUserPrompt(mockUserId, "pay 50 to Sparktech");
+      expect(res.type).toBe("UNKNOWN");
+      expect(res.text).toContain("Sparktech Solutions");
+      expect(res.text).toContain("Sparktech Labs");
+      expect(spend).not.toHaveBeenCalled();
+    });
+
+    it("accepts the full name of one merchant, in any case", async () => {
+      vi.spyOn(prisma.merchant, "findMany").mockResolvedValue(merchants as any);
+      const spend = spendOk("20.000000");
+      const res = await AiService.handleUserPrompt(mockUserId, "pay 20 to sparktech solutions");
+      expect(res.type).toBe("TRANSACTION_PREVIEW");
+      expect(spend).toHaveBeenCalledWith(mockUserId, { merchantAddress: "0x3333333333333333333333333333333333333333", amount: "20" });
+    });
+
+    it("buys the service of the named merchant, not another merchant's service of the same name", async () => {
+      vi.spyOn(prisma.merchant, "findMany").mockResolvedValue(merchants as any);
+      const spend = spendOk("70.000000");
+      const res = await AiService.handleUserPrompt(mockUserId, "Buy Legal consultation from Sparktech Labs");
+      expect(res.type).toBe("TRANSACTION_PREVIEW");
+      expect(spend).toHaveBeenCalledWith(mockUserId, { merchantAddress: "0x4444444444444444444444444444444444444444", amount: "70.000000" });
+    });
+
+    it("asks which merchant when a service name exists at two merchants", async () => {
+      vi.spyOn(prisma.merchant, "findMany").mockResolvedValue(merchants as any);
+      const spend = spendOk("50.000000");
+      const res = await AiService.handleUserPrompt(mockUserId, "buy legal consultation");
+      expect(res.type).toBe("UNKNOWN");
+      expect(res.text).toContain("TestMerchant");
+      expect(res.text).toContain("Sparktech Labs");
+      expect(spend).not.toHaveBeenCalled();
+    });
+
+    it("refuses a negative amount without preparing anything", async () => {
+      vi.spyOn(prisma.merchant, "findMany").mockResolvedValue(merchants as any);
+      const spend = spendOk("20.000000");
+      const borrow = vi.spyOn(LoansService, "prepareBorrowCalldata");
+      expect((await AiService.handleUserPrompt(mockUserId, "pay -20 to TestMerchant")).type).toBe("UNKNOWN");
+      expect((await AiService.handleUserPrompt(mockUserId, "borrow -50")).type).toBe("UNKNOWN");
+      expect(spend).not.toHaveBeenCalled();
+      expect(borrow).not.toHaveBeenCalled();
+    });
+
+    it("refuses two commands in one message and prepares none", async () => {
+      const borrow = vi.spyOn(LoansService, "prepareBorrowCalldata");
+      const res = await AiService.handleUserPrompt(mockUserId, "pay 50 to TestMerchant and borrow 100");
+      expect(res.type).toBe("UNKNOWN");
+      expect(res.text).toMatch(/one at a time/i);
+      expect(borrow).not.toHaveBeenCalled();
+    });
+
+    it("asks for the loan number instead of reading an amount as one", async () => {
+      vi.spyOn(prisma.walletBinding, "findUnique").mockResolvedValue({ walletAddress: mockUserWallet } as any);
+      vi.spyOn(prisma.loan, "findMany").mockResolvedValue([
+        { loanId: 2n, principalUnits: "9500000", dueDate: BigInt(Math.floor(Date.now() / 1000) + 86400 * 80), status: "ACTIVE" },
+      ] as any);
+      const repay = vi.spyOn(LoansService, "prepareRepayCalldata");
+      const res = await AiService.handleUserPrompt(mockUserId, "pay back 500");
+      expect(res.type).toBe("UNKNOWN");
+      expect(res.text).toMatch(/which loan/i);
+      expect(repay).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["How much interest do I pay?", /no interest/i],
+      ["sell my credit", /cannot be sold, withdrawn or converted/i],
+      ["send credit to my friend", /only be spent with approved merchants/i],
+      ["help", /Supported commands/],
+    ])("answers %s plainly", async (prompt, text) => {
+      const res = await AiService.handleUserPrompt(mockUserId, prompt as string);
+      expect(res.type).toBe("MESSAGE");
+      expect(res.requiresWalletSignature).toBe(false);
+      expect(res.text).toMatch(text as RegExp);
+    });
+
+    it("answers history from the indexed transactions, newest first", async () => {
+      vi.spyOn(HistoryService, "getUserTransactions").mockResolvedValue({
+        items: [
+          { eventName: "Spent", blockTimestamp: 1_800_000_000, data: { amount: "50000000" } },
+          { eventName: "CreditMinted", blockTimestamp: 1_799_000_000, data: { amount: "1000000000" } },
+        ],
+        total: 2,
+      } as any);
+      const res = await AiService.handleUserPrompt(mockUserId, "show my transactions");
+      expect(res.type).toBe("MESSAGE");
+      expect(res.text).toContain("Paid a merchant: 50.000000");
+      expect(res.text).toContain("Credit added: 1000.000000");
+      expect(res.text.indexOf("Paid a merchant")).toBeLessThan(res.text.indexOf("Credit added"));
+    });
+
+    it("says so when there is no history yet", async () => {
+      vi.spyOn(HistoryService, "getUserTransactions").mockResolvedValue({ items: [], total: 0 } as any);
+      const res = await AiService.handleUserPrompt(mockUserId, "history");
+      expect(res.text).toMatch(/no transactions yet/i);
+    });
+
+    it("writes replies without markdown markers", async () => {
+      vi.spyOn(prisma.merchant, "findMany").mockResolvedValue(merchants as any);
+      spendOk("50.000000");
+      for (const prompt of ["What services can I buy?", "What does TestMerchant offer?", "Buy Legal consultation from TestMerchant", "Pay TestMerchant"]) {
+        const res = await AiService.handleUserPrompt(mockUserId, prompt);
+        expect(res.text, prompt).not.toMatch(/\*\*|(^|\s)_\S/);
+      }
+    });
+  });
+
+  // =========================================================================
+  // 3c. Tap-to-answer suggestions (C-097)
+  // =========================================================================
+  /**
+   * `suggestions`: buttons under a reply. Each is { label, prompt }; the app sends `prompt`, or puts it
+   * in the input box when it ends with a space. A suggestion only ever fills in a command: anything
+   * that moves money still goes through the preview card and the wallet.
+   * | Reply                                  | Suggestions                                              |
+   * |----------------------------------------|----------------------------------------------------------|
+   * | which loan to repay                    | one per active loan                                      |
+   * | which loan to extend                   | active loans inside their window, or overdue             |
+   * | repay or extend with no active loan    | none, and says there is no active loan                   |
+   * | which merchant (two fit)               | the same command with each full name                     |
+   * | which service (two merchants)          | "Buy [service] from [merchant]" for each                 |
+   * | a merchant's services                  | "Buy [service] from [merchant]" for each                 |
+   * | merchant directory                     | "What does [merchant] offer?" for each                   |
+   * | help, not understood                   | four starter questions                                   |
+   * | borrow with no amount                  | "Borrow " to fill in                                     |
+   * | balance, a loan due within 30 days     | repay and extend that loan, and "Borrow " if possible    |
+   * | any reply                              | at most 6                                                |
+   */
+  describe("Suggestions", () => {
+    const now = Math.floor(Date.now() / 1000);
+    const loan = (id: bigint, principal: string, dueInDays: number) => ({
+      loanId: id, borrower: mockUserWallet, principalUnits: principal, collateralUnits: "1",
+      dueDate: BigInt(now + dueInDays * 86400), extensionCount: 0, status: "ACTIVE", openedAtBlock: 1n,
+    });
+    const withLoans = (loans: any[]) => {
+      vi.spyOn(prisma.walletBinding, "findUnique").mockResolvedValue({ walletAddress: mockUserWallet } as any);
+      vi.spyOn(prisma.loan, "findMany").mockResolvedValue(loans as any);
+    };
+    const merchants = [
+      { name: "TestMerchant", walletAddress: mockMerchantWallet, services: [{ name: "Legal consultation", priceUnits: "50000000", description: "1 hour" }] },
+      { name: "Sparktech Solutions", walletAddress: "0x3333333333333333333333333333333333333333", services: [] },
+      { name: "Sparktech Labs", walletAddress: "0x4444444444444444444444444444444444444444", services: [{ name: "Legal consultation", priceUnits: "70000000", description: "Other" }] },
+    ];
+
+    it("offers each active loan when asked which loan to repay", async () => {
+      withLoans([loan(2n, "9500000", 80), loan(5n, "100000000", 10)]);
+      const res = await AiService.handleUserPrompt(mockUserId, "repay my loan");
+      expect(res.suggestions).toEqual([
+        { label: "Repay loan #2 (9.50 USDC)", prompt: "Repay loan #2" },
+        { label: "Repay loan #5 (100.00 USDC)", prompt: "Repay loan #5" },
+      ]);
+      expect(aiResponseSchema.safeParse(res).success).toBe(true);
+    });
+
+    it("offers only loans inside their extension window, or overdue, to extend", async () => {
+      withLoans([loan(2n, "9500000", 80), loan(5n, "100000000", 30), loan(7n, "1000000", -3), loan(9n, "1000000", 30.05)]);
+      const res = await AiService.handleUserPrompt(mockUserId, "extend my loan");
+      expect(res.suggestions).toEqual([
+        { label: "Extend loan #5", prompt: "Extend loan #5" },
+        { label: "Extend loan #7", prompt: "Extend loan #7" },
+      ]);
+    });
+
+    it("says there is no active loan, with no buttons, when there is none", async () => {
+      withLoans([]);
+      const res = await AiService.handleUserPrompt(mockUserId, "repay my loan");
+      expect(res.text).toMatch(/no active loans/i);
+      expect(res.suggestions ?? []).toEqual([]);
+    });
+
+    it("offers each full merchant name, keeping the amount", async () => {
+      vi.spyOn(prisma.merchant, "findMany").mockResolvedValue(merchants as any);
+      const res = await AiService.handleUserPrompt(mockUserId, "pay 50 to Sparktech");
+      expect(res.suggestions).toEqual([
+        { label: "Sparktech Solutions", prompt: "Pay Sparktech Solutions 50" },
+        { label: "Sparktech Labs", prompt: "Pay Sparktech Labs 50" },
+      ]);
+    });
+
+    it("offers each merchant's service when a service name is shared", async () => {
+      vi.spyOn(prisma.merchant, "findMany").mockResolvedValue(merchants as any);
+      const res = await AiService.handleUserPrompt(mockUserId, "buy legal consultation");
+      expect(res.suggestions).toEqual([
+        { label: "Legal consultation from TestMerchant (50.00)", prompt: "Buy Legal consultation from TestMerchant" },
+        { label: "Legal consultation from Sparktech Labs (70.00)", prompt: "Buy Legal consultation from Sparktech Labs" },
+      ]);
+    });
+
+    it("offers a merchant's services as buttons", async () => {
+      vi.spyOn(prisma.merchant, "findMany").mockResolvedValue(merchants as any);
+      const res = await AiService.handleUserPrompt(mockUserId, "What does TestMerchant offer?");
+      expect(res.suggestions).toEqual([{ label: "Buy Legal consultation (50.00)", prompt: "Buy Legal consultation from TestMerchant" }]);
+    });
+
+    it("offers each merchant from the directory", async () => {
+      vi.spyOn(prisma.merchant, "findMany").mockResolvedValue(merchants as any);
+      const res = await AiService.handleUserPrompt(mockUserId, "What services can I buy?");
+      expect(res.suggestions?.map((x) => x.prompt)).toEqual([
+        "What does TestMerchant offer?",
+        "What does Sparktech Solutions offer?",
+        "What does Sparktech Labs offer?",
+      ]);
+    });
+
+    it.each(["help", "What is the capital of France?"])("offers starter questions for %s", async (prompt) => {
+      const res = await AiService.handleUserPrompt(mockUserId, prompt);
+      expect(res.suggestions?.map((x) => x.prompt)).toEqual([
+        "What is my balance?",
+        "Show my loans",
+        "What services can I buy?",
+        "Show my transactions",
+      ]);
+    });
+
+    it("puts 'Borrow ' in the input box when no amount was given", async () => {
+      const res = await AiService.handleUserPrompt(mockUserId, "borrow");
+      expect(res.suggestions).toEqual([{ label: "Borrow…", prompt: "Borrow " }]);
+    });
+
+    it("after a balance answer, offers to repay or extend a loan due soon, and to borrow", async () => {
+      withLoans([loan(2n, "9500000", 10), loan(5n, "100000000", 80)]);
+      vi.spyOn(prisma.creditBalance, "findUnique").mockResolvedValue({ creditUnits: "1000000000", lockedCreditUnits: "0" } as any);
+      vi.spyOn(prisma.loan, "count").mockResolvedValue(2);
+      vi.spyOn(publicClient, "readContract").mockResolvedValue(10_000_000_000n as any);
+      const res = await AiService.handleUserPrompt(mockUserId, "What is my balance?");
+      expect(res.suggestions).toEqual([
+        { label: "Repay loan #2 (9.50 USDC)", prompt: "Repay loan #2" },
+        { label: "Extend loan #2", prompt: "Extend loan #2" },
+        { label: "Borrow (up to 800.00 USDC)", prompt: "Borrow " },
+      ]);
+    });
+
+    it("caps the balance answer's buttons at 6", async () => {
+      withLoans([loan(1n, "1000000", 5), loan(2n, "1000000", 6), loan(3n, "1000000", 7), loan(4n, "1000000", 8)]);
+      vi.spyOn(prisma.creditBalance, "findUnique").mockResolvedValue({ creditUnits: "1000000000", lockedCreditUnits: "0" } as any);
+      vi.spyOn(prisma.loan, "count").mockResolvedValue(4);
+      vi.spyOn(publicClient, "readContract").mockResolvedValue(10_000_000_000n as any);
+      const res = await AiService.handleUserPrompt(mockUserId, "What is my balance?");
+      expect(res.suggestions).toHaveLength(6);
+    });
+
+    it("offers no borrow button when nothing can be borrowed", async () => {
+      withLoans([]);
+      vi.spyOn(prisma.creditBalance, "findUnique").mockResolvedValue({ creditUnits: "0", lockedCreditUnits: "0" } as any);
+      vi.spyOn(prisma.loan, "count").mockResolvedValue(0);
+      vi.spyOn(publicClient, "readContract").mockResolvedValue(10_000_000_000n as any);
+      const res = await AiService.handleUserPrompt(mockUserId, "What is my balance?");
+      expect(res.suggestions ?? []).toEqual([]);
+    });
+
+    it("never offers more than 6", async () => {
+      const many = Array.from({ length: 9 }, (_, i) => ({ name: `Merchant ${i}`, walletAddress: `0x${String(i).repeat(40)}`, services: [] }));
+      vi.spyOn(prisma.merchant, "findMany").mockResolvedValue(many as any);
+      const res = await AiService.handleUserPrompt(mockUserId, "What services can I buy?");
+      expect(res.suggestions).toHaveLength(6);
     });
   });
 

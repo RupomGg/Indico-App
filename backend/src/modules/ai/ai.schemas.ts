@@ -53,6 +53,11 @@ export const aiResponseSchema = z.object({
   preparedTx: preparedTxSchema.optional(),
   /** Every transaction to sign, in order. `preparedTx` is set only when there is exactly one. */
   preparedTxs: z.array(preparedTxSchema).optional(),
+  /**
+   * Buttons under the reply, at most 6. The app sends `prompt`, or puts it in the input box when it
+   * ends with a space. A suggestion only fills in a command; money still needs the preview and wallet.
+   */
+  suggestions: z.array(z.object({ label: z.string(), prompt: z.string() })).max(6).optional(),
 });
 
 export type AiResponse = z.infer<typeof aiResponseSchema>;
